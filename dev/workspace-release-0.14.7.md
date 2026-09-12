@@ -1,7 +1,8 @@
 # Workspace 0.14.7 implementation and acceptance evidence
 
-Release preparation record, September 12, 2026. Source fixes and all eleven
-full quality gates have passed. **The 0.14.7 package build is pending.**
+Release record, September 12, 2026. Source fixes, all eleven full quality gates,
+the fifteen-case disposable OpenSSH matrix and both Windows installer builds
+passed. **0.14.7 is built from clean commit `4443c8b0`, merged and pushed to main.**
 Installation is outside this build request. The latest verified
 installed package remains 0.14.6; its evidence is in
 [`workspace-usability-evidence-2026-09-11.md`](./workspace-usability-evidence-2026-09-11.md).
@@ -130,8 +131,40 @@ outside this completed source/profiling proof.
   preceded the full Vitest/browser runs; its focused 18 tests, targeted lint and
   a subsequent TypeScript check also passed. The release bundle rebuilds the
   frontend from the final committed source.
-- Windows installer build and artifact/source hashes: pending.
+- `pnpm acceptance:ssh`: fifteen cases passed on clean commit `4443c8b0`.
+  The native PTY burst retained 10,000 ordered lines and 2,220,674 bytes;
+  disconnect/reconnect passed. Container, image tag and temporary keys were
+  cleaned. Report: `test-results/acceptance/live-ssh/2026-09-12T05-08-04-238Z/report.json`.
+  Its raw source fingerprint is
+  `7f78673b2a397e3ff16cb631026f9d82caa94cdafba1efe17b67868b68e621ec`.
+- `pnpm acceptance:build`: succeeded with both NSIS and MSI and eleven release
+  checks. Sidecar development dependencies were restored afterward. The
+  executable reports product/file version 0.14.7. Both installer files were
+  hashed again and matched the generated manifest.
 - Installation and installed 0.14.7 observations: not part of this build request.
 
-This preliminary report intentionally contains no 0.14.7 artifact or install
-success claim. Append the final manifest and results after those checks run.
+## Build identity
+
+Built at `2026-09-12T05:26:46.080Z` from clean commit
+`4443c8b0a2e4fc61f1b0ec71773a1e7d97d3b86f`, 1,352 source files. The build's raw
+working-tree SHA-256 is
+`64b02f733d90226c19eff9820eb7e5fa128e8ece5dd8447296a509806fe85df2`.
+The SSH and build records bind the same clean Git commit; they retain separate
+raw checkout fingerprints across the branch checkout. Each run independently
+verified that its source bytes stayed unchanged during execution.
+
+Manifest: `test-results/acceptance/windows/2026-09-12T05-10-12-041Z/manifest.json`.
+It records 8,683 payload file hashes. Build log:
+`test-results/acceptance/release-0.14.7/build.log`.
+
+| Artifact                                | SHA-256                                                            |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| NSIS `PacketBench_0.14.7_x64-setup.exe` | `eb1a22a9ff2134da0a4c1f74ee3b0b620f7a9995c1d93278e4b92a10b2e38411` |
+| MSI `PacketBench_0.14.7_x64_en-US.msi`  | `4eae040b249193e2155dcc2fcc0ead6c1c41295cf005735559fbb264638c658c` |
+| NSIS executable payload                 | `7c30156d6bfa3a8b96487618cac2219f26f46982f717083e823a2dd4ee692c32` |
+| MSI executable payload                  | `5690a06d688e21b3486dcafa283b4dc4934787eea1ff64ba956cfb2af636cdf5` |
+
+Installers are under `C:/Users/ianwalmsley/packetbench-build/release/bundle/`,
+in `nsis/` and `msi/`. This documentation update follows the build and does not
+change the implementation represented by the recorded code commit. No new
+installed-payload, packaged-sidecar or installed-GUI acceptance is claimed.

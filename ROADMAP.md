@@ -1,6 +1,6 @@
 # PacketBench Roadmap
 
-Last reconciled: 2026-09-11
+Last reconciled: 2026-09-12
 
 PacketBench is a local-first Agent Development Environment and remains the
 flagship control surface. The desktop owns local providers, models, secrets,
@@ -25,6 +25,12 @@ only product direction and ordering.
 
 ## Current baseline
 
+- **0.14.7 is built and pushed to main** with corrected Workspace/Fleet pane
+  summaries, missing-conversation zoom and concurrent Monitor creation. Eleven
+  full quality gates, fifteen disposable OpenSSH cases and both installer
+  builds passed. Native eight-pane WebView2 profiling measured cold/warm p95
+  frame intervals of 16.8 ms with mocked Tauri transport. Exact build identity:
+  `dev/workspace-release-0.14.7.md`. The installed version remains 0.14.6.
 - **0.14.6 is built and installed**, with Workspace reliability, shared pane
   controls and readable many-pane layouts. Native eight-column restart and
   file-pane selection/zoom cleanup passed; all 8,683 payload hashes matched,

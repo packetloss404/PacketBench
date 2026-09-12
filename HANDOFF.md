@@ -1,6 +1,6 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-09-11
+Last reconciled: 2026-09-12
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
@@ -11,6 +11,14 @@ the current contracts below supersede their older protocol and queue details.
 
 - Working directory: `D:\projects\PacketBench`.
 - Remote: `git@github.com:packetloss404/PacketBench.git`.
+- **0.14.7 is built and pushed to main** (2026-09-12), from clean code commit
+  `4443c8b0`. Viewer/Fleet summaries, missing-conversation zoom and concurrent
+  Monitor opens are corrected. Eleven full quality gates, fifteen disposable
+  OpenSSH cases and both Windows installer builds passed. Native WebView2
+  profiling measured eight-pane cold/warm p95 frame intervals of 16.8 ms.
+  Exact hashes and scope: `dev/workspace-release-0.14.7.md`. Installation was
+  outside this build request; the installed app remains 0.14.6. Paid Claude
+  testing is deferred at the user's request pending subscription renewal.
 - This consolidation started on clean `main` at `7019094b`, matching
   `origin/main`. The old `feat/quality-gates-pty-outcomes-durable-state`
   handoff is obsolete: `f7200bfb` is already part of main. Use `git status`

@@ -692,12 +692,12 @@ is reachable today. Workspace daily workflow is now the first P1 roadmap track.
   native profiling investigation without speculative production scheduling
   changes. It is not packaged/live-PTY or universal FPS acceptance. Exact scope,
   raw evidence and reproduction: `dev/workspace-release-0.14.7.md`.
-- **SOURCE FIXED 2026-09-12 - Count viewer panes separately in Workspace summaries.**
+- **BUILT 0.14.7 2026-09-12 - Count viewer panes separately in Workspace summaries.**
   Workspace and Fleet classify `pane.kind` before inert CLI carrier fields:
   File viewer and Saved conversation stay distinct from actual terminals/CLIs.
   Header account grouping and Fleet attention mapping remain intact. All 33
-  focused component/projection tests passed. Packaging and installed 0.14.7
-  observation are pending; see `dev/workspace-release-0.14.7.md`.
+  focused component/projection tests and both installer builds passed. Installed
+  0.14.7 observation remains separate; see `dev/workspace-release-0.14.7.md`.
 - **NEEDS REPRODUCTION - A layout arriving after first mount is ignored.**
   Current normal startup hydrates before mounting the Workspace, so this old
   late-arrival sequence is not established as reachable there. It is distinct
@@ -714,7 +714,7 @@ is reachable today. Workspace daily workflow is now the first P1 roadmap track.
   backstop: a closed pane inside a tabs node would stay a leaf and `renderTile`
   would return a bare `<div/>`. Latent — no `createNode` is passed today, so the
   library never mints a tabs node. Must be fixed alongside the tabs work above.
-- **SOURCE FIXED 0.14.7 - Missing-conversation fallback survives zoom.** The
+- **BUILT 0.14.7 - Missing-conversation fallback survives zoom.** The
   fallback carries `data-pane-zoomed` and selects its pane on pointer/keyboard
   focus. Zooming a missing transcript retains the explanation and Remove tile
   control; Show all panes restores the grid. Regression coverage exercises the

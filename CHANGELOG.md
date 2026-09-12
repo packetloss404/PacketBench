@@ -9,6 +9,8 @@ task list.
 
 ## [Unreleased]
 
+## [0.14.7] - 2026-09-12 (local build)
+
 - Workspace and Fleet summaries distinguish file viewers and saved conversations
   from terminals while retaining CLI labels and account grouping.
 - Missing-conversation panes remain visible when zoomed, and pointer/keyboard
@@ -19,6 +21,10 @@ task list.
   tooling. Eight-pane cold/warm native profiling measured 16.8 ms p95 frame
   intervals with no long tasks. Paid Claude validation is deferred at the user's
   request. Scope: [0.14.7 evidence](./dev/workspace-release-0.14.7.md).
+- All eleven full local quality gates and the fifteen-case disposable OpenSSH
+  matrix passed. NSIS and MSI installers built from clean commit `4443c8b0`;
+  artifact hashes were verified. Installation remains version-specific: the
+  installed application is still 0.14.6.
 
 ## [0.14.6] - 2026-09-11 (local verification)
 

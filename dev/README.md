@@ -14,10 +14,11 @@ Current Workspace controls/readability and browser/native-SSH acceptance:
 This also records the correction to Playwright output isolation; earlier raw
 acceptance directories were removed, while tracked dated reports survived.
 
-The preliminary 0.14.7 source and native WebView2 profiling evidence is in
+The 0.14.7 build and native WebView2 profiling evidence is in
 [`workspace-release-0.14.7.md`](./workspace-release-0.14.7.md). It records the
-Workspace summary and Monitor concurrency fixes; build/full gates and installed
-0.14.7 checks are pending. The real Claude provider test is deferred at the
+Workspace summary, missing-conversation zoom and Monitor concurrency fixes;
+all eleven full gates, fifteen OpenSSH cases and both installer builds passed.
+The installed application remains 0.14.6. The real Claude test is deferred at the
 user's request because subscription renewal is required.
 
 Use these documents in order:
@@ -36,8 +37,8 @@ work. Completed work belongs in `CHANGELOG.md`.
 
 | Document                                                                     | Status                                                                                                                                                                                    |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`../CHANGELOG.md`](../CHANGELOG.md) | **CURRENT BUILD RECORD** — 0.14.6 built and installed with shared Workspace controls, readable layouts, native eight-column restart proof and 15/15 OpenSSH cases. Exact hashes and scope: [`workspace-usability-evidence-2026-09-11.md`](./workspace-usability-evidence-2026-09-11.md). Latest annotated release tag remains v0.10.3. |
-| [`workspace-release-0.14.7.md`](./workspace-release-0.14.7.md) | **PRELIMINARY** — summary/Monitor source fixes and isolated native WebView2 cold/warm output profiles complete; full gates, packaging and installed 0.14.7 checks pending. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | **CURRENT BUILD RECORD** — 0.14.7 built and pushed to main; 0.14.6 remains installed. Latest annotated release tag remains v0.10.3. |
+| [`workspace-release-0.14.7.md`](./workspace-release-0.14.7.md) | **BUILT** — summary/zoom/Monitor fixes, isolated native WebView2 profiles, eleven full gates, fifteen OpenSSH cases and both Windows installers passed. Exact source and artifact hashes recorded. |
 | [`proof-audit-2026-08-01.md`](./proof-audit-2026-08-01.md)                   | **DATED SNAPSHOT** - exact August 1 source/package proof; superseded for current counts and package identity by v0.10.3, but still authoritative for why each external gate remained open |
 | [`acceptance.md`](./acceptance.md) | **HISTORICAL MATRIX** — rows describe 0.13.2. Current 0.14.1 installer/OpenSSH proof is in [`installer-ssh-evidence-2026-09-08.md`](./installer-ssh-evidence-2026-09-08.md); later GUI/provider/hardware observations are in the September 8 GUI report. Existing ticks are not promoted. |
 | [`local-quality-gates.md`](./local-quality-gates.md)                         | Current local gate commands and release-check composition                                                                                                                                 |
