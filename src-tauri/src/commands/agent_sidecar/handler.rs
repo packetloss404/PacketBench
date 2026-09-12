@@ -81,8 +81,8 @@ impl SidecarManager {
                         Some(proto) => format!(
                             "The agent sidecar speaks protocol v{proto}, but PacketBench requires \
                              v{MINIMUM_PROTOCOL_VERSION} or newer. A sidecar this old ignores \
-                             per-session MCP trust rules and would run every MCP server \
-                             unfiltered, so API-agent sessions are disabled. Reinstall PacketBench, \
+                             required MCP trust checks, including remote project trust, \
+                             so API-agent sessions are disabled. Reinstall PacketBench, \
                              or clear PACKETBENCH_SIDECAR_PATH if you set it."
                         ),
                         None => format!(
@@ -633,9 +633,7 @@ impl SidecarManager {
                     // discriminator stays the flight linkage's provider field
                     // (historical codex task sessions are only reachable
                     // through it); ownerless sessions are always per-turn.
-                    let cumulative = owner
-                        .as_ref()
-                        .is_some_and(|o| o.provider == "openai-codex");
+                    let cumulative = owner.as_ref().is_some_and(|o| o.provider == "openai-codex");
                     let (d_in, d_out, d_cr, d_cc) = if cumulative {
                         let key = (
                             session_for_async.clone(),

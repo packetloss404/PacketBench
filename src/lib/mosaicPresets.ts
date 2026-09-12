@@ -86,6 +86,62 @@ export function getLeafOrder(tree: MosaicNode<string> | null): string[] {
   return [];
 }
 
+/** Only mounted tiles are navigable: this library unmounts inactive tabs. */
+export function getVisibleLeafOrder(tree: MosaicNode<string> | null): string[] {
+  if (tree === null) return [];
+  if (typeof tree === "string") return [tree];
+  if (isSplitNode(tree)) return tree.children.flatMap(getVisibleLeafOrder);
+  const active = tree.tabs[tree.activeTabIndex ?? 0];
+  return active ? [active] : [];
+}
+
+export interface MosaicCanvasSize {
+  width: number;
+  height: number;
+}
+
+export const READABLE_PANE_SIZE: MosaicCanvasSize = { width: 360, height: 240 };
+
+/** Minimum canvas needed to keep each visible tile readable at saved ratios.
+ * Resizing the canvas leaves the tree and React mount identities untouched. */
+export function readableMosaicSize(
+  tree: MosaicNode<string> | null,
+  paneSize = READABLE_PANE_SIZE,
+): MosaicCanvasSize {
+  if (tree === null) return { width: 0, height: 0 };
+  if (typeof tree === "string" || !isSplitNode(tree)) return { ...paneSize };
+  const sizes = tree.children.map((child) => readableMosaicSize(child, paneSize));
+  const fractions = tree.children.map((_, index) =>
+    Math.max((tree.splitPercentages?.[index] ?? 100 / tree.children.length) / 100, 0.01),
+  );
+  return {
+    width: Math.ceil(
+      Math.max(
+        ...sizes.map((size, index) =>
+          tree.direction === "row" ? size.width / fractions[index] : size.width,
+        ),
+      ),
+    ),
+    height: Math.ceil(
+      Math.max(
+        ...sizes.map((size, index) =>
+          tree.direction === "column" ? size.height / fractions[index] : size.height,
+        ),
+      ),
+    ),
+  };
+}
+
+/** Equalize sizes without moving a leaf to a new parent/depth (a PTY restart). */
+export function balanceMosaicSizes(tree: MosaicNode<string>): MosaicNode<string> {
+  if (typeof tree === "string" || !isSplitNode(tree)) return tree;
+  return {
+    type: "split",
+    direction: tree.direction,
+    children: tree.children.map(balanceMosaicSizes),
+  };
+}
+
 /**
  * Append a new pane to the tree without moving anything already in it.
  *

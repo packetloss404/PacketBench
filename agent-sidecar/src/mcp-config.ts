@@ -8,7 +8,7 @@
 //
 // Sources, merged project-over-global:
 //   - Global:  ~/.claude/settings.json     ("mcpServers" object)
-//   - Project: <cwd>/.mcp.json             ("mcpServers" object)
+//   - Project: <cwd>/.mcp.json             (only with explicit host project trust)
 //
 // This module is pure and unit-testable: no process spawning, no protocol
 // coupling beyond the shared source/error summary shapes. It NEVER throws —
@@ -18,6 +18,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isProjectTrusted } from "./project-trust.js";
 
 export type McpTransport = "stdio" | "http" | "sse";
 
@@ -139,7 +140,9 @@ export function normalizeEntry(
 
 /**
  * Load MCP servers from the sidecar's own filesystem: global settings first,
- * then project `.mcp.json` (project overwrites global on matching server name).
+ * then trusted project `.mcp.json` (project overwrites global on matching name).
+ * The trust decision happens before merging; an untrusted project cannot
+ * replace global commands that the capability probe will later execute.
  *
  * Never throws. Each `readError` is also logged to stderr with a `[sidecar]`
  * prefix so the failure is visible in host logs, not only in the UX summary.
@@ -147,18 +150,20 @@ export function normalizeEntry(
 export async function loadMcpFromFs(
   cwd: string,
   _sessionId: string,
+  projectTrustDataDir?: string,
 ): Promise<{ servers: Record<string, unknown>; summary: McpSourceSummary }> {
   const servers: Record<string, unknown> = {};
   const sources: McpSourceInfo[] = [];
   const readErrors: McpReadError[] = [];
+  const projectTrusted = await isProjectTrusted(cwd, projectTrustDataDir);
 
   const scopes: { scope: McpScope; path: string }[] = [];
   // Resolving the global path calls os.homedir(), which THROWS (not returns
   // "") when $HOME is unset AND the uid has no passwd entry — a real config on
   // containerized/sandboxed SSH targets. Guard it so a missing home degrades to
-  // a read error on the global scope instead of failing the whole session; the
-  // project scope (derived from cwd, no homedir) still loads. This keeps the
-  // module's "NEVER throws" contract intact.
+  // a read error instead of failing the whole session. If homedir cannot be
+  // resolved the host trust list cannot be read either, so project config
+  // remains denied.
   try {
     scopes.push({ scope: "global", path: globalSettingsPath() });
   } catch (err) {
@@ -179,7 +184,23 @@ export async function loadMcpFromFs(
       );
       continue;
     }
+    if (scope === "project" && !projectTrusted) {
+      if (Object.keys(raw).length > 0) {
+        const message = "Project MCP servers ignored: add this project's absolute path to " +
+          "the execution host's trusted-projects.json (version 1, projects array).";
+        readErrors.push({ scope, path, message });
+        process.stderr.write(`[sidecar] ${message}\n`);
+      }
+      continue;
+    }
     for (const [name, value] of Object.entries(raw)) {
+      // Only a trusted project may disable a same-named global server.
+      if (value && typeof value === "object" && (value as { disabled?: unknown }).disabled === true) {
+        delete servers[name];
+        const existing = sources.findIndex((s) => s.name === name);
+        if (existing >= 0) sources.splice(existing, 1);
+        continue;
+      }
       const normalized = normalizeEntry(value);
       if (!normalized) continue;
       // Project scope overwrites global on the same name (last write wins);

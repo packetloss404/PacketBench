@@ -13,6 +13,9 @@ const baseURL = `http://127.0.0.1:${port}`;
  */
 export default defineConfig({
   testDir: "./e2e",
+  // Playwright clears outputDir before each run. Never point it at the shared
+  // parent containing installer/SSH evidence and disposable acceptance repos.
+  outputDir: "test-results/playwright",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

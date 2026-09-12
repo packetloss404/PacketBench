@@ -32,12 +32,57 @@ use crate::commands::shared::hide_window_async;
 use crate::commands::ssh_keys;
 use crate::core::execution::{sh_quote, SshConfig};
 
+#[cfg(test)]
+#[path = "live_ssh_tests.rs"]
+mod live_ssh_tests;
+
 const REMOTE_SIDECAR_TIMEOUT_SECS: u64 = 25;
 const SIDECAR_WRITER_CAPACITY: usize = 256;
 const MAX_SIDECAR_STDOUT_LINE_BYTES: usize = 8 * 1024 * 1024;
 const REMOTE_PATH_SETUP: &str = r#"export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$HOME/.opencode/bin:$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | tail -1)/bin:/usr/local/bin:$PATH" 2>/dev/null;"#;
 const SIDECAR_RESTART_RECOVERABLE_ERROR: &str =
     "Sidecar restarted — please resend your message to continue this conversation.";
+
+/// No request (including its API key) may reach an SSH sidecar before this
+/// succeeds. Keep the buffered reader for the event loop so bytes read ahead
+/// with `ready` are not discarded.
+async fn await_remote_handshake<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> Result<(), String> {
+    tokio::time::timeout(Duration::from_secs(REMOTE_SIDECAR_TIMEOUT_SECS), async {
+        let mut buffer = Vec::new();
+        loop {
+            let line = read_capped_line(reader, &mut buffer)
+                .await
+                .map_err(|e| format!("SSH sidecar handshake failed: {e}"))?
+                .ok_or_else(|| "SSH sidecar exited before its ready handshake".to_string())?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let ready: Value = serde_json::from_str(&line)
+                .map_err(|_| "SSH sidecar sent an invalid ready handshake".to_string())?;
+            let version = ready
+                .get("protocolVersion")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok());
+            if ready.get("type").and_then(Value::as_str) != Some("ready")
+                || !protocol_meets_floor(version)
+            {
+                return Err(format!(
+                    "SSH sidecar must advertise protocol v{MINIMUM_PROTOCOL_VERSION} or newer \
+                     to enforce MCP and remote project trust. Update the sidecar on this host."
+                ));
+            }
+            if version != Some(EXPECTED_PROTOCOL_VERSION) {
+                warn!(expected = EXPECTED_PROTOCOL_VERSION, got = ?version,
+                    "remote sidecar protocol version mismatch");
+            }
+            return Ok(());
+        }
+    })
+    .await
+    .map_err(|_| "Timed out waiting for SSH sidecar ready handshake".to_string())?
+}
 
 fn kill_process_tree(pid: u32, own_group: bool) {
     if pid <= 1 {
@@ -483,7 +528,8 @@ impl SidecarManager {
                 .arg(remote_sidecar_launch_script(config))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
             hide_window_async(&mut cmd);
             #[cfg(unix)]
             cmd.process_group(0);
@@ -521,6 +567,17 @@ impl SidecarManager {
                 .take()
                 .ok_or_else(|| "SSH sidecar stderr was not piped".to_string())?;
 
+            let stderr_handle = tokio::spawn(stderr_loop(stderr));
+            let mut stdout = BufReader::new(stdout);
+            if let Err(message) = await_remote_handshake(&mut stdout).await {
+                if let Some(pid) = child_pid {
+                    kill_process_tree(pid, true);
+                }
+                let _ = child.wait().await;
+                self.remote_children.lock().unwrap().remove(session_id);
+                stderr_handle.abort();
+                return Err(message);
+            }
             let (writer_tx, writer_rx) = mpsc::channel::<String>(SIDECAR_WRITER_CAPACITY);
             let target_label = remote_target_label(config);
             {
@@ -550,7 +607,6 @@ impl SidecarManager {
                     Box::pin(reader_mgr.remote_reader_loop(reader_session_id, stdout));
                 reader_future.await;
             });
-            let stderr_handle = tokio::spawn(stderr_loop(stderr));
 
             info!(
                 session_id = %session_id,
@@ -1096,9 +1152,8 @@ impl SidecarManager {
     async fn remote_reader_loop(
         self: Arc<Self>,
         session_id: String,
-        stdout: tokio::process::ChildStdout,
+        mut reader: BufReader<tokio::process::ChildStdout>,
     ) {
-        let mut reader = BufReader::new(stdout);
         let mut buffer = Vec::new();
         loop {
             match read_capped_line(&mut reader, &mut buffer).await {
@@ -1131,12 +1186,9 @@ impl SidecarManager {
                                     protocol_version = ?protocol_version,
                                     "remote sidecar ready"
                                 );
-                                // F7: the remote handshake arrives after we
-                                // have already sent `start_session`, so the
-                                // floor check here is a kill switch rather
-                                // than a gate — tear the session down before
-                                // the model can take a turn against a sidecar
-                                // that ignores the MCP trust snapshot.
+                                // The initial handshake was checked before
+                                // sending start_session. Reject a later ready
+                                // event too if it advertises a downgraded peer.
                                 if !protocol_meets_floor(protocol_version) {
                                     let message = format!(
                                         "The sidecar on this SSH host speaks protocol {}, but \
@@ -2066,7 +2118,37 @@ mod remote_tests {
     fn remote_launch_script_execs_node_sidecar_in_project() {
         let script = remote_sidecar_launch_script(&sample_cfg("/home/alice/project"));
         assert!(script.contains("cd \"$PROJECT_PATH\""));
-        assert!(script.contains("PACKETBENCH_REMOTE_SIDECAR=1 exec \"$NODE_BIN\" \"$SIDECAR_ENTRY\""));
+        assert!(
+            script.contains("PACKETBENCH_REMOTE_SIDECAR=1 exec \"$NODE_BIN\" \"$SIDECAR_ENTRY\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_handshake_requires_trust_capable_ready_and_preserves_buffered_events() {
+        for line in [
+            "{\"type\":\"ready\",\"protocolVersion\":11}\n",
+            "{\"type\":\"ready\"}\n",
+            "{\"type\":\"done\",\"protocolVersion\":12}\n",
+            "{\"type\":\"ready\",\"protocolVersion\":4294967308}\n",
+            "not json\n",
+            "",
+        ] {
+            let mut reader = BufReader::new(line.as_bytes());
+            assert!(await_remote_handshake(&mut reader).await.is_err(), "{line}");
+        }
+        for version in [MINIMUM_PROTOCOL_VERSION, EXPECTED_PROTOCOL_VERSION + 1] {
+            let input = format!(
+                "\n{{\"type\":\"ready\",\"protocolVersion\":{version}}}\n{{\"type\":\"done\"}}\n"
+            );
+            let mut reader = BufReader::new(input.as_bytes());
+            await_remote_handshake(&mut reader).await.unwrap();
+            assert_eq!(
+                read_capped_line(&mut reader, &mut Vec::new())
+                    .await
+                    .unwrap(),
+                Some("{\"type\":\"done\"}".to_string())
+            );
+        }
     }
 
     #[tokio::test]

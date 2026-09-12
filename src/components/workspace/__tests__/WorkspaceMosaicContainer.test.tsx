@@ -1,16 +1,25 @@
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerModal, resetModalStack, unregisterModal } from "@/lib/modalStack";
 import { WorkspaceMosaicContainer } from "@/components/workspace/WorkspaceMosaicContainer";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useReviewStore } from "@/stores/reviewStore";
+import { useLayoutStore } from "@/stores/layoutStore";
 import type { Workspace } from "@/types/workspace";
+import type { MosaicNode } from "@/types/mosaic";
+import { storageKey } from "@/lib/brand";
 
 // Track PTY-owner mounts. TerminalPane owns the agent PTY (useTerminalSession
 // auto-starts a session ~200ms after mount), so a second mounted TerminalPane
 // for the same paneId IS the duplicate-agent-spawn bug this suite guards
 // against, and any unmount/remount across zoom would kill the live PTY.
 const mountLog = vi.hoisted(() => [] as string[]);
+const saveWorkspacesSlice = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("@/lib/tauri", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tauri")>()),
+  saveWorkspacesSlice,
+}));
 
 vi.mock("@/components/session/TerminalPane", async () => {
   const { useEffect } = await import("react");
@@ -33,12 +42,14 @@ vi.mock("@/components/session/TerminalPane", async () => {
  * The genuine `Mosaic` still renders — only the prop is intercepted.
  */
 const releaseRef = vi.hoisted(() => ({ current: null as ((t: unknown) => void) | null }));
+const renderedTree = vi.hoisted(() => ({ current: null as MosaicNode<string> | null }));
 
 vi.mock("react-mosaic-component", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-mosaic-component")>();
   const React = await import("react");
   const Wrapped = (props: Record<string, unknown>) => {
     releaseRef.current = props.onRelease as (t: unknown) => void;
+    renderedTree.current = props.value as MosaicNode<string> | null;
     return React.createElement(actual.Mosaic as never, props as never);
   };
   return { ...actual, Mosaic: Wrapped };
@@ -141,9 +152,7 @@ describe("WorkspaceMosaicContainer zoom", () => {
     expect(zoomedWrapper).not.toBeNull();
     // The zoom marker sits on pane-a's wrapper inside its mosaic tile, which
     // mosaic-overrides.css maximizes in place.
-    expect(
-      zoomedWrapper!.querySelector('[data-testid="terminal-pane-a"]'),
-    ).not.toBeNull();
+    expect(zoomedWrapper!.querySelector('[data-testid="terminal-pane-a"]')).not.toBeNull();
     expect(zoomedWrapper!.closest(".mosaic-tile")).not.toBeNull();
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -494,8 +503,8 @@ describe("WorkspaceMosaicContainer layout persistence", () => {
     // Both panes present exactly once, in the SAVED order.
     expect(terminalCount(container, "pane-a")).toBe(1);
     expect(terminalCount(container, "pane-b")).toBe(1);
-    const tiles = [...container.querySelectorAll("[data-testid^='terminal-']")].map(
-      (el) => el.getAttribute("data-testid"),
+    const tiles = [...container.querySelectorAll("[data-testid^='terminal-']")].map((el) =>
+      el.getAttribute("data-testid"),
     );
     expect(tiles).toEqual(["terminal-pane-b", "terminal-pane-a"]);
   });
@@ -527,26 +536,42 @@ describe("WorkspaceMosaicContainer layout persistence", () => {
     expect(terminalCount(container, "pane-b")).toBe(1);
   });
 
-  it("does not persist a layout the user never arranged", () => {
-    const ws = withPanes(["pane-a", "pane-b"]);
+  it("restores the displayed columns after incremental additions without restarting surviving PTYs", async () => {
+    const ws = withPanes(["pane-a"]);
     useWorkspaceStore.setState({ workspaces: [ws] });
-    const { rerender } = render(<WorkspaceMosaicContainer workspace={ws} />);
+    function CurrentWorkspace() {
+      const workspace = useWorkspaceStore((state) => state.workspaces[0]);
+      return <WorkspaceMosaicContainer workspace={workspace} />;
+    }
+    const firstRun = render(<CurrentWorkspace />);
     mountLog.length = 0;
 
-    const grown = withPanes(["pane-a", "pane-b", "pane-c"]);
-    useWorkspaceStore.setState({ workspaces: [grown] });
-    act(() => {
-      rerender(<WorkspaceMosaicContainer workspace={grown} />);
+    for (let index = 0; index < 3; index++) {
+      act(() => {
+        useWorkspaceStore.getState().addPane(ws.id, "terminal");
+      });
+    }
+    const displayedBeforeClose = structuredClone(renderedTree.current);
+    const ids = useWorkspaceStore.getState().workspaces[0].panes.map((pane) => pane.id);
+    expect(displayedBeforeClose).toMatchObject({
+      type: "split",
+      direction: "row",
+      children: ids,
     });
+    expect(mountLog.filter((entry) => entry.startsWith("unmount:"))).toEqual([]);
+    expect(mountLog.filter((entry) => entry === "mount:pane-a")).toEqual([]);
 
-    // Adding a pane appends to the root row. Saving that would freeze the
-    // append-grown shape forever — six panes added one at a time become six
-    // ~16% columns, which the pane-count preset used to heal on the next
-    // launch. Only a user gesture writes a layout; `reconcileLayout` appends
-    // new panes on load anyway, so the restored tree matches what was on
-    // screen.
-    expect(useWorkspaceStore.getState().workspaces[0].layout).toBeUndefined();
-    expect(mountLog.filter((e) => e.startsWith("unmount:"))).toEqual([]);
+    // Re-open from the actual persisted snapshot, not the in-memory tree.
+    const saved = JSON.parse(localStorage.getItem(storageKey("workspaces-cache"))!);
+    await waitFor(() => expect(saveWorkspacesSlice).toHaveBeenLastCalledWith(saved));
+    firstRun.unmount();
+    useWorkspaceStore.setState({ workspaces: [], activeWorkspaceId: null });
+    useWorkspaceStore.getState().hydrateFromBackend(saved);
+    mountLog.length = 0;
+    render(<CurrentWorkspace />);
+    expect(renderedTree.current).toEqual(displayedBeforeClose);
+    for (const id of ids)
+      expect(mountLog.filter((entry) => entry === `mount:${id}`)).toHaveLength(1);
   });
 
   it("does not bump updatedAt — rearranging tiles is not activity on the work", () => {
@@ -555,11 +580,194 @@ describe("WorkspaceMosaicContainer layout persistence", () => {
     const before = useWorkspaceStore.getState().workspaces[0].updatedAt;
 
     act(() => {
-      useWorkspaceStore
-        .getState()
-        .setWorkspaceLayout("ws-1", { type: "split", direction: "row", children: ["pane-b", "pane-a"] });
+      useWorkspaceStore.getState().setWorkspaceLayout("ws-1", {
+        type: "split",
+        direction: "row",
+        children: ["pane-b", "pane-a"],
+      });
     });
 
     expect(useWorkspaceStore.getState().workspaces[0].updatedAt).toBe(before);
+  });
+
+  it("keeps eight live PTYs mounted across readable/fit, viewport width, balance, and zoom changes", () => {
+    const ids = Array.from({ length: 8 }, (_, index) => `pane-${index}`);
+    const layout = {
+      type: "split" as const,
+      direction: "row" as const,
+      children: ids,
+      splitPercentages: [10, 10, 10, 10, 15, 15, 15, 15],
+    };
+    const workspace = withPanes(ids, layout);
+    useWorkspaceStore.setState({ workspaces: [workspace] });
+    useLayoutStore.setState({ activePaneId: ids[0] });
+    const view = render(
+      <div style={{ width: 800, height: 600 }}>
+        <WorkspaceMosaicContainer workspace={workspace} />
+      </div>,
+    );
+    const canvas = view.container.querySelector<HTMLElement>("[data-workspace-canvas]")!;
+    expect(canvas.style.minWidth).toBe("3600px");
+    expect(canvas.style.minHeight).toBe("240px");
+    expect(view.getByRole("toolbar", { name: "Workspace pane layout" })).toBeInTheDocument();
+    mountLog.length = 0;
+
+    fireEvent.click(view.getByRole("button", { name: "Fit all" }));
+    expect(canvas.style.minWidth).toBe("0px");
+    expect(renderedTree.current).toEqual(layout);
+    view.rerender(
+      <div style={{ width: 1600, height: 900 }}>
+        <WorkspaceMosaicContainer workspace={workspace} />
+      </div>,
+    );
+    fireEvent.click(view.getByRole("button", { name: "Readable" }));
+    expect(canvas.style.minWidth).toBe("3600px");
+    fireEvent.click(view.getByRole("button", { name: "Balance sizes" }));
+    expect(canvas.style.minWidth).toBe("2880px");
+    expect(useWorkspaceStore.getState().workspaces[0].layout).toEqual({
+      type: "split",
+      direction: "row",
+      children: ids,
+    });
+    fireEvent.click(view.getByRole("button", { name: "Zoom selected pane" }));
+    expect(canvas.style.minWidth).toBe("0px");
+    expect(view.getByRole("button", { name: "Fit all" })).toBeDisabled();
+    fireEvent.click(view.getByRole("button", { name: "Show all panes" }));
+    expect(canvas.style.minWidth).toBe("2880px");
+    expect(mountLog).toEqual([]);
+    for (const id of ids) expect(terminalCount(view.container, id)).toBe(1);
+  });
+
+  it("reveals off-screen selection and restores scroll after zoom without remounting", () => {
+    const workspace = withPanes(["pane-a", "pane-b"]);
+    useWorkspaceStore.setState({ workspaces: [workspace] });
+    useLayoutStore.setState({ activePaneId: "pane-a" });
+    const view = render(<WorkspaceMosaicContainer workspace={workspace} />);
+    const viewport = view.container.querySelector<HTMLElement>("[data-workspace-viewport]")!;
+    const tile = view.container
+      .querySelector('[data-workspace-pane-id="pane-b"]')!
+      .closest<HTMLElement>(".mosaic-tile")!;
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 600,
+      top: 0,
+      bottom: 400,
+    } as DOMRect);
+    const paneBounds = vi
+      .spyOn(tile, "getBoundingClientRect")
+      .mockReturnValue({ left: 800, right: 1160, top: 0, bottom: 240 } as DOMRect);
+    fireEvent.click(view.getByRole("button", { name: "Next pane" }));
+    expect(useLayoutStore.getState().activePaneId).toBe("pane-b");
+    expect(viewport.scrollLeft).toBe(560);
+    fireEvent.scroll(viewport);
+    paneBounds.mockReturnValue({ left: 240, right: 600, top: 0, bottom: 240 } as DOMRect);
+    mountLog.length = 0;
+    fireEvent.click(view.getByRole("button", { name: "Zoom selected pane" }));
+    expect(viewport.scrollLeft).toBe(0);
+    fireEvent.click(view.getByRole("button", { name: "Show all panes" }));
+    expect(viewport.scrollLeft).toBe(560);
+    expect(mountLog).toEqual([]);
+  });
+
+  it("keeps the last selected pane visible after fit/readable, balance, and a settled window resize", () => {
+    const observers = new Map<Element, ResizeObserverCallback>();
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe(element: Element) {
+          observers.set(element, this.callback);
+        }
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const ids = Array.from({ length: 8 }, (_, index) => `pane-${index}`);
+    const workspace = withPanes(ids, {
+      type: "split",
+      direction: "row",
+      children: ids,
+      splitPercentages: [20, 20, 10, 10, 10, 10, 10, 10],
+    });
+    useWorkspaceStore.setState({ workspaces: [workspace] });
+    useLayoutStore.setState({ activePaneId: ids[0] });
+    const view = render(
+      <>
+        <input aria-label="Unsent editor text" defaultValue="keep editing" />
+        <WorkspaceMosaicContainer workspace={workspace} />
+      </>,
+    );
+    try {
+      const viewport = view.container.querySelector<HTMLElement>("[data-workspace-viewport]")!;
+      const canvas = view.container.querySelector<HTMLElement>("[data-workspace-canvas]")!;
+      const tile = view.container
+        .querySelector(`[data-workspace-pane-id="${ids[7]}"]`)!
+        .closest<HTMLElement>(".mosaic-tile")!;
+      let width = 600;
+      let left = 0;
+      const canvasWidth = () => Math.max(width, parseFloat(canvas.style.minWidth) || 0);
+      // Browser scroll ranges clamp when the canvas shrinks; jsdom needs this
+      // geometry model to exercise the actual overflow transition.
+      Object.defineProperty(viewport, "scrollLeft", {
+        configurable: true,
+        get: () => Math.min(left, Math.max(0, canvasWidth() - width)),
+        set: (value: number) => {
+          left = Math.max(0, Math.min(value, canvasWidth() - width));
+        },
+      });
+      vi.spyOn(viewport, "getBoundingClientRect").mockImplementation(
+        () => ({ left: 0, right: width, top: 0, bottom: 400 }) as DOMRect,
+      );
+      vi.spyOn(tile, "getBoundingClientRect").mockImplementation(
+        () =>
+          ({
+            left:
+              canvasWidth() *
+                (renderedTree.current &&
+                typeof renderedTree.current === "object" &&
+                "splitPercentages" in renderedTree.current
+                  ? 0.9
+                  : 0.875) -
+              viewport.scrollLeft,
+            right: canvasWidth() - viewport.scrollLeft,
+            top: 0,
+            bottom: 240,
+          }) as DOMRect,
+      );
+      fireEvent.change(view.getByRole("combobox", { name: "Select visible pane" }), {
+        target: { value: ids[7] },
+      });
+      const editor = view.getByRole("textbox", { name: "Unsent editor text" });
+      editor.focus();
+      fireEvent.click(view.getByRole("button", { name: "Fit all" }));
+      expect(viewport.scrollLeft).toBe(0);
+      fireEvent.click(view.getByRole("button", { name: "Readable" }));
+      expect(viewport.scrollLeft).toBe(3000);
+      fireEvent.click(view.getByRole("button", { name: "Balance sizes" }));
+      expect(viewport.scrollLeft).toBe(2280);
+      const savedBeforeResize = useWorkspaceStore.getState().workspaces[0].layout;
+      width = 420;
+      act(() => {
+        observers.get(viewport)!(
+          [{ contentRect: { width, height: 400 } } as ResizeObserverEntry],
+          {} as ResizeObserver,
+        );
+        for (const callback of frames.values()) callback(0);
+        frames.clear();
+      });
+      expect(viewport.scrollLeft).toBe(2460);
+      expect(useWorkspaceStore.getState().workspaces[0].layout).toBe(savedBeforeResize);
+      expect(document.activeElement).toBe(editor);
+      expect(editor).toHaveValue("keep editing");
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
   });
 });

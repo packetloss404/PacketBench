@@ -1,17 +1,14 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
-  GripHorizontal,
   Loader2,
   Plus,
   Play,
   X,
-  Maximize2,
-  Minimize2,
   MoreVertical,
 } from "lucide-react";
-import { MosaicWindowContext } from "react-mosaic-component";
+import { TileChrome } from "./TileChrome";
 import { TerminalPane, type TerminalHeaderRenderState } from "@/components/session/TerminalPane";
 import { useAgentStore } from "@/stores/agentStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -67,6 +64,11 @@ type PacketCodeRuntimeState =
 
 const NOT_APPLICABLE_RUNTIME: PacketCodeRuntimeState = { status: "not-applicable", identity: null };
 
+interface PaneInput {
+  label: string;
+  content: string;
+}
+
 export function WorkspacePane({ pane, workspaceId, autoStart = true }: WorkspacePaneProps) {
   const agents = useAgentStore((s) => s.agents);
   const workspace = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId));
@@ -92,6 +94,9 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
     error?: string;
   } | null>(null);
   const [newPinCmd, setNewPinCmd] = useState("");
+  const [failedInput, setFailedInput] = useState<(PaneInput & { error: string }) | null>(null);
+  const [sendingInput, setSendingInput] = useState(false);
+  const inputInFlight = useRef(false);
   const overflowRef = useRef<HTMLDivElement>(null);
   const promptTemplates = usePromptStore((s) => s.templates);
   const packetCodeLocalDataHome = usePacketCodeIntegrationStore((s) => s.localDataHome);
@@ -133,13 +138,36 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
 
   const pinnedCommands = useMemo(() => pane.pinnedCommands ?? [], [pane.pinnedCommands]);
 
-  const runCommand = useCallback(
-    (cmd: string) => {
-      if (pane.sessionId) {
-        writePty(pane.sessionId, cmd + "\r");
+  const sendInput = useCallback(
+    async (input: PaneInput) => {
+      // A second click must not submit twice while the first write is pending.
+      if (inputInFlight.current) return;
+      inputInFlight.current = true;
+      setSendingInput(true);
+      setShowOverflow(false);
+      setOverflowView("root");
+      try {
+        if (!pane.sessionId) throw new Error("This pane has no running session.");
+        // CR submits consistently through ConPTY as well as Unix PTYs.
+        await writePty(pane.sessionId, input.content + "\r");
+        setFailedInput(null);
+      } catch (reason) {
+        // Keep the exact attempted text even if its template is later edited.
+        setFailedInput({
+          ...input,
+          error: reason instanceof Error ? reason.message : String(reason),
+        });
+      } finally {
+        inputInFlight.current = false;
+        setSendingInput(false);
       }
     },
     [pane.sessionId],
+  );
+
+  const runCommand = useCallback(
+    (cmd: string) => void sendInput({ label: "Command", content: cmd }),
+    [sendInput],
   );
 
   // Paste a prompt template's body into this pane's PTY. Mirrors the
@@ -147,25 +175,12 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
   // the specific pane the user clicked on.
   const sendPromptTemplate = useCallback(
     (templateId: string) => {
-      if (!pane.sessionId) return;
       const tpl = usePromptStore.getState().templates.find((t) => t.id === templateId);
       if (!tpl) return;
-      // Use CR ("\r") to match `runCommand` — TTY line discipline submits on
-      // CR, not LF; some Windows ConPTY configs won't fire the agent's
-      // Enter handler on bare LF.
-      void writePty(pane.sessionId, tpl.content + "\r");
-      setShowOverflow(false);
-      setOverflowView("root");
+      void sendInput({ label: `Prompt “${tpl.name}”`, content: tpl.content });
     },
-    [pane.sessionId],
+    [sendInput],
   );
-
-  // Reach the mosaic drag source from the surrounding MosaicWindow so the
-  // unified header bar acts as the drag handle for reordering tiles.
-  // Context null-guard is defensive — panes are always rendered inside Mosaic
-  // (zoom reuses the mounted tile rather than rendering outside the mosaic).
-  const mosaicCtx = useContext(MosaicWindowContext);
-  const mosaicWindowActions = mosaicCtx?.mosaicWindowActions ?? null;
 
   const agentName = agentConfig?.name ?? pane.agentId;
   const command = agentConfig?.command ?? pane.agentId;
@@ -487,60 +502,48 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
         state.error ?? (exitLabel && state.lastExit ? describePtyExitOutcome(state.lastExit) : statusLabel);
 
       const headerContent = (
-        <div
-          className="flex cursor-grab select-none items-center gap-2 border-b border-line-soft bg-bg-secondary px-2 py-1 active:cursor-grabbing"
-          onDoubleClick={() => setZoomedPane(isZoomed ? null : pane.id)}
-        >
-          <GripHorizontal size={11} className="shrink-0 text-text-muted" />
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${c.text} bg-current ${state.alive ? "animate-pulse" : ""}`}
-          />
-          <span className={`truncate text-ui font-semibold ${c.text}`} title={paneIdentity}>
-            {paneIdentity}
-          </span>
-          {packetCodeVersionLabel && (
+        <TileChrome
+          title={paneIdentity}
+          titleClassName={c.text}
+          icon={
             <span
-              className="max-w-[150px] truncate rounded border border-accent-amber/30 bg-accent-amber/5 px-1.5 py-0.5 font-mono text-meta text-accent-amber"
-              title={`Binary: ${packetCodeIdentity?.executablePath}\nVersion: ${packetCodeIdentity?.version}\nData home: ${packetCodeIdentity?.effectiveHome ?? "Unknown"}`}
-            >
-              {packetCodeVersionLabel}
-            </span>
-          )}
-          {/* FAULT: an unhonourable custom-shell selection fell back to
+              className={`h-2 w-2 shrink-0 rounded-full ${c.text} bg-current ${state.alive ? "animate-pulse" : ""}`}
+            />
+          }
+          identityDetails={
+            <>
+              {packetCodeVersionLabel && (
+                <span
+                  className="max-w-[150px] truncate rounded border border-accent-amber/30 bg-accent-amber/5 px-1.5 py-0.5 font-mono text-meta text-accent-amber"
+                  title={`Binary: ${packetCodeIdentity?.executablePath}\nVersion: ${packetCodeIdentity?.version}\nData home: ${packetCodeIdentity?.effectiveHome ?? "Unknown"}`}
+                >
+                  {packetCodeVersionLabel}
+                </span>
+              )}
+              {/* FAULT: an unhonourable custom-shell selection fell back to
               auto-detect with no signal at all — the header simply named a
               shell the user had not chosen. */}
-          {shellFallbackReason && (
-            <span
-              role="img"
-              aria-label={shellFallbackReason}
-              title={shellFallbackReason}
-              className="shrink-0 text-accent-amber"
-            >
-              <AlertTriangle size={11} />
-            </span>
-          )}
-          {/* Right next to the agent identity: two tiles running the same CLI
+              {shellFallbackReason && (
+                <span
+                  role="img"
+                  aria-label={shellFallbackReason}
+                  title={shellFallbackReason}
+                  className="shrink-0 text-accent-amber"
+                >
+                  <AlertTriangle size={11} />
+                </span>
+              )}
+              {/* Right next to the agent identity: two tiles running the same CLI
               under two logins are otherwise identical. Ambient panes render
               nothing here. */}
-          <AccountChip accountId={accountId} caveat={accountCaveat} className="max-w-[130px]" />
-          <div className="flex-1" />
-          <span
-            className={`shrink-0 rounded-full px-1.5 py-0.5 font-mono text-meta ${statusPillClass}`}
-            title={statusTitle}
-          >
-            {statusLabel}
-          </span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setZoomedPane(isZoomed ? null : pane.id);
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="shrink-0 p-0.5 text-text-muted transition-colors hover:text-accent-blue"
-            title={isZoomed ? "Exit zoom (Esc)" : "Zoom to focus"}
-          >
-            {isZoomed ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-          </button>
+              <AccountChip accountId={accountId} caveat={accountCaveat} className="max-w-[130px]" />
+            </>
+          }
+          status={{ label: statusLabel, className: statusPillClass, title: statusTitle }}
+          isZoomed={isZoomed}
+          onToggleZoom={() => setZoomedPane(isZoomed ? null : pane.id)}
+          shortcutHint="Previous/next terminal: Ctrl+Alt+PageUp / PageDown."
+        >
           <div ref={overflowRef} className="relative shrink-0">
             <button
               onClick={(e) => {
@@ -550,6 +553,8 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
               onMouseDown={(e) => e.stopPropagation()}
               className="p-0.5 text-text-muted transition-colors hover:text-text-primary"
               title="More"
+              aria-label={`More controls: ${paneIdentity}`}
+              aria-expanded={showOverflow}
             >
               <MoreVertical size={11} />
             </button>
@@ -666,7 +671,7 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
                         setShowOverflow(false);
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="hover:bg-accent-red/10 w-full px-3 py-1.5 text-left text-ui text-text-primary transition-colors hover:text-accent-red"
+                      className="w-full px-3 py-1.5 text-left text-ui text-text-primary transition-colors hover:bg-accent-red/10 hover:text-accent-red"
                     >
                       Close pane
                     </button>
@@ -751,7 +756,8 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
                             sendPromptTemplate(t.id);
                           }}
                           onMouseDown={(e) => e.stopPropagation()}
-                          className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-ui text-text-primary transition-colors hover:bg-bg-hover"
+                          disabled={!state.alive || sendingInput || !!failedInput}
+                          className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-ui text-text-primary transition-colors hover:bg-bg-hover disabled:opacity-40"
                           title={t.content}
                         >
                           <span className="truncate">{t.name}</span>
@@ -790,7 +796,9 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
                             onMouseDown={(e) => e.stopPropagation()}
                             className="shrink-0 p-0.5 text-text-muted transition-colors hover:text-accent-green"
                             title="Run"
-                            disabled={!pane.sessionId}
+                            disabled={
+                              !pane.sessionId || !state.alive || sendingInput || !!failedInput
+                            }
                           >
                             <Play size={10} />
                           </button>
@@ -846,7 +854,7 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
               </div>
             )}
           </div>
-        </div>
+        </TileChrome>
       );
 
       const quickBar =
@@ -856,7 +864,7 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
               <button
                 key={i}
                 onClick={() => runCommand(cmd)}
-                disabled={!pane.sessionId}
+                disabled={!pane.sessionId || !state.alive || sendingInput || !!failedInput}
                 className="max-w-[120px] truncate rounded bg-bg-hover px-2 py-0.5 text-meta text-text-secondary hover:text-text-primary disabled:opacity-40"
                 title={cmd}
               >
@@ -870,11 +878,56 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
         <div className="relative">
           {headerContent}
           {quickBar}
+          {sendingInput && (
+            <div role="status" className="px-2 py-1 text-ui text-text-muted">
+              Sending to terminal…
+            </div>
+          )}
+          {failedInput && (
+            <div
+              className="space-y-1 border-b border-bg-border bg-bg-secondary px-2 py-2 text-ui"
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <div role="alert" className="break-words text-accent-red">
+                {failedInput.label} could not be sent: {failedInput.error}
+              </div>
+              <pre className="max-h-24 select-text overflow-auto whitespace-pre-wrap break-words rounded bg-bg-primary px-2 py-1 font-mono text-meta text-text-secondary">
+                {failedInput.content}
+              </pre>
+              <p className="text-meta text-text-muted">
+                Check the terminal before retrying; some input may have arrived. Starting or
+                restarting the session does not resend this input.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => void sendInput(failedInput)}
+                  disabled={!pane.sessionId || !state.alive || sendingInput}
+                  className="rounded bg-bg-hover px-2 py-1 text-text-primary disabled:opacity-40"
+                >
+                  Retry send
+                </button>
+                <button
+                  onClick={() => state.onRestart()}
+                  disabled={sendingInput}
+                  className="rounded bg-bg-hover px-2 py-1 text-text-primary disabled:opacity-40"
+                >
+                  {state.alive ? "Restart session" : "Start session"}
+                </button>
+                <button
+                  onClick={() => setFailedInput(null)}
+                  disabled={sendingInput}
+                  className="rounded px-2 py-1 text-text-muted disabled:opacity-40"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       );
 
-      // Wire the bar as the mosaic drag source so users can drag it to reorder tiles.
-      return mosaicWindowActions?.connectDragSource(fullHeader) ?? fullHeader;
+      return fullHeader;
     },
     [
       agentConfig,
@@ -885,7 +938,6 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
       packetCodeVersionLabel,
       paneIdentity,
       shellFallbackReason,
-      mosaicWindowActions,
       isZoomed,
       setZoomedPane,
       pane.id,
@@ -905,6 +957,9 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
       pane.sessionId,
       promptTemplates,
       sendPromptTemplate,
+      sendInput,
+      failedInput,
+      sendingInput,
     ],
   );
 

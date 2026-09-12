@@ -24,8 +24,7 @@ export function useXterm({ containerRef, sessionIdRef, onUserInput }: UseXtermOp
       fontSize: 13,
       lineHeight: 1.15,
       letterSpacing: 0,
-      fontFamily:
-        "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
       fontWeight: "400",
       fontWeightBold: "600",
       rescaleOverlappingGlyphs: true,
@@ -113,10 +112,12 @@ export function useXterm({ containerRef, sessionIdRef, onUserInput }: UseXtermOp
 
     if (isContainerVisible()) loadWebgl();
 
-    try {
-      fitAddon.fit();
-    } catch {
-      // Container might not be sized yet
+    if (isContainerVisible()) {
+      try {
+        fitAddon.fit();
+      } catch {
+        // Container might not be sized yet
+      }
     }
 
     xtermRef.current = term;
@@ -134,16 +135,15 @@ export function useXterm({ containerRef, sessionIdRef, onUserInput }: UseXtermOp
     });
 
     let wasHidden = !isContainerVisible();
-    const resizeObserver = new ResizeObserver((entries) => {
-      // When the workspace is switched away, its container is set to display:none
-      // which reports a 0x0 contentRect. Fitting to that would resize the PTY to
-      // degenerate dimensions, which scrambles full-TUI CLIs like OpenCode on return.
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width < 1 || height < 1) {
-          wasHidden = true;
-          return;
-        }
+    let resizeFrame: number | null = null;
+    let lastObservedSize: { width: number; height: number } | null = null;
+    const fitVisibleContainer = () => {
+      resizeFrame = null;
+      // Visibility may change between the observer notification and this frame.
+      if (!isContainerVisible()) {
+        wasHidden = true;
+        lastObservedSize = null;
+        return;
       }
       try {
         fitAddon.fit();
@@ -167,6 +167,28 @@ export function useXterm({ containerRef, sessionIdRef, onUserInput }: UseXtermOp
           // ignore
         }
       }
+    };
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        // Hidden workspaces retain their PTYs and xterms; never resize them
+        // to zero or run a stale fit queued before the workspace switch.
+        if (width < 1 || height < 1) {
+          wasHidden = true;
+          lastObservedSize = null;
+          if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+          resizeFrame = null;
+          return;
+        }
+        if (!wasHidden && lastObservedSize?.width === width && lastObservedSize.height === height)
+          continue;
+        lastObservedSize = { width, height };
+        // Splitter/layout bursts need one measurement of the final geometry,
+        // not a forced fit (and potentially resize IPC) for every notification.
+        if (resizeFrame === null) {
+          resizeFrame = requestAnimationFrame(fitVisibleContainer);
+        }
+      }
     });
     resizeObserver.observe(containerRef.current);
 
@@ -183,6 +205,7 @@ export function useXterm({ containerRef, sessionIdRef, onUserInput }: UseXtermOp
 
     return () => {
       resizeObserver.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       // Dispose WebGL addon explicitly before terminal to release GPU context
       if (webglAddon) {
         webglAddon.dispose();

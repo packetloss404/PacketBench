@@ -49,6 +49,14 @@ export { deriveLegacyWorktree } from "@/lib/worktreeLifecycle";
 const SAVE_DEBOUNCE_MS = 500;
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/** Await durable user intent before launching a first turn or acknowledging a
+ * model choice. Cancel older debounced snapshots so they cannot undo it. */
+export async function saveConversationNow(conv: AgentConversation): Promise<void> {
+  if (conv.mode !== "api") return;
+  cancelPendingSave(conv.id);
+  await saveConversation(conv.id, JSON.stringify(snapshotForPersist(conv)));
+}
+
 export function scheduleSave(conv: AgentConversation): void {
   if (conv.mode !== "api") return; // only persist API conversations
   const existing = saveTimers.get(conv.id);
@@ -122,6 +130,7 @@ let hydrationPromise: Promise<void> | null = null;
 
 async function loadConversationSnapshot(options: {
   persistAutoArchive: boolean;
+  markInterrupted: boolean;
 }): Promise<AgentConversation[]> {
   const rawList = await loadConversations();
   const parsed: AgentConversation[] = [];
@@ -162,11 +171,21 @@ async function loadConversationSnapshot(options: {
       } = persisted;
       /* eslint-enable @typescript-eslint/no-unused-vars */
       conv.agent = canonicalizeAgentCli(conv.agent);
+      const interrupted = options.markInterrupted && conv.status === "active";
       conv.status = "idle";
       conv.messages = (conv.messages ?? []).map((message) =>
         normalizeMessageProvenance({ ...message, isStreaming: false }),
       );
       conv.queuedMessages = [];
+      if (interrupted) {
+        conv.messages.push({
+          id: `${conv.id}:interrupted:${conv.updatedAt}`,
+          role: "system",
+          content:
+            "The previous turn was interrupted when the app closed. Send a message to continue.",
+          timestamp: conv.updatedAt,
+        });
+      }
       parsed.push(conv);
     } catch (e) {
       console.warn("Skipping malformed conversation:", e);
@@ -184,7 +203,7 @@ async function loadConversationSnapshot(options: {
  */
 export function hydrateConversations(): Promise<void> {
   if (hydrationPromise) return hydrationPromise;
-  hydrationPromise = loadConversationSnapshot({ persistAutoArchive: true })
+  hydrationPromise = loadConversationSnapshot({ persistAutoArchive: true, markInterrupted: true })
     .then((parsed) => {
       if (parsed.length > 0) {
         useAgentTaskStore.setState((state) => ({
@@ -208,6 +227,9 @@ export function hydrateConversations(): Promise<void> {
  * never persist migrations or other conversation changes.
  */
 export async function refreshConversationProjection(): Promise<void> {
-  const conversations = await loadConversationSnapshot({ persistAutoArchive: false });
+  const conversations = await loadConversationSnapshot({
+    persistAutoArchive: false,
+    markInterrupted: false,
+  });
   useAgentTaskStore.setState({ conversations });
 }

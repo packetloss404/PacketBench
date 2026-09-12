@@ -207,7 +207,7 @@ cmdkey /list | findstr packetbench
 | MCP server bearer token | not stored; in memory per run | Settings → MCP → MCP Provider: toggle **Enable MCP Provider** off/on; copy the new token with "Copy bearer token" | `mcp_server_stop` / `mcp_server_start` |
 | Claude / Codex CLI logins (PTY sessions only) | `~/.claude/.credentials.json`, `~/.codex/auth.json` | Settings → Agents → Subscriptions card, or `claude login` / `codex login` in a terminal pane | `sign_out_provider` deletes the files (`provider_auth.rs:436`) |
 | SSH host keys | `%USERPROFILE%\.packetbench\ssh\known_hosts` | Settings → Servers → host row → **Fetch host key** (re-pins; "Pinned" badge) | `ssh_fetch_fingerprint` + `ssh_pin_host` |
-| Project trust list | `%USERPROFILE%\.packetbench\trusted-projects.json` | Edit the file: `{"version":1,"projects":["D:\\projects\\PacketBench"]}`; takes effect on the next conversation start (no restart) | `core/project_trust.rs` |
+| Project trust list | `%USERPROFILE%\.packetbench\trusted-projects.json`; for SSH MCP, `~/.packetbench/trusted-projects.json` on the execution host | List exact absolute project roots in `{"version":1,"projects":["/home/alice/project"]}` on SSH hosts (use Windows paths locally). No nested-root inheritance. Missing/invalid lists deny project MCP commands before probing; global config stays usable. Changes apply on the next session start. SSH sidecars must support protocol v12; the desktop checks `ready` before sending keys or requests. | `core/project_trust.rs`, `agent-sidecar/src/project-trust.ts` |
 
 After rotating a provider key, the next agent turn logs
 `API key loaded from keyring provider=<p> outcome=found`.

@@ -4,6 +4,12 @@
   background: var(--color-bg-primary);
 }
 
+/* The canvas may exceed the available window so a dense layout stays readable.
+   Keep scrolling local: reaching its edge must not move surrounding chrome. */
+.workspace-mosaic-viewport {
+  overscroll-behavior: contain;
+}
+
 .mosaic-root {
   top: 0;
   right: 0;

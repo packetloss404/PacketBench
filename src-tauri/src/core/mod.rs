@@ -43,6 +43,7 @@ pub mod orchestrator;
 pub mod project_trust;
 pub mod provenance;
 pub mod pty;
+pub(crate) mod pty_output;
 // One-time reprice of historical cost figures written with the pre-CE2 rates.
 pub mod reprice;
 pub mod shared;

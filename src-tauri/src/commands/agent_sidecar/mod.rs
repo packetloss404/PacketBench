@@ -106,7 +106,10 @@ pub const SIDECAR_PROVIDERS: &[&str] = &["claude-oauth", "openai-agents", "echo"
 /// filtering at all. The user sees a working session. The degradation is
 /// silent and it is a security downgrade, which is why it is a floor and not
 /// a warning.
-pub(super) const EXPECTED_PROTOCOL_VERSION: u32 = 11;
+/// v12 adds `projectTrustDataDir` and requires remote project trust before
+/// repo-owned MCP commands can be merged or probed. v11 ignores this field,
+/// so accepting it would preserve the SSH project-trust bypass.
+pub(super) const EXPECTED_PROTOCOL_VERSION: u32 = 12;
 
 /// Lowest protocol version this supervisor will start sessions against.
 ///
@@ -116,7 +119,7 @@ pub(super) const EXPECTED_PROTOCOL_VERSION: u32 = 11;
 /// introduces a security-relevant field (as v11 did) — not for ordinary
 /// feature additions, which stay warn-only so mixed-version pairings keep
 /// working.
-pub(super) const MINIMUM_PROTOCOL_VERSION: u32 = 11;
+pub(super) const MINIMUM_PROTOCOL_VERSION: u32 = 12;
 
 /// Convenience predicate used by slice C to decide whether to call
 /// `forward_*` vs. the existing Rust path.
@@ -226,11 +229,15 @@ mod tests {
     }
 
     #[test]
-    fn protocol_floor_refuses_below_v11_and_accepts_at_or_above() {
+    fn protocol_floor_refuses_below_v12_and_accepts_at_or_above() {
         // The whole point of F7: v10 and older silently ignore
         // `mcpTrustSnapshot`, so they must not serve sessions.
         assert!(!protocol_meets_floor(Some(1)));
         assert!(!protocol_meets_floor(Some(10)));
+        assert!(
+            !protocol_meets_floor(Some(11)),
+            "v11 ignores remote project trust"
+        );
         assert!(protocol_meets_floor(Some(MINIMUM_PROTOCOL_VERSION)));
         // Newer than us stays warn-only — a forward-compatible sidecar still
         // enforces trust, it just knows about requests we do not send.
@@ -245,11 +252,11 @@ mod tests {
     }
 
     #[test]
-    fn the_floor_is_the_version_that_moved_mcp_trust_onto_the_wire() {
+    fn the_floor_requires_remote_project_trust() {
         // If someone bumps EXPECTED without thinking about MINIMUM, this test
         // is the reminder that raising the floor is a deliberate, separate
         // decision — it breaks mixed-version pairings on purpose.
-        assert_eq!(MINIMUM_PROTOCOL_VERSION, 11);
+        assert_eq!(MINIMUM_PROTOCOL_VERSION, 12);
         assert!(EXPECTED_PROTOCOL_VERSION >= MINIMUM_PROTOCOL_VERSION);
     }
 
@@ -317,8 +324,15 @@ mod tests {
         // the cached reads. The stored row keeps the vendor's raw 1000, but
         // the cost must bill only the 200 uncached prompt tokens: 200×$5 +
         // 200×$15 + 800×$2.50 per MTok.
-        let entry =
-            sidecar_usage_entry("openai-agents", "gpt-5.5", "sidecar-sess-2", 1000, 200, 800, 0);
+        let entry = sidecar_usage_entry(
+            "openai-agents",
+            "gpt-5.5",
+            "sidecar-sess-2",
+            1000,
+            200,
+            800,
+            0,
+        );
         assert_eq!(entry.source, "api-openai-agents");
         assert_eq!(entry.input_tokens, 1000, "raw superset count is stored");
         assert!(

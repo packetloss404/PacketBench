@@ -1,13 +1,6 @@
-import { useContext, useEffect, useRef } from "react";
-import {
-  GripHorizontal,
-  Maximize2,
-  MessageSquareOff,
-  Minimize2,
-  RotateCcw,
-  Trash2,
-} from "lucide-react";
-import { MosaicWindowContext } from "react-mosaic-component";
+import { useEffect, useRef } from "react";
+import { MessageSquareOff, RotateCcw, Trash2 } from "lucide-react";
+import { TileChrome } from "./TileChrome";
 import { AgentChatPane } from "@/components/agents/AgentChatPane";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -37,9 +30,8 @@ const STATUS_PILL: Record<string, { label: string; className: string }> = {
  * itself is AgentChatPane verbatim (the additive `keyboardScopeActive` prop;
  * no fork, no extraction).
  *
- * Interim visual parity with terminal tiles (grip, color dot, title, status
- * pill, zoom in the same positions) is provided by the chrome bar below; the
- * shared-header-grammar extraction is deferred post-retirement per the ruling.
+ * TileChrome shares drag, identity, status and zoom controls with the terminal
+ * and file tiles; conversation lifecycle actions remain in AgentChatPane.
  */
 export function ConversationTile({ pane, workspaceId }: ConversationTileProps) {
   // A conversation pane always carries a string conversationId (enforced by
@@ -69,14 +61,11 @@ export function ConversationTile({ pane, workspaceId }: ConversationTileProps) {
   // zoom, no rearrange.
   const isFlashing = useWorkspaceStore(
     (s) =>
-      s.focusPaneRequest?.paneId === pane.id &&
-      s.focusPaneRequest?.workspaceId === workspaceId,
+      s.focusPaneRequest?.paneId === pane.id && s.focusPaneRequest?.workspaceId === workspaceId,
   );
 
   // Canonical review surface open-state, scoped to this tile's conversation.
-  const reviewOpen = useReviewStore(
-    (s) => s.open && s.conversationId === conversationId,
-  );
+  const reviewOpen = useReviewStore((s) => s.open && s.conversationId === conversationId);
 
   // Auto-zoom on review (autoZoomedBy bookkeeping, kept as a local ref in the
   // tile layer per the sprint). ReviewSurface must NEVER render at raw tile
@@ -99,11 +88,6 @@ export function ConversationTile({ pane, workspaceId }: ConversationTileProps) {
       }
     }
   }, [reviewOpen, pane.id, setZoomedPane]);
-
-  // Reach the mosaic drag source so the chrome bar reorders tiles, mirroring
-  // WorkspacePane's convention.
-  const mosaicCtx = useContext(MosaicWindowContext);
-  const mosaicWindowActions = mosaicCtx?.mosaicWindowActions ?? null;
 
   // X removes the PANE ONLY — the conversation survives as an unplaced fleet
   // row (Bravo conceded close-as-archive conflated layout with lifecycle).
@@ -139,7 +123,12 @@ export function ConversationTile({ pane, workspaceId }: ConversationTileProps) {
   // executed, so this early return is order-safe.
   if (!conversation) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 rounded-md border border-bg-border bg-bg-primary p-6 text-center">
+      <div
+        data-pane-zoomed={isZoomed || undefined}
+        onPointerDown={() => setActivePaneId(pane.id)}
+        onFocusCapture={() => setActivePaneId(pane.id)}
+        className="flex h-full flex-col items-center justify-center gap-3 rounded-md border border-bg-border bg-bg-primary p-6 text-center"
+      >
         <MessageSquareOff size={26} className="text-text-muted opacity-40" />
         <div className="text-ui text-text-secondary">This conversation is no longer available.</div>
         <div className="max-w-[240px] text-meta text-text-muted">
@@ -164,37 +153,19 @@ export function ConversationTile({ pane, workspaceId }: ConversationTileProps) {
   const pill = STATUS_PILL[conversation.status ?? "idle"] ?? STATUS_PILL.idle;
 
   const chrome = (
-    <div
-      className="flex cursor-grab select-none items-center gap-2 border-b border-line-soft bg-bg-secondary px-2 py-1 active:cursor-grabbing"
-      onDoubleClick={() => setZoomedPane(isZoomed ? null : pane.id)}
-    >
-      <GripHorizontal size={11} className="shrink-0 text-text-muted" />
-      <span
-        className={`h-2 w-2 shrink-0 rounded-full ${color.text} bg-current ${isActive ? "animate-pulse motion-reduce:animate-none" : ""}`}
-      />
-      <span className={`truncate text-ui font-semibold ${color.text}`}>{title}</span>
-      <div className="flex-1" />
-      <span className={`shrink-0 rounded-full px-1.5 py-0.5 font-mono text-meta ${pill.className}`}>
-        {pill.label}
-      </span>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setZoomedPane(isZoomed ? null : pane.id);
-        }}
-        onMouseDown={(e) => e.stopPropagation()}
-        className="shrink-0 p-0.5 text-text-muted transition-colors hover:text-accent-blue"
-        title={isZoomed ? "Exit zoom (Esc)" : "Zoom to focus"}
-      >
-        {isZoomed ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-      </button>
-      {/* No kebab here: the chrome bar's overflow menu (its only item was
-          Archive) was merged into the chat header's overflow menu below, so a
-          conversation tile has exactly ONE menu. */}
-    </div>
+    <TileChrome
+      title={title}
+      titleClassName={color.text}
+      icon={
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${color.text} bg-current ${isActive ? "animate-pulse motion-reduce:animate-none" : ""}`}
+        />
+      }
+      status={pill}
+      isZoomed={isZoomed}
+      onToggleZoom={() => setZoomedPane(isZoomed ? null : pane.id)}
+    />
   );
-
-  const connectedChrome = mosaicWindowActions?.connectDragSource(chrome) ?? chrome;
 
   const wrapperBorderClass = isFocused ? "border border-accent-line" : "border border-bg-border";
   // Focus-flash highlight (P4-S1): an amber ring pulse layered over the border
@@ -217,12 +188,10 @@ export function ConversationTile({ pane, workspaceId }: ConversationTileProps) {
       }}
       className={`flex h-full flex-col overflow-hidden rounded-md ${wrapperBorderClass} ${flashClass}`}
     >
-      {connectedChrome}
+      {chrome}
       {isFailed && (
         <div className="flex shrink-0 items-center gap-2 border-b border-accent-red/30 bg-accent-red/10 px-2 py-1">
-          <span className="flex-1 truncate text-meta text-accent-red">
-            Last turn failed.
-          </span>
+          <span className="flex-1 truncate text-meta text-accent-red">Last turn failed.</span>
           <button
             type="button"
             onClick={retryLastTurn}

@@ -9,12 +9,13 @@
 // project's .mcp.json), emit an `mcp_sources` event listing those servers, and
 // then run the session to `done`.
 //
-// Two variants:
-//   A) valid config  → mcp_sources lists the temp server names, no readErrors.
-//   B) malformed .mcp.json → mcp_sources carries a populated readErrors entry
+// Three variants:
+//   A) untrusted project → no project command executes, even for probing.
+//   B) trusted valid config → project probe executes, no source readErrors.
+//   C) malformed .mcp.json → mcp_sources carries a populated readErrors entry
 //      and the session still reaches `done` (no crash).
 //
-// Exits 0 if both variants pass, 1 otherwise.
+// Exits 0 if all variants pass, 1 otherwise.
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -49,10 +50,16 @@ const cleanups = [];
  * @param {{ malformed: boolean }} opts
  * @returns {Promise<{ mcpSources: object, done: boolean }>}
  */
-async function runVariant({ malformed }) {
+async function runVariant({ malformed, trusted = true }) {
   const home = await mkdtemp(join(tmpdir(), "packetbench-remote-mcp-home-"));
   const projectDir = await mkdtemp(join(tmpdir(), "packetbench-remote-mcp-proj-"));
   cleanups.push(home, projectDir);
+  const marker = join(home, "project-command-ran");
+  if (trusted) {
+    await mkdir(join(home, ".test-data"), { recursive: true });
+    await writeFile(join(home, ".test-data", "trusted-projects.json"),
+      JSON.stringify({ version: 1, projects: [projectDir] }));
+  }
 
   await mkdir(join(home, ".claude"), { recursive: true });
   await writeFile(
@@ -67,7 +74,10 @@ async function runVariant({ malformed }) {
     malformed
       ? "{ this is not valid json"
       : JSON.stringify({
-          mcpServers: { "project-srv": { command: "node", args: ["server.js"] } },
+          mcpServers: { "project-srv": {
+            command: process.execPath,
+            args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`],
+          } },
         }),
     "utf8",
   );
@@ -152,6 +162,7 @@ async function runVariant({ malformed }) {
             allowedTools: [],
             mcpServers: {},
             sourceMcpFromFs: true,
+            projectTrustDataDir: ".test-data",
             projectPath: projectDir,
             initialMessage: "remote mcp fromfs smoke",
             workspace: {
@@ -181,7 +192,7 @@ async function runVariant({ malformed }) {
           finish(new Error("expected ready before done"));
           return;
         }
-        finish(null, { mcpSources, done });
+        finish(null, { mcpSources, done, commandRan: existsSync(marker) });
       }
     });
   });
@@ -192,10 +203,21 @@ function assert(cond, msg) {
 }
 
 async function run() {
+  // Opening an untrusted SSH project must not execute even a capability probe.
+  {
+    const { mcpSources, done, commandRan } = await runVariant({ malformed: false, trusted: false });
+    assert(done, "untrusted project session should still run with global config");
+    assert(!commandRan, "untrusted project command executed during startup/probing");
+    assert(mcpSources.sources.every(s => s.scope === "global"), "project source must be excluded");
+    assert(mcpSources.readErrors.some(e => e.message.includes("trusted-projects.json")),
+      "trust refusal must reach the UI");
+    console.log("[remote-mcp-fromfs-smoke] PASS: untrusted command never executed");
+  }
   // Variant A: valid config on both scopes.
   {
-    const { mcpSources, done } = await runVariant({ malformed: false });
+    const { mcpSources, done, commandRan } = await runVariant({ malformed: false });
     assert(done, "valid variant must reach done");
+    assert(commandRan, "trusted control must execute the probe's marker command");
     assert(mcpSources, "valid variant must emit an mcp_sources event");
     const names = mcpSources.sources.map((s) => s.name).sort();
     assert(

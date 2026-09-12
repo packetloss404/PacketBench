@@ -156,7 +156,7 @@ describe("buildFleetProjection — row shape", () => {
     const row = allRows(p)[0];
     expect(row.singleTile).toBe(true);
     expect(row.chips).toHaveLength(1);
-    expect(row.chips[0].label).toBe("Claude");
+    expect(row.chips[0].label).toBe("Saved conversation");
   });
 
   it("multi-tile workspace aggregates chips with counts", () => {
@@ -183,9 +183,36 @@ describe("buildFleetProjection — row shape", () => {
     );
     const row = allRows(p)[0];
     expect(row.singleTile).toBe(false);
-    const codex = row.chips.find((c) => c.label === "Codex");
-    expect(codex?.count).toBe(2);
-    expect(row.chips.find((c) => c.label === "Terminal")).toBeDefined();
+    const saved = row.chips.find((c) => c.label === "Saved conversation");
+    expect(saved?.count).toBe(3);
+    expect(row.chips.find((c) => c.label === "Codex")?.count).toBe(1);
+  });
+
+  it("separates viewers, saved conversations and real CLI panes in Fleet summaries", () => {
+    const p = buildFleetProjection(
+      baseInput({
+        workspaces: [
+          workspace({
+            id: "ws-mixed",
+            panes: [
+              { ...terminalPane("shell", "shell-session"), agentId: "terminal" },
+              { ...terminalPane("codex-a", "a"), agentId: "codex" },
+              { ...terminalPane("codex-b", "b"), agentId: "codex" },
+              { ...terminalPane("readme", ""), kind: "file", filePath: "/repo/README.md" },
+              { ...terminalPane("config", ""), kind: "file", filePath: "/repo/config.json" },
+              conversationPane("missing-history"),
+            ],
+          }),
+        ],
+        workspaceStatuses: new Map([["ws-mixed", "idle"]]),
+      }),
+    );
+    expect(allRows(p)[0].chips.map(({ label, count }) => ({ label, count }))).toEqual([
+      { label: "Terminal", count: 1 },
+      { label: "Codex", count: 2 },
+      { label: "File viewer", count: 2 },
+      { label: "Saved conversation", count: 1 },
+    ]);
   });
 });
 

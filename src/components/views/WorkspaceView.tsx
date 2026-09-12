@@ -14,25 +14,16 @@ import { pathIsDir } from "@/lib/tauri";
 import { useEffect, useState } from "react";
 import { Bot, LayoutGrid, GitBranch, FileText, FolderX, Plus, Zap } from "lucide-react";
 import { GitDashboard } from "@/components/workspace/GitDashboard";
-import { getAgentColor } from "@/lib/agentColors";
+import { workspacePaneSummaryIdentity } from "@/lib/workspacePaneSummary";
 import { AccountDot } from "@/components/session/AccountChip";
 import { useWorkspaceStatuses, attentionDot } from "@/lib/sessionStatus";
 import {
   isLocalWorkspace,
   isSshWorkspace,
-  type WorkspaceAgentSlot,
 } from "@/types/workspace";
 import { delegateWorkspaceToAgents } from "@/lib/agentHandoffs";
 import { bypassCaveat, bypassStatusLabel } from "@/lib/bypassFlags";
 import { useWorkspaceAgentsDogfoodStore } from "@/stores/workspaceAgentsDogfoodStore";
-
-const agentLabel: Record<WorkspaceAgentSlot, string> = {
-  terminal: "Terminal",
-  "claude-code": "Claude",
-  codex: "Codex",
-  opencode: "OpenCode",
-  packetcode: "PacketCode",
-};
 
 interface WorkspaceViewProps {
   /**
@@ -140,32 +131,24 @@ export function WorkspaceView({ surfaceActive = true }: WorkspaceViewProps) {
   const bypassGap = bypassCaveat(bypassAgentIds);
   const bypassLabel = bypassStatusLabel(bypassOn, bypassAgentIds);
 
-  // Count agents per type for the active workspace. Tile program (P1-S1): the
-  // header badges are keyed on `kind` — conversation panes carry the inert
-  // carrier agentId "terminal" and must NOT be counted as terminals here.
+  // File viewers and saved conversations carry an inert agentId "terminal";
+  // classify by kind before grouping actual CLI panes by agent/account.
   //
   // Multi-account: the key also carries the pane's `accountId`, so two
   // `claude-code` tiles under two different logins stay two badges with two
   // account dots instead of collapsing into an indistinguishable "Claude x2".
   // Ambient panes key on the agent alone and render exactly as before.
-  const agentBadges: {
-    key: string;
-    agent: WorkspaceAgentSlot;
-    accountId: string | null;
-    count: number;
-  }[] = [];
+  const agentBadges: (ReturnType<typeof workspacePaneSummaryIdentity> & { count: number })[] = [];
   if (activeWorkspace) {
     const byKey = new Map<string, (typeof agentBadges)[number]>();
     for (const pane of activeWorkspace.panes) {
-      if (pane.kind === "conversation") continue;
-      const accountId = pane.accountId ?? null;
-      const key = `${pane.agentId}::${accountId ?? ""}`;
-      const existing = byKey.get(key);
+      const identity = workspacePaneSummaryIdentity(pane);
+      const existing = byKey.get(identity.key);
       if (existing) {
         existing.count += 1;
       } else {
-        const entry = { key, agent: pane.agentId, accountId, count: 1 };
-        byKey.set(key, entry);
+        const entry = { ...identity, count: 1 };
+        byKey.set(identity.key, entry);
         agentBadges.push(entry);
       }
     }
@@ -252,8 +235,7 @@ export function WorkspaceView({ surfaceActive = true }: WorkspaceViewProps) {
             <div className="flex-1" />
             <div className="flex items-center gap-2">
               {activeWorkspace &&
-                agentBadges.map(({ key, agent, accountId, count }) => {
-                  const c = getAgentColor(agent);
+                agentBadges.map(({ key, label, color: c, accountId, count }) => {
                   return (
                     <span
                       key={key}
@@ -263,7 +245,7 @@ export function WorkspaceView({ surfaceActive = true }: WorkspaceViewProps) {
                           non-focused tiles, whose own header may be off-screen
                           (zoom) or easy to skim past. Ambient panes: nothing. */}
                       <AccountDot accountId={accountId} />
-                      {agentLabel[agent] || agent}
+                      {label}
                       {count > 1 && ` x${count}`}
                     </span>
                   );

@@ -1,7 +1,7 @@
 {
   "name": "packetbench",
   "private": true,
-  "version": "0.14.0",
+  "version": "0.14.7",
   "type": "module",
   "license": "Apache-2.0",
   "scripts": {
@@ -60,6 +60,9 @@
     "gates:changed": "node scripts/quality-gates.mjs --tier full --changed",
     "gates:install-hook": "node scripts/quality-gates.mjs --install-hook",
     "gates:uninstall-hook": "node scripts/quality-gates.mjs --uninstall-hook",
+    "acceptance:build": "node scripts/acceptance/build-windows.mjs",
+    "acceptance:ssh": "node scripts/validate-live-ssh.mjs",
+    "acceptance:workspace": "playwright test e2e/workspace-performance.spec.ts --workers=1",
     "release:readiness": "node scripts/release-readiness.mjs",
     "release:readiness:report": "node scripts/release-readiness.mjs --report-only",
     "check": "pnpm run preflight && pnpm run e2e && pnpm run sidecar:check && pnpm run check:tauri-schema && pnpm run rust:check && pnpm run rust:test"

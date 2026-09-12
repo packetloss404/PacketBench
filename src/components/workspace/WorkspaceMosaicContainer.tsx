@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react";
 import { Mosaic, MosaicWindow } from "react-mosaic-component";
-import { Minimize2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2 } from "lucide-react";
 import type { MosaicNode, MosaicPath } from "@/types/mosaic";
 import { WorkspacePane } from "./WorkspacePane";
 import { ConversationTile } from "./ConversationTile";
@@ -8,8 +8,11 @@ import { FileTile } from "./FileTile";
 import { isLocalWorkspace, type Workspace } from "@/types/workspace";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useReviewStore } from "@/stores/reviewStore";
+import { useLayoutStore } from "@/stores/layoutStore";
+import { useAgentStore } from "@/stores/agentStore";
 import { isModalOpen } from "@/lib/modalStack";
 import { isTerminalTarget } from "@/lib/keyboardTarget";
+import { useWorkspacePaneNavigation } from "@/hooks/useWorkspacePaneNavigation";
 import {
   buildPresetTree,
   presetForCount,
@@ -18,6 +21,9 @@ import {
   getLeafOrder,
   reconcileLayout,
   hasCollapsedSplit,
+  getVisibleLeafOrder,
+  readableMosaicSize,
+  balanceMosaicSizes,
 } from "@/lib/mosaicPresets";
 
 interface WorkspaceMosaicContainerProps {
@@ -34,7 +40,7 @@ interface WorkspaceMosaicContainerProps {
 
 /**
  * Mosaic tiling container for workspace multi-agent grids.
- * Each workspace gets its own ephemeral mosaic tree.
+ * Each workspace keeps its live mosaic tree mounted and saves structural edits.
  */
 export function WorkspaceMosaicContainer({
   workspace,
@@ -42,6 +48,14 @@ export function WorkspaceMosaicContainer({
   surfaceActive = true,
 }: WorkspaceMosaicContainerProps) {
   const [tree, setTree] = useState<MosaicNode<string> | null>(null);
+  const [fitAll, setFitAll] = useState(false);
+  const [readableSize, setReadableSize] = useState({ width: 0, height: 0 });
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const scrollBeforeZoom = useRef({ left: 0, top: 0 });
+  const wasZoomed = useRef(false);
+  const activePaneId = useLayoutStore((state) => state.activePaneId);
+  const agents = useAgentStore((state) => state.agents);
+  useWorkspacePaneNavigation({ workspace, tree, surfaceActive });
   const prevPaneKeyRef = useRef<string>("");
   const zoomedPaneId = useWorkspaceStore((s) => s.zoomedPaneId);
   const setZoomedPane = useWorkspaceStore((s) => s.setZoomedPane);
@@ -71,9 +85,10 @@ export function WorkspaceMosaicContainer({
    * out of the updater.
    */
   const treeRef = useRef<MosaicNode<string> | null>(null);
-  const applyTree = useCallback((next: MosaicNode<string> | null) => {
+  const applyTree = useCallback((next: MosaicNode<string> | null, resizeCanvas = true) => {
     treeRef.current = next;
     setTree(next);
+    if (resizeCanvas) setReadableSize(readableMosaicSize(next));
   }, []);
 
   // A zoom left behind in a non-active workspace is deliberately NOT cleared.
@@ -189,27 +204,20 @@ export function WorkspaceMosaicContainer({
     }
 
     applyTree(updated);
-    // Deliberately NOT persisted. Only a user gesture (`onRelease`) writes a
-    // layout, for three reasons:
-    //   - `reconcileLayout` already appends new panes and prunes closed ones on
-    //     load, using the same `appendPane` this branch does, so the restored
-    //     tree matches what was on screen anyway;
-    //   - saving here would freeze the append-grown shape forever. Six panes
-    //     added one at a time become six ~16% columns, which used to be
-    //     ephemeral because the next launch rebuilt from `presetForCount`.
-    //     Persisting it would have quietly retired that heal for workspaces the
-    //     user never arranged;
-    //   - `addPane`/`removePane` already commit the whole workspace list (Tauri
-    //     IPC plus a full localStorage serialization). A second write here
-    //     doubled that cost on every pane operation.
-  }, [paneKey, applyTree]);
+    // Adding/removing a pane changes the arrangement just as a splitter gesture
+    // does. Save that exact geometry: without a prior drag, layout was absent
+    // and four incrementally-added columns silently became a 2x2 preset on
+    // restart. This is one write per structural change, never per drag frame.
+    // Keep the same live tree so surviving terminals are not remounted.
+    if (!hasCollapsedSplit(updated)) persist(updated);
+  }, [paneKey, applyTree, persist]);
 
   // Local state only — `onChange` fires on every frame of a splitter drag
   // (react-mosaic throttles to 30Hz), and persisting there would mean a Tauri
   // IPC round-trip plus a full-workspace JSON.stringify 30 times a second.
   const handleChange = useCallback(
     (newTree: MosaicNode<string> | null) => {
-      applyTree(newTree);
+      applyTree(newTree, false);
     },
     [applyTree],
   );
@@ -226,6 +234,7 @@ export function WorkspaceMosaicContainer({
   const handleRelease = useCallback(
     (newTree: MosaicNode<string> | null) => {
       if (hasCollapsedSplit(newTree)) return;
+      setReadableSize(readableMosaicSize(newTree));
       persist(newTree);
     },
     [persist],
@@ -243,6 +252,7 @@ export function WorkspaceMosaicContainer({
             renderToolbar={null}
             draggable
           >
+            <span hidden data-workspace-pane-id={id} />
             {/* One branch on pane.kind (P3-S2): conversation panes mount the
                 ConversationTile (unforked AgentChatPane), file panes mount the
                 FileTile (unforked EditorPane); everything else is a terminal
@@ -274,26 +284,227 @@ export function WorkspaceMosaicContainer({
 
   // Find the zoomed pane (if it belongs to this workspace)
   const zoomedPane = zoomedPaneId ? workspace.panes.find((p) => p.id === zoomedPaneId) : null;
+  const ownsZoom = !!zoomedPane;
+  const visibleIds = getVisibleLeafOrder(tree).filter((id) =>
+    workspace.panes.some((pane) => pane.id === id),
+  );
+  const selectedId = ownsZoom
+    ? zoomedPane.id
+    : visibleIds.includes(activePaneId)
+      ? activePaneId
+      : "";
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    if (ownsZoom) {
+      wasZoomed.current = true;
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    } else if (wasZoomed.current) {
+      viewport.scrollLeft = scrollBeforeZoom.current.left;
+      viewport.scrollTop = scrollBeforeZoom.current.top;
+      wasZoomed.current = false;
+    }
+  }, [ownsZoom]);
+
+  // Keyboard navigation may focus a tile beyond the viewport. Scroll just this
+  // canvas, leaving the surrounding workspace/sidebar and saved layout alone.
+  const revealSelectedPane = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || ownsZoom || !isActiveWorkspace || !surfaceActive) return;
+    const tile = [...viewport.querySelectorAll<HTMLElement>("[data-workspace-pane-id]")]
+      .find((element) => element.dataset.workspacePaneId === activePaneId)
+      ?.closest<HTMLElement>(".mosaic-tile");
+    if (!tile) return;
+    const bounds = viewport.getBoundingClientRect();
+    const paneBounds = tile.getBoundingClientRect();
+    if (paneBounds.left < bounds.left) viewport.scrollLeft += paneBounds.left - bounds.left;
+    else if (paneBounds.right > bounds.right)
+      viewport.scrollLeft += paneBounds.right - bounds.right;
+    if (paneBounds.top < bounds.top) viewport.scrollTop += paneBounds.top - bounds.top;
+    else if (paneBounds.bottom > bounds.bottom)
+      viewport.scrollTop += paneBounds.bottom - bounds.bottom;
+  }, [activePaneId, isActiveWorkspace, surfaceActive, ownsZoom]);
+
+  useLayoutEffect(() => {
+    revealSelectedPane();
+  }, [revealSelectedPane, fitAll, readableSize]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return;
+    let frame: number | null = null;
+    let previousSize = "";
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      const size = `${width}:${height}`;
+      if (size === previousSize) return;
+      previousSize = size;
+      if (width <= 0 || height <= 0 || frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        revealSelectedPane();
+      });
+    });
+    observer.observe(viewport);
+    return () => {
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [revealSelectedPane]);
+
+  const selectPane = (id: string) => {
+    if (!visibleIds.includes(id)) return;
+    if (ownsZoom) setZoomedPane(id);
+    useWorkspaceStore.getState().requestPaneFocus(workspace.id, id);
+  };
+  const cyclePane = (direction: number) => {
+    const index = visibleIds.indexOf(selectedId);
+    if (visibleIds.length)
+      selectPane(
+        visibleIds[
+          index < 0
+            ? direction > 0
+              ? 0
+              : visibleIds.length - 1
+            : (index + direction + visibleIds.length) % visibleIds.length
+        ],
+      );
+  };
+  const buttonClass =
+    "rounded px-2 py-1 text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 aria-pressed:bg-bg-hover aria-pressed:text-text-primary";
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="relative flex-1 overflow-hidden">
-        {/* Zoom maximizes the ALREADY-MOUNTED tile via CSS (see
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        aria-label="Workspace pane layout"
+        role="toolbar"
+        className="flex shrink-0 flex-wrap items-center gap-1 border-b border-bg-border bg-bg-secondary px-2 py-1 text-ui"
+      >
+        <button
+          className={buttonClass}
+          aria-label="Previous pane"
+          title="Previous pane"
+          disabled={visibleIds.length < 2}
+          onClick={() => cyclePane(-1)}
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <select
+          aria-label="Select visible pane"
+          className="min-w-0 max-w-48 rounded border border-bg-border bg-bg-primary px-1 py-1 text-text-primary"
+          value={selectedId}
+          onChange={(event) => selectPane(event.target.value)}
+        >
+          <option value="" disabled>
+            {visibleIds.length} panes
+          </option>
+          {visibleIds.map((id, index) => {
+            const pane = workspace.panes.find((item) => item.id === id)!;
+            const label =
+              pane.kind === "file"
+                ? (pane.filePath?.split(/[\\/]/).pop() ?? "File")
+                : pane.kind === "conversation"
+                  ? "Conversation"
+                  : (agents.find((agent) => agent.id === pane.agentId)?.name ?? pane.agentId);
+            return (
+              <option key={id} value={id}>
+                {index + 1}. {label}
+              </option>
+            );
+          })}
+        </select>
+        <button
+          className={buttonClass}
+          aria-label="Next pane"
+          title="Next pane"
+          disabled={visibleIds.length < 2}
+          onClick={() => cyclePane(1)}
+        >
+          <ChevronRight size={14} />
+        </button>
+        <button
+          className={buttonClass}
+          aria-label={ownsZoom ? "Show all panes" : "Zoom selected pane"}
+          title={ownsZoom ? "Show all panes" : "Zoom selected pane"}
+          disabled={!selectedId}
+          onClick={() => setZoomedPane(ownsZoom ? null : selectedId)}
+        >
+          {ownsZoom ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
+        <span className="mx-1 h-4 border-l border-bg-border" />
+        <button
+          className={buttonClass}
+          aria-pressed={!fitAll}
+          disabled={ownsZoom}
+          onClick={() => setFitAll(false)}
+          title="Keep panes readable; scroll to see more"
+        >
+          Readable
+        </button>
+        <button
+          className={buttonClass}
+          aria-pressed={fitAll}
+          disabled={ownsZoom}
+          onClick={() => setFitAll(true)}
+          title="Fit the whole arrangement in this window"
+        >
+          Fit all
+        </button>
+        <button
+          className={buttonClass}
+          disabled={!tree || ownsZoom}
+          onClick={() => {
+            if (!tree) return;
+            const balanced = balanceMosaicSizes(tree);
+            applyTree(balanced);
+            persist(balanced);
+          }}
+          title="Give sibling panes equal space"
+        >
+          Balance sizes
+        </button>
+      </div>
+      <div
+        ref={viewportRef}
+        data-workspace-viewport
+        onScroll={(event) => {
+          if (!ownsZoom)
+            scrollBeforeZoom.current = {
+              left: event.currentTarget.scrollLeft,
+              top: event.currentTarget.scrollTop,
+            };
+        }}
+        className={`workspace-mosaic-viewport relative min-h-0 min-w-0 flex-1 ${ownsZoom ? "overflow-hidden" : "overflow-auto"}`}
+      >
+        <div
+          className="relative h-full w-full"
+          data-workspace-canvas
+          style={{
+            minWidth: !fitAll && !ownsZoom ? readableSize.width : 0,
+            minHeight: !fitAll && !ownsZoom ? readableSize.height : 0,
+          }}
+        >
+          {/* Zoom maximizes the ALREADY-MOUNTED tile via CSS (see
             mosaic-overrides.css: .mosaic-zoom-active) instead of mounting a
             second WorkspacePane — a duplicate pane instance would auto-start
             a second agent PTY for the same pane, clobbering setPaneSession
             and orphaning the original session on unmount. Non-zoomed tiles
             stay mounted (hidden) so every PTY survives zoom in/out. */}
-        <Mosaic<string>
-          renderTile={renderTile}
-          value={tree}
-          onChange={handleChange}
-          onRelease={handleRelease}
-          className={zoomedPane ? "mosaic-zoom-active" : ""}
-        />
+          <Mosaic<string>
+            renderTile={renderTile}
+            value={tree}
+            onChange={handleChange}
+            onRelease={handleRelease}
+            className={zoomedPane ? "mosaic-zoom-active" : ""}
+          />
+        </div>
 
         {zoomedPane && (
-          <div className="bg-bg-secondary/90 absolute bottom-3 right-3 z-20 flex select-none items-center gap-1.5 rounded border border-bg-border px-2 py-1 text-meta text-text-muted">
+          <div className="absolute bottom-3 right-3 z-20 flex select-none items-center gap-1.5 rounded border border-bg-border bg-bg-secondary/90 px-2 py-1 text-meta text-text-muted">
             <Minimize2 size={10} />
             {/* Honest about the terminal case: a focused terminal owns Escape,
                 so the tile's own zoom button is the way out of a zoomed shell. */}

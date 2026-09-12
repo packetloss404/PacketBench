@@ -113,7 +113,9 @@ export class SessionRegistry {
     // never cross SSH. Emitted BEFORE handler.start so the UX surfaces the
     // sourced servers (and any read errors) even if provider start fails.
     if (req.sourceMcpFromFs) {
-      const { servers, summary } = await loadMcpFromFs(req.projectPath, req.sessionId);
+      const { servers, summary } = await loadMcpFromFs(
+        req.projectPath, req.sessionId, req.projectTrustDataDir,
+      );
       req.mcpServers = servers;
       emit({ type: "mcp_sources", sessionId: req.sessionId, ...summary });
     }

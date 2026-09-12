@@ -1,4 +1,4 @@
-// Protocol v11 regression smoke test for the PacketBench agent sidecar.
+// Protocol v12 regression smoke test for the PacketBench agent sidecar.
 // The historical filename is retained for package-script compatibility.
 //
 // Validates that the protocol v2 request types plus the v4
@@ -51,7 +51,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const SESSION_ID = "protocol-v9-smoke";
-const EXPECTED_PROTOCOL_VERSION = 11;
+const EXPECTED_PROTOCOL_VERSION = 12;
 // Headroom for a BUSY machine, not for a slow sidecar. Booting dist/index.js
 // (which eagerly imports the Anthropic, OpenAI and MCP SDKs) takes ~0.9s on an
 // idle box, so the old 3-5s budgets were fine in isolation — and failed anyway

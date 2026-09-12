@@ -87,6 +87,7 @@ import type {
 import { installApiAgentListeners } from "@/stores/apiAgentListeners";
 import {
   scheduleSave,
+  saveConversationNow,
   requestConversationSave,
   cancelPendingSave,
   deriveLegacyWorktree,
@@ -646,6 +647,9 @@ async function captureMcpTrustSnapshot(
   enabledNames: string[] | null,
   remote: boolean,
 ): Promise<McpTrustSnapshot[] | undefined> {
+  // Remote config and project trust belong to the execution host. Protocol
+  // v12 gates repo-supplied commands there before probing; desktop paths and
+  // trust grants must not be reused as remote authority.
   if (remote) return undefined;
   const mcpStore = useMcpStore.getState();
   if (mcpStore.servers.length === 0) {
@@ -811,6 +815,10 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       mcpTrustSnapshot: frozenMcpTrust,
     };
 
+    // Persist the initial prompt before exposing a running conversation or
+    // starting the provider. A slow first response must not be its only save.
+    // Let save failures reject to the launch UI; no provider work has begun.
+    await saveConversationNow(conversation);
     set((s) => ({
       conversations: [conversation, ...s.conversations],
       selectedConversationId: id,
@@ -1318,7 +1326,19 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
   },
 
   changeModel: async (id, newModel) => {
-    await changeAgentModel(id, newModel);
+    const conversation = get().conversations.find((c) => c.id === id);
+    if (!conversation || conversation.mode !== "api") return;
+    // Hydrated idle conversations have no backend session yet, just as in
+    // sendMessage's resume path. Their next launch reads the persisted model.
+    // Live or starting sessions must still accept the change before UI updates.
+    if (
+      apiConversationCleanup.has(id) ||
+      apiListenerInstallInFlight.has(id) ||
+      apiResumeInFlight.has(id) ||
+      conversation.status === "active"
+    ) {
+      await changeAgentModel(id, newModel);
+    }
     let updated: AgentConversation | undefined;
     set((s) => ({
       conversations: s.conversations.map((c) => {
@@ -1328,7 +1348,7 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
         return next;
       }),
     }));
-    if (updated) scheduleSave(updated);
+    if (updated) await saveConversationNow(updated);
   },
 
   setPlanMode: async (id, enabled) => {

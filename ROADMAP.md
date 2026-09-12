@@ -1,10 +1,14 @@
 # PacketBench Roadmap
 
-Last reconciled: 2026-09-01
+Last reconciled: 2026-09-11
 
 PacketBench is a local-first Agent Development Environment and remains the
 flagship control surface. The desktop owns local providers, models, secrets,
 Workspaces, MCP configuration, permissions, Memory, and execution.
+
+**Workspaces remain the primary daily working surface.** Prioritize reliable
+local/SSH CLI panes, keyboard focus, session recovery, saved arrangements and
+multi-pane performance. Agents, Flight Deck and Monitor support that workflow.
 
 There is no shipped remote supervision surface today. Syndicate separated from
 the Packet\* product family on 2026-08-27 and its execution-target integration
@@ -21,14 +25,26 @@ only product direction and ordering.
 
 ## Current baseline
 
-- Source is at **0.14.0** — bundles built 2026-09-05 from `cd276627`, hashed in
+- **0.14.6 is built and installed**, with Workspace reliability, shared pane
+  controls and readable many-pane layouts. Native eight-column restart and
+  file-pane selection/zoom cleanup passed; all 8,683 payload hashes matched,
+  bundled sidecar passed two turns, and real OpenSSH passed 15/15. Exact scope:
+  `dev/workspace-usability-evidence-2026-09-11.md`. The earlier **0.14.3** included both Monitor lifecycle corrections,
+  8,683 verified payload hashes and native shutdown/close-confirmation proof
+  (`dev/gui-provider-evidence-2026-09-08.md`). The earlier 0.14.1 real OpenSSH
+  handshake/project-trust acceptance passed 9/9
+  (`dev/installer-ssh-evidence-2026-09-08.md`). The prior **0.14.0** bundles were built
+  2026-09-05 from `cd276627`, hashed in
   `CHANGELOG.md`, and installed (`package.json`, `src-tauri/tauri.conf.json`,
   `src-tauri/Cargo.toml`). `v0.10.3` — packaged for Windows from release source
   `61e0669` — is still the newest annotated tag, while `CHANGELOG.md` records
   0.10.4 and 0.10.5 as released, and 0.11.0 through 0.13.2 as built but
   unreleased.
-- **The renamed product has been packaged, but never installed.** Windows
-  bundles exist at 0.11.0, 0.12.0, 0.12.1 and 0.13.0 (hashes in `CHANGELOG.md`); the 2026-08-26
+- **The renamed product has been packaged and installed.** The prior
+  0.14.0 baseline was installed and MCP-smoke-tested on 2026-09-05 (6/7; the
+  Flight case lacked a Flight). Later local verification installs have the
+  same version string; their source commits/hashes are in `CHANGELOG.md`.
+  The 2026-08-26
   rename moved the Tauri bundle identifier from `com.packetade.desktop` to
   `com.packetbench.desktop` along with the product name. Section 1 of the
   acceptance matrix ran from source on 2026-08-28 and found **two migration
@@ -40,8 +56,8 @@ only product direction and ordering.
   restored before any store hydrates, so the next origin change cannot empty the
   app. The packetade-era keys stranded in the old WebView2 profile are still
   stranded — nothing reads that profile, by decision. Both entries are in
-  `backlog.md`. An installed, upgraded `PacketBench` package remains the
-  sharpest untested path in the tree.
+  `backlog.md`. Packaged installation evidence does not complete the remaining
+  microphone, Monitor, provider, Flight and live SSH acceptance matrices.
 - Workspace/Agents restructuring is complete: Workspaces are
   CLI/PacketCode-first; Agents owns first-class same-window GUI conversations;
   new Workspace conversation attachments are retired; saved panes remain
@@ -71,27 +87,31 @@ only product direction and ordering.
   deployment path were removed on 2026-08-28, and the service is live on
   **Railway**.
 
-The remaining bottleneck is packaged, real-host acceptance proof, not another
-broad source feature wave — and the package to prove is 0.13.0, which is built
-and waiting to be installed.
+The remaining bottleneck is broader packaged/provider/hardware acceptance.
+The consolidation's 0.14.1 NSIS upgrade and real OpenSSH handshake/project-trust
+checks passed on September 8. The broader follow-up verified local Ollama turns,
+found and corrected Monitor lifecycle defects in 0.14.3, and recorded specific
+API-quota/key and zero-audio-frame blockers. See `HANDOFF.md` for current
+protocol requirements and `CHANGELOG.md` for precise installed-build evidence.
 
 ## Now
 
-| Track                       | Priority | Current state                                                                                                    | Next action                                                                                                                                           |
-| --------------------------- | -------: | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Packaged Windows acceptance |       P1 | 0.13.2 bundles built 2026-08-30 from `5b534517` and hashed in `CHANGELOG.md`, superseding every earlier pair; sections 0, 1 and 2 of `dev/acceptance.md` have run against installed 0.13.2. Section 2 closed six rows outright — all six terminal shell profiles, the close-with-live-work confirmation, orphan-free exit, and dormant session hydration — and left two partial, one blocked, and one confirmed-still-broken finding (a crashing CLI is indistinguishable from a clean exit) | Install the 0.13.2 package over a machine carrying pre-rename state; prove the new bundle identifier and the data-dir/keyring migrations end to end; then run sections 3-5 — dictation on the real headset, analytics, Monitor, accessibility, and denial behavior |
-| Distribution trust          |       P1 | **DEFERRED ON COST 2026-08-27** — owner decision to spend nothing on signing for now; v0.10.3 reported 0 failures / 6 readiness warnings and all artifacts remain unsigned | Keep shipping unsigned local builds. On the stated trigger — the first build handed to anyone who is not the owner — take the cheapest path (Azure Trusted Signing, ~$10/month), then wire hosted CI, notarization, and the updater. Terms in `backlog.md` |
-| macOS release               |       P1 | Builds, bundles a DMG, and runs from source on real hardware; never signed, notarized, or interactively accepted | Run the unsigned acceptance matrix; start Apple Developer Program enrollment when v1.1 starts rather than now (deferred alongside signing on 2026-08-27); ship arm64 DMG in v1.1 (`dev/macos-release-plan.md`) |
-| Remote Agents               |       P1 | **ACTIVE; Sprint 0 complete 2026-09-01.** The feature-off deployment is healthy, managed PostgreSQL is live privately, and the final IaC plan is clean. Remote Agents remains disabled/fail-closed; Sprint 1 and product auth are not started | Close the replay/ACK/ticket/hello/E2EE security gates, then implement the accepted Sprint 1 host-presence slice. Keep PostgreSQL PITR + scheduled backups + offsite restore drill as external-beta gates |
-| Global Undo                 |       P1 | Confirmations and cleanup are implemented; no recovery path                                                      | Decided 2026-08-16: time-boxed delayed-delete toast (soft-delete declined); implementation not yet scheduled                                          |
-| Flight supervision proof    |       P1 | Reviewer/graph/inbox/YOLO source complete                                                                        | Run packaged local and disposable pinned-SSH matrices                                                                                                 |
-| PacketAgent handoff proof   |       P1 | W9 consumer source and fixtures pass                                                                             | Run separately hosted close/relaunch/reconnect and evidence-return matrix                                                                             |
-| PacketCode release proof    |       P1 | Source integration and doctor contract pass                                                                      | Publish signed artifacts; run clean-machine upgrade/rollback and compatibility smoke                                                                  |
-| Dictation proof             |       P1 | DV1-DV16 source complete                                                                                         | Run real microphone plus macOS/Linux package matrices                                                                                                 |
-| Settings/MS4 cleanup        |       P2 | P1 correctness is complete                                                                                       | Stable IDs/active identity/profile validation, diagnostics, ARIA, labels, and responsive overflow                                                     |
-| Git/Memory/MCP/Trust proof  |       P2 | Source implementations pass                                                                                      | Run real GitHub/Gitea, editor-watch, provider, MCP, SSH, restart, and visual matrices                                                                 |
-| Terminal shell proof        |       P2 | Source, package compile, detection, and command probes pass                                                      | Run interactive pane, persistence, unavailable-profile, CLI, and SSH matrix                                                                           |
-| Monitor proof               |       P2 | Read-only Agent/Flight v1 source complete                                                                        | Run packaged multi-display lifecycle and Rust-denial proof                                                                                            |
+| Track                       | Priority | Current state                                                                                                                                                                                                                                                                                                       | Next action                                                                                                                                                                                                                                                |
+| --------------------------- | -------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace daily workflow    |       P1 | Installed 0.14.6 adds shared pane controls and Readable/Fit all/Balance sizes. Native eight-column restart, selected file closure, four browser checks and 15 real OpenSSH cases pass. The 0.14.7 source separates viewer badges and passes isolated native WebView2 profiling (eight panes, cold/warm p95 16.8 ms) | Extend packaged live-PTY and GUI-to-SSH recovery coverage. Paid Claude reply testing is deferred at the user's request pending subscription renewal. Evidence: `dev/workspace-release-0.14.7.md`; outstanding work: `backlog.md`                           |
+| Packaged Windows acceptance |       P1 | 0.14.1 NSIS upgrade, 8,683 payload hashes, packaged v12 echo runtime and normal startup passed; real Linux OpenSSH handshake/trust matrix 9/9. Exact scope/hashes: `dev/installer-ssh-evidence-2026-09-08.md`. Historical interactive evidence remains version-specific.                                            | Run the outstanding hardware, Monitor, Flight and paid-provider/GUI SSH matrices. Do not transfer old checkmarks to new binaries without verification.                                                                                                     |
+| Distribution trust          |       P1 | **DEFERRED ON COST 2026-08-27** — owner decision to spend nothing on signing for now; v0.10.3 reported 0 failures / 6 readiness warnings and all artifacts remain unsigned                                                                                                                                          | Keep shipping unsigned local builds. On the stated trigger — the first build handed to anyone who is not the owner — take the cheapest path (Azure Trusted Signing, ~$10/month), then wire hosted CI, notarization, and the updater. Terms in `backlog.md` |
+| macOS release               |       P1 | Builds, bundles a DMG, and runs from source on real hardware; never signed, notarized, or interactively accepted                                                                                                                                                                                                    | Run the unsigned acceptance matrix; start Apple Developer Program enrollment when v1.1 starts rather than now (deferred alongside signing on 2026-08-27); ship arm64 DMG in v1.1 (`dev/macos-release-plan.md`)                                             |
+| Remote Agents               |       P1 | **ACTIVE; Sprint 0 complete 2026-09-01.** The feature-off deployment is healthy, managed PostgreSQL is live privately, and the final IaC plan is clean. Remote Agents remains disabled/fail-closed; Sprint 1 and product auth are not started                                                                       | Close the replay/ACK/ticket/hello/E2EE security gates, then implement the accepted Sprint 1 host-presence slice. Keep PostgreSQL PITR + scheduled backups + offsite restore drill as external-beta gates                                                   |
+| Global Undo                 |       P1 | Confirmations and cleanup are implemented; no recovery path                                                                                                                                                                                                                                                         | Decided 2026-08-16: time-boxed delayed-delete toast (soft-delete declined); implementation not yet scheduled                                                                                                                                               |
+| Flight supervision proof    |       P1 | Reviewer/graph/inbox/YOLO source complete                                                                                                                                                                                                                                                                           | Run packaged local and disposable pinned-SSH matrices                                                                                                                                                                                                      |
+| PacketAgent handoff proof   |       P1 | W9 consumer source and fixtures pass                                                                                                                                                                                                                                                                                | Run separately hosted close/relaunch/reconnect and evidence-return matrix                                                                                                                                                                                  |
+| PacketCode release proof    |       P1 | Source integration and doctor contract pass                                                                                                                                                                                                                                                                         | Publish signed artifacts; run clean-machine upgrade/rollback and compatibility smoke                                                                                                                                                                       |
+| Dictation proof             |       P1 | DV1-DV16 source complete                                                                                                                                                                                                                                                                                            | Run real microphone plus macOS/Linux package matrices                                                                                                                                                                                                      |
+| Settings/MS4 cleanup        |       P2 | P1 correctness is complete                                                                                                                                                                                                                                                                                          | Stable IDs/active identity/profile validation, diagnostics, ARIA, labels, and responsive overflow                                                                                                                                                          |
+| Git/Memory/MCP/Trust proof  |       P2 | Source implementations pass                                                                                                                                                                                                                                                                                         | Run real GitHub/Gitea, editor-watch, provider, MCP, SSH, restart, and visual matrices                                                                                                                                                                      |
+| Terminal shell proof        |       P2 | Source, package compile, detection, and command probes pass                                                                                                                                                                                                                                                         | Run interactive pane, persistence, unavailable-profile, CLI, and SSH matrix                                                                                                                                                                                |
+| Monitor proof               |       P2 | Lifecycle corrections installed in 0.14.3; native opening, projection and shutdown checks passed                                                                                                                                                                                                                    | Run remaining stale-entity, Flight, responsive/keyboard and Rust-denial integration cases                                                                                                                                                                  |
 
 ## Next
 
@@ -163,8 +183,9 @@ beta.
 
 ## Release path
 
-1. Interactively prove the packaged 0.13.0 `PacketBench` Windows package
-   (built 2026-08-28), including upgrade from a pre-rename install.
+1. Continue interactive acceptance of the installed 0.14.1 consolidation
+   package. Its installer/payload and real OpenSSH protocol/trust checks are
+   complete; preserve their scope and the older version-specific evidence.
 2. Close available real-host, microphone, provider, MCP, and cross-product
    evidence gates.
 3. Resolve and implement Undo plus bounded Settings/MS4 work.

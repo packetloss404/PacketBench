@@ -38,10 +38,19 @@ const cleanups = [];
  *   - undefined → file not created (missing)
  * Returns the loader result for `loadMcpFromFs(projectDir, sessionId)`.
  */
-async function runScenario(global, project) {
+async function runScenario(global, project, trust = "trusted") {
   const home = await mkdtemp(join(tmpdir(), "packetbench-mcp-home-"));
   const projectDir = await mkdtemp(join(tmpdir(), "packetbench-mcp-proj-"));
   cleanups.push(home, projectDir);
+  await mkdir(join(home, ".test-data"), { recursive: true });
+  if (trust !== "missing") {
+    const body = trust === "malformed" ? "{ broken" : JSON.stringify({
+      version: trust === "future" ? 2 : 1,
+      projects: trust === "trusted" ? [projectDir] :
+        trust === "parent" ? [dirname(projectDir)] : ["relative/path"],
+    });
+    await writeFile(join(home, ".test-data", "trusted-projects.json"), body);
+  }
 
   if (global !== undefined) {
     await mkdir(join(home, ".claude"), { recursive: true });
@@ -62,7 +71,7 @@ async function runScenario(global, project) {
   process.env.HOME = home;
   process.env.USERPROFILE = home;
   try {
-    return await loadMcpFromFs(projectDir, "mcp-config-merge-smoke");
+    return await loadMcpFromFs(projectDir, "mcp-config-merge-smoke", ".test-data");
   } finally {
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
@@ -72,6 +81,27 @@ async function runScenario(global, project) {
 }
 
 async function run() {
+  // Denied project config cannot add, replace, OR disable global authority.
+  for (const trust of ["missing", "malformed", "future", "parent", "relative"]) {
+    const { servers, summary } = await runScenario(
+      { shared: { command: "global-node" }, keep: { command: "global-keep" } },
+      { mcpServers: {
+        shared: { command: "repo-node" }, keep: { disabled: true },
+        added: { command: "repo-added" },
+      } }, trust,
+    );
+    assert.equal(servers.shared.command, "global-node", trust);
+    assert.equal(servers.keep.command, "global-keep", trust);
+    assert.equal(servers.added, undefined, trust);
+    assert.ok(summary.readErrors.some(e => e.message.includes("trusted-projects.json")), trust);
+  }
+  {
+    const { servers } = await runScenario(
+      { off: { command: "global-node" } },
+      { mcpServers: { off: { disabled: true } } },
+    );
+    assert.equal(servers.off, undefined, "trusted project may disable a global server");
+  }
   // 1) project-over-global override on the same server name.
   {
     const { servers, summary } = await runScenario(
@@ -176,10 +206,7 @@ async function run() {
     assert.equal(servers.on.disabled, undefined);
   }
 
-  // 10) $HOME unset → loader must NOT throw (os.homedir() can throw when HOME
-  //     is unset AND the uid has no passwd entry). Project scope (cwd-derived,
-  //     independent of homedir) must still load; a homedir failure, if any, is
-  //     folded into readErrors rather than escaping to fail the session.
+  // 10) Missing trust metadata must fail closed even when HOME is unavailable.
   {
     const projectDir = await mkdtemp(join(tmpdir(), "packetbench-mcp-proj-"));
     cleanups.push(projectDir);
@@ -192,7 +219,7 @@ async function run() {
     delete process.env.HOME;
     try {
       const { servers, summary } = await loadMcpFromFs(projectDir, "mcp-config-merge-smoke");
-      assert.equal(servers.p.command, "node", "project scope must load with HOME unset");
+      assert.equal(servers.p, undefined, "project scope requires explicit host trust metadata");
       assert.ok(Array.isArray(summary.readErrors), "summary must be well-formed with HOME unset");
     } finally {
       if (savedHome === undefined) delete process.env.HOME;

@@ -9,8 +9,126 @@ task list.
 
 ## [Unreleased]
 
-Three changes landed after the 0.14.0 artifacts below were built and hashed, so
-they are **not in those installers**:
+- Workspace and Fleet summaries distinguish file viewers and saved conversations
+  from terminals while retaining CLI labels and account grouping.
+- Missing-conversation panes remain visible when zoomed, and pointer/keyboard
+  focus selects their fallback correctly.
+- Concurrent Monitor opens serialize native singleton creation without blocking
+  the new WebView's lease handshake.
+- Added isolated native WebView2 profiling and opt-in real-provider SSH evidence
+  tooling. Eight-pane cold/warm native profiling measured 16.8 ms p95 frame
+  intervals with no long tasks. Paid Claude validation is deferred at the user's
+  request. Scope: [0.14.7 evidence](./dev/workspace-release-0.14.7.md).
+
+## [0.14.6] - 2026-09-11 (local verification)
+
+- Workspaces now share accessible header/zoom controls across terminal,
+  saved conversation and file panes. Closing the selected pane chooses a
+  surviving visible pane and clears stale zoom/focus state.
+- Readable mode keeps panes at useful dimensions with scrolling. Fit all,
+  Balance sizes, pane selection and previous/next controls preserve the saved
+  arrangement. Selection remains visible through mode and viewport changes.
+- Added real Workspace/xterm browser stress acceptance and six native Workspace
+  SSH cases. Full Vitest passed 2,834 tests; final integration checks passed 70
+  focused tests plus four browser cases. The frozen-source OpenSSH matrix passed
+  15/15. High-output rendering pauses remain a measured profiling gap.
+- Both installers and 11 release checks passed. NSIS installation verified
+  8,683 files and two bundled-sidecar turns. Native eight-pane controls,
+  zoomed file closure and eight-column restart persistence passed.
+- Isolated Playwright output after its former default cleared older ignored
+  raw acceptance artifacts; tracked historical reports remain. Exact hashes,
+  current evidence and limits: [Workspace usability evidence](./dev/workspace-usability-evidence-2026-09-11.md).
+
+## [0.14.5] - 2026-09-11 (local verification)
+
+- Persist the displayed Workspace layout after adding or removing a pane.
+  Native testing caught four added columns reopening as the 2x2 preset;
+  the corrected installer retains all four columns after a normal restart.
+  Surviving terminals keep their mounted tree during structural edits.
+- Both Windows installers and 11 release checks passed. NSIS exit 0, all
+  8,683 installed hashes matched, and bundled Node/protocol-v12 sidecar passed
+  two turns. The final layout/selection suites passed 36 tests. Exact artifact
+  identity and native scope: [Workspace evidence](./dev/workspace-evidence-2026-09-11.md).
+
+## [0.14.4] - 2026-09-11 (local verification)
+
+- Workspaces: terminal selection now reaches keyboard focus, with guarded
+  Ctrl+Alt+PageUp/PageDown navigation and last-pane restoration when switching
+  Workspaces. Backend hydration revalidates the selected Workspace, and
+  archive/delete clears owned zoom.
+- Failed pinned-command/template sends retain their exact text and offer
+  explicit retry and separate session restart. Pending sends suppress duplicate
+  clicks; exited sessions disable send controls.
+- Terminal resize bursts coalesce per animation frame; hidden/unmounted panes
+  cancel pending fits. PTY output uses bounded 8 ms / 32 KiB batches, preserving
+  transcript/event sequence boundaries and flushing before the exit event.
+- Save a new API conversation and its initial prompt before starting the
+  provider. Restoring an active record marks the previous turn as interrupted
+  and leaves it idle until the user continues.
+- Apply and persist model selections on restored API conversations before
+  their next launch. Live sessions still require backend acceptance.
+- Full Vitest run: 2,813 tests passed across 297 files; 49 targeted Rust tests
+  and 11 release checks passed. Installation verified 8,683 payload files and
+  the bundled sidecar. Native initial-prompt interruption/restart and restored
+  model change/persistence passed. Native testing found the incremental layout
+  loss corrected in 0.14.5; see the dated Workspace evidence for scope.
+
+## [0.14.3] - 2026-09-08 (local verification)
+
+- Main-window destruction now exits the application through its normal cleanup
+  path, so an open Monitor cannot keep the app and agent processes alive.
+  The live-work close confirmation remains in place. Monitor window controls
+  now expose accessible names.
+- NSIS upgrade exited 0; all 8,683 installed payload hashes matched. Bundled
+  Node 24.15.0 and protocol-v12 sidecar passed two echo turns. Both Windows
+  installers, 11 release checks and seven close-confirmation tests passed.
+- Native Monitor opening, rendering, accessible names, idle/confirmed shutdown
+  and cancelling active-work shutdown passed. Exact hashes and per-build scope are in the
+  [GUI/provider/hardware evidence](./dev/gui-provider-evidence-2026-09-08.md).
+
+## [0.14.2] - 2026-09-08 (local verification)
+
+- Fixed a Windows WebView2 deadlock by making Monitor creation an asynchronous
+  Tauri command. Native two-display opening, route reuse, focus, maximize and
+  own-window close were exercised. The later main-window shutdown failure was
+  found in this installed build and corrected in 0.14.3.
+- NSIS installation, 8,683 payload hashes and bundled two-turn sidecar smoke
+  passed. Installed Ollama streaming, Stop and a successful post-cancel turn
+  were observed. Two Monitor route/authority tests and 11 release checks passed.
+- Broader native observations included MiniMax's upstream quota failure,
+  missing-key setup guidance, Dictation empty states, verified Tiny model
+  download and an audio probe that returned zero frames. See the dated report
+  above for the exact limits of each observation.
+
+## [0.14.1] - 2026-09-08 (local verification)
+
+Unsigned Windows consolidation build, installed after the owner closed the
+app normally. Source snapshot, artifact hashes and exact validation scope:
+[`installer/SSH evidence`](./dev/installer-ssh-evidence-2026-09-08.md).
+
+- NSIS upgrade exited 0; **8,683 installed payload files** matched the
+  manifest. Bundled Node 24.15.0 and protocol-v12 sidecar passed two echo turns;
+  normal application startup passed.
+- Real Linux OpenSSH acceptance **9/9**: project trust/probing, malformed
+  configuration, old/invalid handshake denial before request transmission,
+  wrong host-key rejection, and reconnect. No paid-provider calls.
+- Added reproducible build/install/SSH runners and source/payload manifests.
+  Per-format hashes account for Tauri's executable marker patching; four
+  harness regressions passed. Sidecar dev dependencies restored after build.
+
+These consolidation changes are in 0.14.1, **not** the old 0.14.0 installers:
+
+- Consolidation: remote project MCP configuration requires the execution
+  host's explicit canonical-path trust list before merging or probing commands.
+  Sidecar protocol/minimum v12 adds `projectTrustDataDir`, derived from the
+  Rust brand module. SSH startup waits for a compatible `ready` before sending
+  a session request or API key; older peers fail with an update instruction.
+- Auxiliary concurrency is bounded separately by provider and by background
+  versus interactive work, two turns per lane (at most four per provider).
+  Summary backlogs and their retry waits no longer occupy side-chat slots or
+  delay another provider. This does not fix an account's exhausted quota.
+- Reconciled the root handoff and roadmap with the installed 0.14.0 evidence;
+  retained older acceptance results as evidence about their original binaries.
 
 - F26/P18 — aux turns bounded to 2 concurrent. Closing a workspace with N
   terminals fired N simultaneous provider calls.
@@ -31,9 +149,8 @@ Local verification builds were installed to exercise these, the most recent
 from `087fc57c` — installed exe sha256
 `ca9dde7d5816d625c7333c5464074a5f255f7011d6a7f64c1b545e0651339135`. They carry
 the same `0.14.0` version string as the artifacts below and are different
-binaries. They are verification builds, not releases; bump the version before
-shipping anything from this section, for exactly the reason recorded under
-0.14.0.
+binaries. Those older verification installs preceded the versioned 0.14.1
+build above and remain attributed to their own hashes.
 
 ## [0.14.0] - 2026-09-05
 
@@ -43,10 +160,10 @@ patches, each independently applicable and reverse-applicable
 
 Windows artifacts, built 2026-09-05 from `cd276627`, **unsigned**:
 
-| Artifact | SHA-256 |
-| --- | --- |
+| Artifact                                            | SHA-256                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
 | `PacketBench_0.14.0_x64-setup.exe` (NSIS, 85.2 MiB) | `d01692d680dcf6434d8090fef248ad5149d07ddb4324021a75cd57a38d79fc9e` |
-| `PacketBench_0.14.0_x64_en-US.msi` (132.9 MiB) | `f46ab0cffea1ea660b91083d950d556ab6a730625fbdbdeee42042fcb59f61bd` |
+| `PacketBench_0.14.0_x64_en-US.msi` (132.9 MiB)      | `f46ab0cffea1ea660b91083d950d556ab6a730625fbdbdeee42042fcb59f61bd` |
 
 `packetbench.exe` inside them reports file version `0.14.0`, and
 `pnpm run release:readiness --skip-gates` detects both: 0 fail.
@@ -63,10 +180,10 @@ the U05 shell-scope check and the before/after screen comparison — ran against
 binaries built from `610f3975`, while the version still read 0.13.2. Those were
 also unsigned, and are kept below as the record of what was tested there:
 
-| Pre-bump artifact (`610f3975`, version string 0.13.2) | SHA-256 |
-| --- | --- |
-| `PacketBench_0.13.2_x64-setup.exe` (NSIS, 85.2 MiB) | `222138d6b89238a23accc39b6a48b4637457f93a24518e88e6875a455f32be75` |
-| `PacketBench_0.13.2_x64_en-US.msi` (132.9 MiB) | `483014079f5a212e4f94873fdefec532d9d9bdd10f7fdce60e1156a8403cb9e7` |
+| Pre-bump artifact (`610f3975`, version string 0.13.2) | SHA-256                                                            |
+| ----------------------------------------------------- | ------------------------------------------------------------------ |
+| `PacketBench_0.13.2_x64-setup.exe` (NSIS, 85.2 MiB)   | `222138d6b89238a23accc39b6a48b4637457f93a24518e88e6875a455f32be75` |
+| `PacketBench_0.13.2_x64_en-US.msi` (132.9 MiB)        | `483014079f5a212e4f94873fdefec532d9d9bdd10f7fdce60e1156a8403cb9e7` |
 
 The version was bumped precisely because those carried the same version string
 as the 2026-08-30 pair below while being different binaries — three distinct
@@ -126,10 +243,10 @@ user-visible product name.
 
 Windows artifacts, built 2026-08-30 from `5b534517`, **unsigned**:
 
-| Artifact | SHA-256 |
-| --- | --- |
+| Artifact                                            | SHA-256                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
 | `PacketBench_0.13.2_x64-setup.exe` (NSIS, 85.4 MiB) | `3c7a3f55374f5baee36fdf335d5a990093a4e280627d96337edd63da81fde563` |
-| `PacketBench_0.13.2_x64_en-US.msi` (133.2 MiB) | `c116a1642bdb7a66977e360f8f09c31f97fe0f0718d722bccd78a2b8c5cedacc` |
+| `PacketBench_0.13.2_x64_en-US.msi` (133.2 MiB)      | `c116a1642bdb7a66977e360f8f09c31f97fe0f0718d722bccd78a2b8c5cedacc` |
 
 Three defects, all found by **running section 2 of the acceptance matrix
 against the installed 0.13.1 package** rather than by reading the source. See
@@ -182,10 +299,10 @@ instead of pointing the view at a ghost.
 
 Windows artifacts, built 2026-08-30 from `8dc13780`, **unsigned**:
 
-| Artifact | SHA-256 |
-| --- | --- |
+| Artifact                                            | SHA-256                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
 | `PacketBench_0.13.1_x64-setup.exe` (NSIS, 85.4 MiB) | `10814779d13001ea4517c706eaf62adc55c21701abe6ed37821d3994a58c8a4e` |
-| `PacketBench_0.13.1_x64_en-US.msi` (133.2 MiB) | `d0caf91b45d3903ae42eda1bd28754b3600e9d9336f50fbb82cf2d2b66c11f68` |
+| `PacketBench_0.13.1_x64_en-US.msi` (133.2 MiB)      | `d0caf91b45d3903ae42eda1bd28754b3600e9d9336f50fbb82cf2d2b66c11f68` |
 
 A patch release for three defects found by using 0.13.0 rather than by testing
 it. The acceptance-matrix position is unchanged from 0.13.0: sections 2–5 have
@@ -252,10 +369,10 @@ class of error that module's header says it exists to end.
 
 Windows artifacts, built 2026-08-30 from `49583b5a`, **unsigned**:
 
-| Artifact | SHA-256 |
-| --- | --- |
+| Artifact                                            | SHA-256                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
 | `PacketBench_0.13.0_x64-setup.exe` (NSIS, 85.4 MiB) | `5cb2f0554e1c34a5feb286af60d783854c2543f6743e6cec250432e48235cf1e` |
-| `PacketBench_0.13.0_x64_en-US.msi` (133.2 MiB) | `d94badc981bf00a6cb382616f9ebdbcf47ca68b6a1d2222ce53473c650be7f55` |
+| `PacketBench_0.13.0_x64_en-US.msi` (133.2 MiB)      | `d94badc981bf00a6cb382616f9ebdbcf47ca68b6a1d2222ce53473c650be7f55` |
 
 > **Installed, not accepted.** 0.13.0 was installed over 0.12.1 on 2026-08-30
 > (silent, per-user, exit 0, installer hash checked first). That proved three
@@ -301,7 +418,7 @@ new editor, with the reason stated.
 
 **MCP `allowedTools` was dead config.** It persisted and read as a restriction
 while only `port` and `allowWrites` ever reached the server. Now enforced through
-`ToolRouter::disable_route`, which hides a tool from `tools/list` *and* rejects
+`ToolRouter::disable_route`, which hides a tool from `tools/list` _and_ rejects
 it in `tools/call`, so later tools are gated by construction.
 
 ### Added — GitLab, and a seam that can hold it
@@ -395,7 +512,7 @@ negative paths. **Zero protocol divergence.**
 ### Changed — dead surface removed
 
 Four thin command wrappers and the 123-line checkpoints module, whose own code
-said `forkAndResend` subsumes it. Checkpoint *data* is deliberately left alone:
+said `forkAndResend` subsumes it. Checkpoint _data_ is deliberately left alone:
 the feature shipped a working button in 0.5.0 through 0.9.4, and the data-dir
 migration carries the tree forward on every rename, so upgraded users still have
 those files. The reprice pass's exclusion and its test stay.
@@ -404,10 +521,10 @@ those files. The reprice pass's exclusion and its test stay.
 
 Windows artifacts, built 2026-08-28 23:08 from `f83fad64`, **unsigned**:
 
-| Artifact | SHA-256 |
-| --- | --- |
+| Artifact                                            | SHA-256                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
 | `PacketBench_0.12.1_x64-setup.exe` (NSIS, 85.3 MiB) | `5ebd455d7b2d2736179f43a4e51cee1154346db3ef03a71d94264b771bd1f28d` |
-| `PacketBench_0.12.1_x64_en-US.msi` (133.0 MiB) | `6dc6764a168f49cb18223b2af6d9ba2ff91fc731a53a9c18c0f6deda63c86ec0` |
+| `PacketBench_0.12.1_x64_en-US.msi` (133.0 MiB)      | `6dc6764a168f49cb18223b2af6d9ba2ff91fc731a53a9c18c0f6deda63c86ec0` |
 
 > **Built, not accepted.** Sections 2–5 of
 > [`dev/acceptance.md`](./dev/acceptance.md) — launch and
@@ -424,10 +541,9 @@ Gates at `f83fad64`: `cargo check` clean, 842 Rust lib tests (2 ignored) + 31
 This release exists because four memory workstreams landed after the 0.12.0
 bundles were built, so those installers do not contain any of the work below.
 
-
 ### Fixed — Project Memory lost or corrupted notes under ordinary editor saves
 
-The watcher's debounce was leading-edge — it fired 180 ms after the *first*
+The watcher's debounce was leading-edge — it fired 180 ms after the _first_
 event of a burst, which is to say reliably **mid-save**, exactly when a
 half-written file is on disk. What it then read was mishandled three ways: a
 truncate-then-write editor's zero-length file passed the frontmatter test and
@@ -538,7 +654,7 @@ brief scope will ever match. It now keys off `conversation.sshTarget`.
 Retrieval follows: remote flights get a launch brief (previously any non-local
 target skipped injection entirely), Ask is scope-aware rather than local-only,
 and pattern extraction runs against the remote corpus and stamps its output with
-the same key. `summarize_session` / `extract_patterns` validate a *scope label*
+the same key. `summarize_session` / `extract_patterns` validate a _scope label_
 (`validate_memory_scope`) instead of requiring a local directory — neither
 command ever touches the filesystem with that value, and it never reaches the
 model.
@@ -573,10 +689,10 @@ so a local project sharing a remote path's spelling cannot leak notes into it.
 
 Windows artifacts, built 2026-08-28 21:13 from `544e4cc6`, **unsigned**:
 
-| Artifact | SHA-256 |
-| --- | --- |
+| Artifact                                            | SHA-256                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
 | `PacketBench_0.12.0_x64-setup.exe` (NSIS, 85.3 MiB) | `60e63fbbd683220ea1744c1b7cd28ac036a20aefef71f44f6500cec0123ecf3a` |
-| `PacketBench_0.12.0_x64_en-US.msi` (133.0 MiB) | `cb12c50ee74f632311d3ddb152a71674ffe19d4c6f8b99c9f91dc6682d80348c` |
+| `PacketBench_0.12.0_x64_en-US.msi` (133.0 MiB)      | `cb12c50ee74f632311d3ddb152a71674ffe19d4c6f8b99c9f91dc6682d80348c` |
 
 > **Built, not accepted — and the acceptance matrix has still only partly run.**
 > Section 1 of `dev/acceptance.md` (the migration path) was executed
@@ -618,7 +734,7 @@ was deleted — the app simply stopped reading them.
 `classify_legacy_dir_lets_the_tui_veto_win` pinned that precedence, so the suite
 endorsed it.
 
-The veto exists to stop us *destroying* a TUI home, and a blanket veto
+The veto exists to stop us _destroying_ a TUI home, and a blanket veto
 over-served that. Such a directory is now `Mixed`: only our own known entries are
 **copied** into the new dir, and the legacy directory is left exactly as found —
 nothing of the TUI's is moved, renamed, or deleted. A TUI-only directory is still
@@ -796,8 +912,8 @@ first packaged build of the renamed product:
 
 | Artifact                                            | SHA-256                                                            |
 | --------------------------------------------------- | ------------------------------------------------------------------ |
-| `PacketBench_0.11.0_x64-setup.exe` (NSIS, 85.1 MiB)  | `dd65f12b80ceb8bb225be159e1211e211e1006fb5c87362f75b6d1079d55b500` |
-| `PacketBench_0.11.0_x64_en-US.msi` (132.8 MiB)       | `19731f62cdb31c40bdb228117ceeadb7b4ea0c6a82ec10b99e99cc8c237b5cb7` |
+| `PacketBench_0.11.0_x64-setup.exe` (NSIS, 85.1 MiB) | `dd65f12b80ceb8bb225be159e1211e211e1006fb5c87362f75b6d1079d55b500` |
+| `PacketBench_0.11.0_x64_en-US.msi` (132.8 MiB)      | `19731f62cdb31c40bdb228117ceeadb7b4ea0c6a82ec10b99e99cc8c237b5cb7` |
 
 > **Built, not accepted.** These compiled and bundled cleanly, but the
 > interactive acceptance matrix has not run. The rename moved the Tauri bundle

@@ -64,7 +64,9 @@
 // v11 (MCPH4): freezes per-server MCP trust/capability authority into the
 // session start request. The sidecar filters transports and tools against the
 // snapshot; later Settings edits cannot silently broaden a running session.
-export const PROTOCOL_VERSION = 11;
+// v12: remote filesystem MCP sourcing checks the execution host's project
+// trust list BEFORE merging or probing repo-supplied commands.
+export const PROTOCOL_VERSION = 12;
 
 /** Image content a model can interpret natively. base64-encoded bytes. */
 export type ImageAttachment = {
@@ -152,10 +154,14 @@ export type StartSessionRequest = {
   workspace?: WorkspaceRef;
   /** v8 (S8-Phase-B): when true the sidecar sources its OWN MCP config from the
    * remote FS (~/.claude/settings.json + <project>/.mcp.json, project-over-global)
-   * and runs ALL servers from there, ignoring req.mcpServers. Remote (SSH) sessions
-   * only; local leaves it unset. Local commands/secrets never cross SSH. Per-session
-   * enabled-server filtering is NOT applied to FS-sourced servers. */
+   * instead of req.mcpServers. v12 requires host project trust before merging
+   * project entries; MCP tool authority is then applied before provider start.
+   * Remote (SSH) sessions only; local commands/secrets never cross SSH.
+   * Desktop enabled-server filtering is not applied to FS-sourced servers. */
   sourceMcpFromFs?: boolean;
+  /** v12: home-relative data directory from the supervisor's brand module.
+   * Missing/invalid values deny project MCP config; global config still loads. */
+  projectTrustDataDir?: string;
 };
 
 export type SendMessageRequest = {

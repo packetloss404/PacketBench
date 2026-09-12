@@ -30,6 +30,8 @@ interface UseApprovalShortcutsOptions {
   onApprove: () => void;
   onDeny: () => void;
   onAbort: () => void;
+  /** Owning pane can restore focus with visibility/selection/dialog guards. */
+  onRestoreFocus?: () => void;
 }
 
 /**
@@ -56,6 +58,7 @@ export function useApprovalShortcuts({
   onApprove,
   onDeny,
   onAbort,
+  onRestoreFocus,
 }: UseApprovalShortcutsOptions) {
   useEffect(() => {
     if (!showApproval) return;
@@ -93,7 +96,8 @@ export function useApprovalShortcuts({
     return () => {
       window.removeEventListener("keydown", handler);
       panesAwaitingApproval.delete(paneId);
-      if (term) term.focus();
+      if (onRestoreFocus) onRestoreFocus();
+      else if (term) term.focus();
     };
-  }, [showApproval, paneId, onApprove, onDeny, onAbort, xtermRef]);
+  }, [showApproval, paneId, onApprove, onDeny, onAbort, xtermRef, onRestoreFocus]);
 }

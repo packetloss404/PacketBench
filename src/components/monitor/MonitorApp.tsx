@@ -111,18 +111,21 @@ function MonitorTitleBar({ label }: { label: string }) {
         {APP_NAME} Monitor
       </div>
       <button
+        aria-label="Minimize Monitor"
         onClick={() => void getCurrentWindow().minimize()}
         className="flex h-full w-11 items-center justify-center hover:bg-bg-hover"
       >
         <Minus size={13} />
       </button>
       <button
+        aria-label="Toggle Monitor maximize"
         onClick={() => void toggleMaximize()}
         className="flex h-full w-11 items-center justify-center hover:bg-bg-hover"
       >
         {maximized ? <Copy size={11} /> : <Square size={11} />}
       </button>
       <button
+        aria-label="Close Monitor"
         onClick={() => void closeMonitorWindow(label)}
         className="hover:bg-accent-red/80 flex h-full w-11 items-center justify-center"
       >

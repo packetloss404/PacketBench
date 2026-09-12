@@ -150,9 +150,8 @@ impl SidecarManager {
         // hand a live API key and an unenforced trust snapshot to a peer that
         // will quietly ignore half of it.
         //
-        // SSH sessions negotiate with their own per-session remote sidecar
-        // (checked in `remote_reader_loop` when its `ready` lands); the local
-        // handshake says nothing about them.
+        // SSH spawning waits for that peer's compatible ready handshake
+        // before returning. The local handshake says nothing about it.
         if ssh_config.is_none() {
             self.assert_protocol_floor().await?;
         }
@@ -356,7 +355,7 @@ impl SidecarManager {
 /// Extracted as a pure seam so the wire shape — including S8-Phase-B's
 /// `sourceMcpFromFs` flag — is unit-testable without a live supervisor.
 #[allow(clippy::too_many_arguments)]
-fn encode_start_session(
+pub(super) fn encode_start_session(
     session_id: &str,
     provider: String,
     model: String,
@@ -388,6 +387,7 @@ fn encode_start_session(
         "mcpServers": mcp_servers,
         "mcpTrustSnapshot": mcp_trust_snapshot,
         "sourceMcpFromFs": source_mcp_from_fs,
+        "projectTrustDataDir": crate::core::brand::DATA_DIR_NAME,
         "projectPath": project_path,
         "initialMessage": initial_message,
         "apiKey": api_key,
@@ -442,6 +442,10 @@ mod tests {
         assert_eq!(req["type"], "start_session");
         assert_eq!(req["mcpServers"], json!({}));
         assert_eq!(req["sourceMcpFromFs"], json!(true));
+        assert_eq!(
+            req["projectTrustDataDir"],
+            json!(crate::core::brand::DATA_DIR_NAME)
+        );
     }
 
     #[test]

@@ -1,5 +1,20 @@
 # Packaged Acceptance Matrix — currently targeting 0.13.2
 
+> September 8 GUI/provider/hardware observations and the 0.14.2/0.14.3 Monitor
+> corrections are recorded in [`gui-provider-evidence-2026-09-08.md`](./gui-provider-evidence-2026-09-08.md).
+> Read that report for current passes and blockers; the historical ticks below
+> are not promoted to the newer builds.
+
+> The 0.14.1 installer/payload and real OpenSSH consolidation checks have a
+> reproducible workflow in [`installer-ssh-acceptance.md`](./installer-ssh-acceptance.md).
+> Its dated evidence is separate from the older interactive matrix below;
+> none of these historical checkmarks is promoted to 0.14.1 automatically.
+
+> Evidence scope (2026-09-07): this detailed matrix still records 0.13.2.
+> The newer 0.14.0 installation and 6/7 live MCP smoke are recorded separately
+> in `CHANGELOG.md`. Retarget this matrix only after building and identifying
+> the next package; existing checkmarks do not prove the consolidation fixes.
+
 > **The filename carries no version, deliberately.** This is one evolving
 > checklist, not a per-release artifact. It used to be renamed on every
 > retarget (`acceptance-0.11.0.md` → `-0.12.0` → `-0.12.1` → `-0.13.0` →

@@ -26,6 +26,7 @@ import { isSshWorkspace } from "@/types/workspace";
 import type { Attention } from "@/lib/sessionIndex";
 import { API_PROVIDERS } from "@/lib/api-models";
 import { getAgentColor } from "@/lib/agentColors";
+import { workspacePaneSummaryIdentity } from "@/lib/workspacePaneSummary";
 
 export type FleetFilter = "all" | "active" | "done" | "archived";
 
@@ -160,7 +161,6 @@ function isDoneAttention(a: Attention): boolean {
 
 function buildChips(
   workspace: Workspace,
-  convById: Map<string, AgentConversation>,
   conversationAttention: ReadonlyMap<string, Attention>,
 ): { chips: FleetChip[]; needsYouPaneId?: string } {
   // Aggregate panes by agent label; a chip carries a needs-you dot if ANY of
@@ -170,19 +170,14 @@ function buildChips(
   let needsYouPaneId: string | undefined;
 
   for (const pane of workspace.panes) {
-    let agent: string;
+    const identity = workspacePaneSummaryIdentity(pane);
     let paneNeeds = false;
     if (pane.kind === "conversation" && pane.conversationId) {
-      const conv = convById.get(pane.conversationId);
-      agent = conv?.agent ?? "terminal";
       paneNeeds = conversationAttention.get(pane.conversationId) === "needs_you";
-    } else {
-      // PTY/terminal tile — never contributes needs_you at this layer.
-      agent = "terminal";
     }
     if (paneNeeds && needsYouPaneId === undefined) needsYouPaneId = pane.id;
 
-    const label = agentLabelFor(agent);
+    const label = identity.label;
     const existing = byLabel.get(label);
     if (existing) {
       existing.count += 1;
@@ -192,7 +187,7 @@ function buildChips(
       byLabel.set(label, {
         label,
         count: 1,
-        colorClass: getAgentColor(agent).text,
+        colorClass: identity.color.text,
         needsYou: paneNeeds,
       });
     }
@@ -256,7 +251,7 @@ export function buildFleetProjection(input: BuildFleetInput): FleetProjection {
   // Workspace rows — one per workspace.
   for (const w of workspaces) {
     const attention = workspaceStatuses.get(w.id) ?? "idle";
-    const { chips, needsYouPaneId } = buildChips(w, convById, conversationAttention);
+    const { chips, needsYouPaneId } = buildChips(w, conversationAttention);
     const singleTile = w.panes.length <= 1;
     const isSsh = isSshWorkspace(w);
     // Member conversation content for search.

@@ -1,6 +1,6 @@
 # PacketBench Backlog
 
-Last reconciled: 2026-09-01
+Last reconciled: 2026-09-08 (installer/SSH proof updates)
 
 This is the single task register for work that has not shipped or has not yet
 earned its required real/package proof. Completed implementation history belongs
@@ -256,10 +256,12 @@ environment or packaged matrix has actually run.
   [`dev/acceptance.md`](./dev/acceptance.md) have run against the installed
   0.13.2 package. Section 1 found two defects, one fixed and one filed above;
   section 2 left two partial rows, one blocked row, and one confirmed-still-
-  broken finding (filed below). **Dictation on real hardware, dictation
-  analytics, and the two-display Monitor matrix have not run** and cannot be
-  run from source — they need a person at the keyboard with the headset
-  attached. The dictation section is the highest-yield: those fixes were
+  broken finding (filed below). That historical matrix remains incomplete.
+  September 8 native follow-up exercised Analytics/History empty states,
+  verified Tiny download, a zero-frame headset probe and two-display Monitor
+  lifecycle; see `dev/gui-provider-evidence-2026-09-08.md` for per-build scope.
+  Full speech/recovery and remaining Monitor cases still need runtime proof.
+  The dictation section is the highest-yield: those fixes were
   written for Bluetooth failure paths that only a real headset can provoke.
 
 - **DONE 0.13.2 - the three section-2 findings.** A crashing CLI reading as a
@@ -387,6 +389,11 @@ environment or packaged matrix has actually run.
   44.1/48 kHz, fast-PTT, cancel, disconnect, repeated phrase, first-model-load,
   history, in-app, clipboard, and opt-in external-paste tests on Windows with an
   active microphone. Then run the Linux ALSA/PipeWire plus X11/Wayland matrices.
+  September 8: installed 0.14.1 enumerated the PLT Focus at 16 kHz mono;
+  Tiny downloaded, was selected and independently checksum-verified. The live
+  1,500 ms probe opened the microphone but received zero frames and recovered
+  with an error. Speech accuracy, model inference and physical recovery remain
+  unproved; see `dev/gui-provider-evidence-2026-09-08.md`.
   macOS microphone permission, TCC behaviour, and the `systemWidePaste` gap are
   items MAC-13 to MAC-15 of the acceptance matrix in
   [`dev/macos-release-plan.md`](./dev/macos-release-plan.md).
@@ -422,12 +429,32 @@ environment or packaged matrix has actually run.
 - **P2 - MCP Hub parity.** Run surviving sidecar/in-process providers against
   configured local and pinned-SSH MCP servers: crash/reload/version-skew,
   offline install/removal, trust downgrade/reconnect, remote-profile parity,
-  and packaged catalog/removal smoke.
+  and packaged catalog/removal smoke. The 2026-09-07 consolidation adds v12
+  host-owned project trust and handshake-before-start. The 2026-09-08 real
+  Linux OpenSSH matrix passed old-peer rejection, host-local project trust,
+  marker execution/denial and reconnect (9/9); installed 0.14.1 payload/runtime
+  checks also passed. Full packaged provider/GUI parity remains; see
+  `dev/installer-ssh-evidence-2026-09-08.md` for the exact proof boundary.
 - **P2 - Trust/provenance parity.** Run all-provider local/SSH/MCP/restart/YOLO
   and packaged visual/manual matrices without weakening denial floors.
-- **P2 - Monitor proof.** Run packaged multi-display lifecycle and stale-state
-  checks, verify Monitor closes with the main process, and execute a
-  WebView-to-Rust denial integration test.
+- **P2 - Remaining Monitor proof.** September 8 native testing found and fixed
+  Windows creation deadlock and main-window shutdown leakage, now packaged in
+  0.14.3. Two-display opening/rendering, route reuse, focus, maximize, own close,
+  live conversation projection and main-window shutdown were exercised, with
+  exact per-build scope in `dev/gui-provider-evidence-2026-09-08.md`. Accessible
+  window-button names were added and observed. Still run stale/deleted entity,
+  Flight, 800-pixel responsive/full keyboard, and WebView-to-Rust denial
+  integration cases; source allowlist tests alone do not close that last gate.
+  The 0.14.7 source adds serialized concurrent singleton creation, with four
+  focused Rust tests passing; its new concurrency test uses a fake native seam,
+  so installed concurrency proof remains separate (`dev/workspace-release-0.14.7.md`).
+- **DONE 2026-09-11 - Packaged conversation restart fixes.** Installed 0.14.4
+  retained the exact initial Ollama prompt after confirmed mid-turn shutdown,
+  restoring idle with an interruption notice. A restored idle conversation
+  accepted qwen2.5-coder:7b → qwen3.5:4b without the missing-session error and
+  retained that choice after restart. Seven source regressions also cover
+  live backend rejection and stale saves. Evidence:
+  `dev/workspace-evidence-2026-09-11.md`.
 - **P3 - Windows OpenSSH and remote transfer proof.** Add an OS probe and
   unit-tested cmd/PowerShell command builder for Windows-OpenSSH targets. Prove
   streamed transfers above the current 2 MB cap before considering port
@@ -583,28 +610,62 @@ in `useXterm.ts` / `WorkspacePane.tsx` / `PaneContainer.tsx`; `useXterm`'s
 `7.0.0-beta0` (`package.json:74`). One claim needed correcting — see the dead
 pane API item.
 
-- **P2 - No DOM focus follows pane focus.** `activePaneId` drives a border
+September 11 reconciliation: terminal focus, resize/output batching and caught
+command/template PTY sends now have source fixes and regression coverage below.
+Reproduce the older hydration/layout findings before treating them as current
+normal-startup failures:
+`initializeApp` hydrates Workspaces before publishing `initialized`, and
+`WorkspaceView` gates mosaic mounting on that flag. Wholesale replacement in
+`hydrateFromBackend` and first-build-only layout consumption remain edge cases
+to test, but those code patterns alone do not prove the historical startup race
+is reachable today. Workspace daily workflow is now the first P1 roadmap track.
+
+- **SOURCE FIXED 2026-09-11 - Terminal focus and navigation.** Selection now
+  focuses the terminal, Ctrl+Alt+PageUp/PageDown cycles visible terminals, and
+  workspace switching restores the last focused pane. Modal, editor, approval,
+  hidden-pane and highlight-expiry cases have regression coverage. Native
+  acceptance is tracked in `dev/workspace-evidence-2026-09-11.md`.
+  Historical cause: `activePaneId` drove a border
   class only; nothing calls `xterm.focus()` or focuses the composer. Clicking a
   pane's header or padding marks it active while keystrokes still go to
   whichever pane last had DOM focus, and `requestPaneFocus` highlights a pane
   the user must then click. No shortcut cycles panes or focuses pane N —
   `mosaicPresets.getLeafOrder`'s docstring promises `Ctrl+1/2/3/4` switching
   that does not exist.
-- **P2 - Resize is not coalesced.** `useXterm`'s `ResizeObserver` has no
+- **SOURCE FIXED 2026-09-11 - Resize batching.** `useXterm` now coalesces fits
+  per animation frame, ignores duplicate dimensions, and cancels hidden or
+  unmounted work. Four/eight-pane burst and visibility regressions pass.
+  Historical cause: `useXterm`'s `ResizeObserver` had no
   debounce or rAF batching, and react-mosaic throttles splitter drags to 30Hz,
   so a 4-pane drag costs roughly 120 forced layout measurements and up to 120
   resize IPC round-trips per second. (`src/hooks/useXterm.ts`)
-- **P2 - PTY output is emitted per read, not coalesced.** One Tauri event per
+- **DONE 2026-09-11 - Incremental pane layout lost on restart.** Native 0.14.4
+  revealed that four added columns became a 2x2 preset because only drag
+  release saved geometry. Structural add/remove changes now save their exact
+  tree once, preserving mounted terminals. The new regression failed before
+  the fix; installed 0.14.5 retained four columns after normal restart without
+  a prior splitter gesture. See `dev/workspace-evidence-2026-09-11.md`.
+- **SOURCE FIXED 2026-09-11 - PTY output batching.** An eight-entry bounded
+  queue feeds a dispatcher capped at 32 KiB / 8 ms. It appends and emits the
+  same sequenced batch, then drains before exit. Queued-burst tests turn eight
+  reads into two emissions for 1/4/8 panes, preserving all text. This is a
+  synthetic event-count result, not a measured native frame-rate claim.
+  Historical cause: one Tauri event per
   8KB read, and each event is parsed twice (`useTerminalSession` and
   `usePtyStateDetector` both listen on `pty:output:<id>`). A noisy build floods
   the bridge. (`src-tauri/src/commands/pty.rs`, `src/hooks/usePtyStateDetector.ts`)
-- **P2 - Tile chrome is written three times.** `WorkspacePane`,
+- **INSTALLED 0.14.6 2026-09-11 - Shared pane controls.** `TileChrome` now owns
+  the common drag header, identity/status, accessible zoom and optional close
+  controls. Terminal, saved conversation and file bodies retain their existing
+  lifecycle. Failed-send controls no longer act as drag handles. Historical
+  cause: `WorkspacePane`,
   `ConversationTile`, and now `FileTile` each hand-roll the same grip / identity
   / zoom bar and each re-connect the mosaic drag source, because
   `mosaic-overrides.css` hides the library toolbar that _is_ the drag handle.
   Three status vocabularies coexist (terminal pill, conversation pill, and
   `sessionStatus`'s `Attention`, which calls itself the single truth but is not
-  what either tile renders). Extract one `TileChrome`.
+  what either tile renders). Shared terminal/file controls and zoomed-file
+  closure passed native acceptance; saved conversation behavior has focused tests.
 - **P3 - Dead pane API in `layoutStore`.** **Corrected 2026-08-27 — the
   original claim was too broad.** `panes`, `addPane`, and `removePane` are
   genuinely dead: no non-test caller references them, and every `addPane` hit
@@ -615,11 +676,32 @@ pane API item.
   `layoutStore` is live for `projectPath`, `activePaneId`, `setPaneSession`,
   and `getActivePane`. The decoy `panes` array is still real and still worth
   deleting; the rest of the API is not dead.
-- **P3 - More than ~8 panes is unusable.** Tiles now all render (the preset fix),
-  but shrink past readability. react-mosaic 7 has a first-class tabs node —
-  `addToTree`/`removeFromTree` would need to learn about `MosaicTabsNode`, which
-  `getLeafOrder` already handles.
-- **P2 - A layout arriving after first mount is ignored, then overwritten.**
+- **INSTALLED 0.14.6 2026-09-11 - Readable many-pane layouts.** Default readable
+  canvas dimensions preserve saved ratios with scrolling. Fit all, Balance
+  sizes, pane selection/navigation and zoom are explicit controls. Real-browser
+  eight-pane geometry/lifecycle checks and native eight-column restart pass.
+  Tabs remain a separate design:
+  the current library unmounts inactive tabs, so converting live terminals
+  would require preserving their runtime independently of tab rendering.
+- **PROFILED 2026-09-12 - Eight-pane output on native WebView2.** A dedicated
+  isolated native host with real Workspace/xterm and mocked Tauri delivered
+  21.9 MB per run with all fresh Unicode markers and terminal instances intact.
+  Cold/warm p95 frame intervals were 16.8/16.8 ms, maxima 50.0/16.9 ms, with no
+  long tasks. CPU profiles identify buffer copying/parsing as the largest named
+  JavaScript costs; they do not isolate GPU time. This resolves the requested
+  native profiling investigation without speculative production scheduling
+  changes. It is not packaged/live-PTY or universal FPS acceptance. Exact scope,
+  raw evidence and reproduction: `dev/workspace-release-0.14.7.md`.
+- **SOURCE FIXED 2026-09-12 - Count viewer panes separately in Workspace summaries.**
+  Workspace and Fleet classify `pane.kind` before inert CLI carrier fields:
+  File viewer and Saved conversation stay distinct from actual terminals/CLIs.
+  Header account grouping and Fleet attention mapping remain intact. All 33
+  focused component/projection tests passed. Packaging and installed 0.14.7
+  observation are pending; see `dev/workspace-release-0.14.7.md`.
+- **NEEDS REPRODUCTION - A layout arriving after first mount is ignored.**
+  Current normal startup hydrates before mounting the Workspace, so this old
+  late-arrival sequence is not established as reachable there. It is distinct
+  from the reproduced incremental-layout loss fixed above.
   The container consumes `workspace.layout` only on its first tree build. If the
   localStorage cache hydrates without a layout and the backend later supplies
   one with identical pane ids (most plausibly after a swallowed
@@ -632,17 +714,19 @@ pane API item.
   backstop: a closed pane inside a tabs node would stay a leaf and `renderTile`
   would return a bare `<div/>`. Latent — no `createNode` is passed today, so the
   library never mints a tabs node. Must be fixed alongside the tabs work above.
-- **P3 - `ConversationTile`'s missing-conversation fallback omits
-  `data-pane-zoomed`.** `mosaic-overrides.css` hides every tile unless one
-  carries that attribute, so zooming a conversation tile and then deleting its
-  conversation blanks the whole workspace with no visible control
-  (`deleteConversation` clears the review but neither removes the pane nor
-  clears `zoomedPaneId`). Escape recovers it.
+- **SOURCE FIXED 0.14.7 - Missing-conversation fallback survives zoom.** The
+  fallback carries `data-pane-zoomed` and selects its pane on pointer/keyboard
+  focus. Zooming a missing transcript retains the explanation and Remove tile
+  control; Show all panes restores the grid. Regression coverage exercises the
+  actual Mosaic reveal selector and toolbar.
 - **P3 - `ReviewSurface` does not mark its Escape handled.** Its layering
   therefore depends on listener registration order rather than on
   `defaultPrevented`. No user-visible symptom found; a `preventDefault()` on
   close would make the ordering explicit.
-- **P3 - Zoom is stranded when its workspace is archived or deleted.** Both null
+- **SOURCE FIXED 2026-09-11 - Zoom cleanup on archive/delete.** Owned zoom is
+  cleared, including stale zoom encountered during backend hydration. Tests
+  preserve zoom belonging to an unrelated surviving Workspace.
+  Historical cause: both operations nulled
   `activeWorkspaceId` but leave `zoomedPaneId`, so restoring the workspace
   reopens it already zoomed on the old pane. Inert meanwhile — the stale id
   matches no rendered pane.
@@ -727,14 +811,14 @@ below was re-read in source on that date unless it says otherwise.
   double-mount wedges the panel. Also still open: `AutoFixButton` now has
   unmount cleanup (`components/quality/AutoFixButton.tsx:130-131`) but never
   calls `cancelQualityFix`, which exists at `src/lib/tauri.ts:454`.
-- **P2 - workspaceStore persistence.** One of three landed. The ordering tail
-  exists as `backendSaveTail` (`stores/workspaceStore.ts:419`). Still open:
-  `hydrateFromBackend` does a wholesale `set({ workspaces: normalized })`
-  (`stores/workspaceStore.ts:922-931`) with no local-only merge, so a
-  workspace created during the bootstrap window is still dropped. Also still
-  open: uncaught fire-and-forget `writePty` calls remain — e.g.
-  `components/workspace/WorkspacePane.tsx:96` and `:113` — so a message to a
-  dead PTY is silently lost there.
+- **RECONCILED 2026-09-11 - workspaceStore persistence and sends.** The ordered
+  backend save tail was already present. Normal startup hydrates before showing
+  Workspaces, so the historical create-during-bootstrap loss is not reproduced;
+  retain backend authority. Newly corrected selection validation rejects stale
+  archived/deleted records and restores backend-only selection. Command/template
+  sends now catch failure, retain exact input, suppress duplicate pending sends,
+  and offer explicit retry plus separate restart. Source regression suites pass;
+  native proof is scoped in `dev/workspace-evidence-2026-09-11.md`.
 - **P2 - Undefined theme tokens.** `accent-cyan`, `accent-yellow`,
   `accent-orange`, and `text-text-tertiary` are used but not defined — 12
   usages render colourless today (PR pending pills, "Up Next" status dot).
@@ -786,15 +870,23 @@ below was re-read in source on that date unless it says otherwise.
   provenance). The remaining item is the Rust gates: run release gates from
   the Windows shell, or put the MSVC toolchain on the WSL path. See
   `dev/local-quality-gates.md`.
-- **P2 - Remote sidecar receives the API key before the protocol floor can
-  refuse it.** The SSH handshake arrives after `start_session` is already on
-  the wire, so a pre-v11 remote sidecar gets the provider key before the
-  version floor can reject it. The session is killed on its `ready`, but
-  closing this properly needs a handshake-before-start redesign of the remote
-  path. Pair it with requiring a pinned `host_fingerprint` before any remote
-  sidecar start — re-verified 2026-08-27 that no such requirement exists
-  (`commands/agent_sidecar/supervisor.rs` mentions `host_fingerprint` only in
-  a test fixture), so this and the SSH-trust-anchors item above share a fix.
+- **P2 - Remote sidecar provider/GUI acceptance.** The 2026-09-07 consolidation
+  fixes the request-before-handshake race in source: SSH startup awaits a
+  compatible v12 `ready` before forwarding the session/API key. Regression
+  tests reject old/missing/invalid handshakes and preserve buffered events.
+  Native real pinned-SSH handshake/trust/reconnect proof passed 9/9 on
+  2026-09-08 (`dev/installer-ssh-evidence-2026-09-08.md`). Remaining: full
+  packaged Tauri session lifecycle with the paid SDK providers. The broader
+  GUI run passed local Ollama turns, cancellation and recovery; MiniMax
+  hit its plan quota and Anthropic/OpenAI keys were absent. Those observations
+  do not prove SSH SDK parity (`dev/gui-provider-evidence-2026-09-08.md`). The
+  separate real remote Claude CLI check is deferred at the user's explicit
+  request on 2026-09-12 because the subscription requires paid renewal; no
+  successful provider reply is claimed. Its opt-in runner is documented in
+  `dev/installer-ssh-acceptance.md`; do not request login or retry unless the
+  user resumes it. This CLI check would not close the SDK provider matrix.
+  The SSH-trust-anchors item remains open; this change does
+  not require a fingerprint where the existing connection permits TOFU.
 - **P2 - Sidecar cold start takes 18-29 s on this checkout.** **Unverified on
   2026-08-27** — closing or confirming it needs a timed run, not a read.
   Module-load

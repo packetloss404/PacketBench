@@ -584,6 +584,19 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // Wait for actual destruction, after useCloseConfirm has either
+            // found no live work or received confirmation. A read-only Monitor
+            // must not keep the app and its agent processes alive without main.
+            if matches!(
+                &event,
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::Destroyed,
+                    ..
+                } if label == "main"
+            ) {
+                app_handle.exit(0);
+            }
             if let tauri::RunEvent::Exit = event {
                 // Stop the PacketAgent SSE consumer tasks so their sockets
                 // never outlive the window (PH6 clean-shutdown requirement).

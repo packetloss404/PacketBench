@@ -106,9 +106,7 @@ vi.mock("@/stores/workspaceStore", () => {
 
 vi.mock("@/stores/appStore", () => ({
   useAppStore: Object.assign(
-    vi.fn((selector: (state: typeof mocks.appState) => unknown) =>
-      selector(mocks.appState),
-    ),
+    vi.fn((selector: (state: typeof mocks.appState) => unknown) => selector(mocks.appState)),
     {
       getState: vi.fn(() => mocks.appState),
     },
@@ -123,9 +121,7 @@ vi.mock("@/stores/layoutStore", () => ({
 
 vi.mock("@/stores/agentStore", () => ({
   useAgentStore: Object.assign(
-    vi.fn((selector: (state: typeof mocks.agentState) => unknown) =>
-      selector(mocks.agentState),
-    ),
+    vi.fn((selector: (state: typeof mocks.agentState) => unknown) => selector(mocks.agentState)),
     {
       getState: vi.fn(() => mocks.agentState),
     },
@@ -134,9 +130,7 @@ vi.mock("@/stores/agentStore", () => ({
 
 vi.mock("@/stores/serverStore", () => ({
   useServerStore: Object.assign(
-    vi.fn((selector: (state: typeof mocks.serverState) => unknown) =>
-      selector(mocks.serverState),
-    ),
+    vi.fn((selector: (state: typeof mocks.serverState) => unknown) => selector(mocks.serverState)),
     {
       getState: vi.fn(() => mocks.serverState),
     },
@@ -153,12 +147,14 @@ vi.mock("@/stores/editorStore", () => ({
   isFileDirty: () => false,
   isMarkdownPath: () => false,
   useEditorStore: vi.fn(
-    (selector: (state: {
-      openFiles: unknown[];
-      activeFileId: null;
-      closeFile: () => void;
-      setActiveFile: () => void;
-    }) => unknown) =>
+    (
+      selector: (state: {
+        openFiles: unknown[];
+        activeFileId: null;
+        closeFile: () => void;
+        setActiveFile: () => void;
+      }) => unknown,
+    ) =>
       selector({
         openFiles: [],
         activeFileId: null,
@@ -203,15 +199,14 @@ describe("workspace launch installed-agent checks", () => {
     // leak into the local three-field test's "collapsed by default" check.
     localStorage.clear();
     mocks.workspaceState.creationRequest = null;
+    mocks.workspaceState.workspaces[0].panes = [
+      { id: "pane-terminal", agentId: "terminal", sessionId: null },
+    ];
   });
 
   it("filters remote workspace templates through server installedAgents", async () => {
     render(
-      <WorkspaceCreationModal
-        onClose={vi.fn()}
-        serverId="srv-1"
-        remoteProjectPath="/srv/app"
-      />,
+      <WorkspaceCreationModal onClose={vi.fn()} serverId="srv-1" remoteProjectPath="/srv/app" />,
     );
 
     // The "Review Pair" template wants claude-code + codex, but the mock
@@ -304,11 +299,7 @@ describe("workspace launch installed-agent checks", () => {
       "claude-code",
       undefined,
     );
-    expect(mocks.workspaceState.addPane).not.toHaveBeenCalledWith(
-      "ws-remote",
-      "codex",
-      undefined,
-    );
+    expect(mocks.workspaceState.addPane).not.toHaveBeenCalledWith("ws-remote", "codex", undefined);
   });
 
   it("opens the creation form for a global creation request (Toolbar / Ctrl+K)", () => {
@@ -329,5 +320,82 @@ describe("workspace launch installed-agent checks", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delegate" }));
 
     expect(mocks.delegateWorkspaceToAgents).toHaveBeenCalledWith("ws-remote");
+  });
+
+  it("counts viewers and saved conversations separately while preserving CLI account groups", () => {
+    mocks.workspaceState.workspaces[0].panes = [
+      { id: "terminal-legacy", agentId: "terminal", sessionId: null },
+      { id: "terminal-explicit", kind: "terminal", agentId: "terminal", sessionId: null },
+      { id: "claude-a-1", agentId: "claude-code", accountId: "account-a", sessionId: null },
+      { id: "claude-a-2", agentId: "claude-code", accountId: "account-a", sessionId: null },
+      { id: "claude-b", agentId: "claude-code", accountId: "account-b", sessionId: null },
+      {
+        id: "file-a",
+        kind: "file",
+        agentId: "terminal",
+        filePath: "/app/README.md",
+        sessionId: null,
+      },
+      {
+        id: "file-b",
+        kind: "file",
+        agentId: "terminal",
+        accountId: "inert-file-account",
+        filePath: "/app/config.json",
+        sessionId: null,
+      },
+      {
+        id: "chat-a",
+        kind: "conversation",
+        agentId: "terminal",
+        conversationId: "conversation-a",
+        sessionId: null,
+      },
+      {
+        id: "chat-b",
+        kind: "conversation",
+        agentId: "terminal",
+        conversationId: "conversation-b",
+        sessionId: null,
+      },
+    ];
+
+    render(<WorkspaceView />);
+
+    expect(screen.getByText("Terminal x2")).toBeInTheDocument();
+    expect(screen.getByText("File viewer x2")).toBeInTheDocument();
+    expect(screen.getByText("Saved conversation x2")).toBeInTheDocument();
+    expect(screen.getByText("Claude x2")).toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getAllByTestId("account-dot").map((dot) => dot.dataset.accountId)).toEqual([
+      "account-a",
+      "account-b",
+    ]);
+    expect(screen.queryByText("Terminal x4")).not.toBeInTheDocument();
+  });
+
+  it("does not claim a terminal exists when a Workspace contains only viewer and conversation panes", () => {
+    mocks.workspaceState.workspaces[0].panes = [
+      {
+        id: "file",
+        kind: "file",
+        agentId: "terminal",
+        filePath: "/app/README.md",
+        sessionId: null,
+      },
+      {
+        id: "chat",
+        kind: "conversation",
+        agentId: "terminal",
+        conversationId: "conversation",
+        sessionId: null,
+      },
+    ];
+
+    render(<WorkspaceView />);
+
+    expect(screen.getByText("File viewer")).toBeInTheDocument();
+    expect(screen.getByText("Saved conversation")).toBeInTheDocument();
+    expect(screen.queryByText(/^Terminal(?: x\d+)?$/)).not.toBeInTheDocument();
   });
 });

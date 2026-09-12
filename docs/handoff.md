@@ -1,5 +1,11 @@
 # PacketBench handoff — written 2026-09-05 for a cold start
 
+> Historical audit handoff. Use [`../HANDOFF.md`](../HANDOFF.md) for the
+> current restart state. The September 7 consolidation requires protocol v12,
+> host-owned remote project trust before MCP probing, and an SSH handshake
+> before sending session requests. Auxiliary queues are now per provider and
+> background/interactive lane. Older statements below describe the audit build.
+
 Read this if you have no memory of the 2026-09-04 audit session. It is written
 for a weaker model or a future maintainer with the repo open and nothing else.
 Everything cites a file; verify the file before acting on the sentence.

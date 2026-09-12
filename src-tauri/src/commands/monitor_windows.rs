@@ -68,6 +68,19 @@ pub struct MonitorLease {
 #[derive(Default)]
 pub struct MonitorWindowRegistry {
     leases: Mutex<HashMap<String, MonitorLease>>,
+    open_gate: tokio::sync::Mutex<()>,
+}
+
+impl MonitorWindowRegistry {
+    /// Serialize singleton lookup + native creation, while keeping lease reads
+    /// available to the new webview during its startup handshake.
+    async fn open_serialized<T>(
+        &self,
+        open: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let _guard = self.open_gate.lock().await;
+        open()
+    }
 }
 
 fn now_ms() -> u64 {
@@ -92,7 +105,10 @@ fn require_monitor(caller: &WebviewWindow, label: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn open_monitor_window(
+// WebView2 creation must run outside the synchronous command dispatcher on
+// Windows; otherwise the new native window can remain blank indefinitely.
+// https://docs.rs/tauri/2.11.5/tauri/webview/struct.WebviewWindowBuilder.html#method.new
+pub async fn open_monitor_window(
     app: tauri::AppHandle,
     caller: WebviewWindow,
     registry: tauri::State<'_, MonitorWindowRegistry>,
@@ -100,46 +116,51 @@ pub fn open_monitor_window(
 ) -> Result<MonitorLease, String> {
     require_main(&caller)?;
     route.validate()?;
-    let lease = MonitorLease {
-        monitor_id: uuid::Uuid::new_v4().to_string(),
-        label: MONITOR_LABEL.to_string(),
-        route,
-        mode: "readonly",
-        nonce: uuid::Uuid::new_v4().to_string(),
-        created_at: now_ms(),
-    };
     registry
-        .leases
-        .lock()
-        .map_err(|_| "Monitor registry lock is unavailable.".to_string())?
-        .insert(MONITOR_LABEL.to_string(), lease.clone());
+        .open_serialized(|| {
+            let lease = MonitorLease {
+                monitor_id: uuid::Uuid::new_v4().to_string(),
+                label: MONITOR_LABEL.to_string(),
+                route,
+                mode: "readonly",
+                nonce: uuid::Uuid::new_v4().to_string(),
+                created_at: now_ms(),
+            };
+            registry
+                .leases
+                .lock()
+                .map_err(|_| "Monitor registry lock is unavailable.".to_string())?
+                .insert(MONITOR_LABEL.to_string(), lease.clone());
 
-    if let Some(window) = app.get_webview_window(MONITOR_LABEL) {
-        window
-            .emit("monitor-window:route-changed", &lease)
-            .map_err(|error| format!("Could not update Monitor route: {error}"))?;
-        let _ = window.unminimize();
-        let _ = window.show();
-        window
-            .set_focus()
-            .map_err(|error| format!("Could not focus Monitor window: {error}"))?;
-        return Ok(lease);
-    }
+            if let Some(window) = app.get_webview_window(MONITOR_LABEL) {
+                window
+                    .emit("monitor-window:route-changed", &lease)
+                    .map_err(|error| format!("Could not update Monitor route: {error}"))?;
+                let _ = window.unminimize();
+                let _ = window.show();
+                window
+                    .set_focus()
+                    .map_err(|error| format!("Could not focus Monitor window: {error}"))?;
+                return Ok(lease);
+            }
 
-    WebviewWindowBuilder::new(
-        &app,
-        MONITOR_LABEL,
-        WebviewUrl::App(
-            format!("index.html?{MONITOR_WINDOW_QUERY_KEY}=monitor&label={MONITOR_LABEL}").into(),
-        ),
-    )
-    .title("Monitor")
-    .inner_size(900.0, 700.0)
-    .min_inner_size(520.0, 400.0)
-    .resizable(true)
-    .build()
-    .map_err(|error| format!("Could not open Monitor window: {error}"))?;
-    Ok(lease)
+            WebviewWindowBuilder::new(
+                &app,
+                MONITOR_LABEL,
+                WebviewUrl::App(
+                    format!("index.html?{MONITOR_WINDOW_QUERY_KEY}=monitor&label={MONITOR_LABEL}")
+                        .into(),
+                ),
+            )
+            .title("Monitor")
+            .inner_size(900.0, 700.0)
+            .min_inner_size(520.0, 400.0)
+            .resizable(true)
+            .build()
+            .map_err(|error| format!("Could not open Monitor window: {error}"))?;
+            Ok(lease)
+        })
+        .await
 }
 
 #[tauri::command]
@@ -210,6 +231,68 @@ pub fn focus_monitor_route_in_main(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_monitor_opens_create_one_window_and_reuse_it() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let registry = Arc::new(MonitorWindowRegistry::default());
+        let exists = Arc::new(AtomicBool::new(false));
+        let created = Arc::new(AtomicUsize::new(0));
+        let reused = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(tokio::sync::Barrier::new(8));
+        let mut requests = Vec::new();
+        for _ in 0..8 {
+            let registry = Arc::clone(&registry);
+            let exists = Arc::clone(&exists);
+            let created = Arc::clone(&created);
+            let reused = Arc::clone(&reused);
+            let start = Arc::clone(&start);
+            requests.push(tokio::spawn(async move {
+                start.wait().await;
+                registry
+                    .open_serialized(|| {
+                        if exists.load(Ordering::SeqCst) {
+                            reused.fetch_add(1, Ordering::SeqCst);
+                        } else {
+                            // Model the blocking native build after the singleton
+                            // lookup. Without serialization concurrent callers
+                            // reach creation together and hit a duplicate label.
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                            exists
+                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                                .map_err(|_| "duplicate native window label".to_string())?;
+                            created.fetch_add(1, Ordering::SeqCst);
+                            assert!(
+                                registry.leases.try_lock().is_ok(),
+                                "webview startup must be able to read its lease"
+                            );
+                        }
+                        Ok(())
+                    })
+                    .await
+            }));
+        }
+        for request in requests {
+            request.await.unwrap().unwrap();
+        }
+        assert_eq!(created.load(Ordering::SeqCst), 1);
+        assert_eq!(reused.load(Ordering::SeqCst), 7);
+    }
+
+    #[tokio::test]
+    async fn failed_native_open_does_not_block_a_retry() {
+        let registry = MonitorWindowRegistry::default();
+        let failed: Result<(), String> = registry
+            .open_serialized(|| Err("native failure".into()))
+            .await;
+        assert!(failed.is_err());
+        assert_eq!(
+            registry.open_serialized(|| Ok("opened")).await.unwrap(),
+            "opened"
+        );
+    }
 
     #[test]
     fn monitor_window_app_command_allowlist_is_read_only() {

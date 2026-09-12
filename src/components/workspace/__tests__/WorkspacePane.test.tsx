@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspacePane } from "@/components/workspace/WorkspacePane";
 import type { TerminalHeaderRenderState } from "@/components/session/TerminalPane";
@@ -11,16 +11,18 @@ import { PACKETCODE_CONFIG } from "@/agents/packetcode";
 import { useTerminalSettingsStore } from "@/stores/terminalSettingsStore";
 import { usePacketCodeIntegrationStore } from "@/stores/packetCodeIntegrationStore";
 import { useCliOverrideStore } from "@/stores/cliOverrideStore";
+import { usePromptStore } from "@/stores/promptStore";
 import type { Workspace } from "@/types/workspace";
 
 const probePacketCodeIntegration = vi.hoisted(() => vi.fn());
+const writePty = vi.hoisted(() => vi.fn());
 
 // Spread the real module: the pane now also calls the pure exit-classification
 // helpers (`ptyExitPillLabel`, `describePtyExitOutcome`) while rendering its
 // header, and stubbing the module wholesale would leave those undefined.
 vi.mock("@/lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/tauri")>()),
-  writePty: vi.fn(),
+  writePty,
   probePacketCodeIntegration,
 }));
 
@@ -109,6 +111,7 @@ describe("WorkspacePane tile header", () => {
     });
     useCliOverrideStore.setState({ overrides: {} });
     probePacketCodeIntegration.mockReset();
+    writePty.mockReset().mockResolvedValue(undefined);
   });
 
   it("renders a diet header: grip, dot, name, status, zoom, one overflow — no standalone accent/pin/prompt/model controls", () => {
@@ -128,6 +131,93 @@ describe("WorkspacePane tile header", () => {
 
     // Exactly one overflow trigger.
     expect(screen.getByTitle("More")).toBeInTheDocument();
+  });
+
+  it("retains a failed pinned command across restart and only retries into the new PTY on request", async () => {
+    const workspace = useWorkspaceStore.getState().workspaces[0];
+    const pane = { ...workspace.panes[0], sessionId: "pty-old", pinnedCommands: ["git status"] };
+    writePty.mockRejectedValueOnce("PTY session not found");
+    const view = render(<WorkspacePane pane={pane} workspaceId={workspace.id} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "git status" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Command could not be sent: PTY session not found");
+    expect(writePty).toHaveBeenCalledWith("pty-old", "git status\r");
+    expect(currentHeaderState.onRestart).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "git status" })).toBeDisabled();
+
+    currentHeaderState = { ...currentHeaderState, alive: false };
+    view.rerender(<WorkspacePane pane={{ ...pane, sessionId: null }} workspaceId={workspace.id} />);
+    expect(screen.getByRole("button", { name: "Retry send" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Start session" }));
+    expect(currentHeaderState.onRestart).toHaveBeenCalledTimes(1);
+    expect(writePty).toHaveBeenCalledTimes(1);
+
+    currentHeaderState = { ...currentHeaderState, alive: true };
+    view.rerender(<WorkspacePane pane={{ ...pane, sessionId: "pty-new" }} workspaceId={workspace.id} />);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(writePty).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry send" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(writePty).toHaveBeenLastCalledWith("pty-new", "git status\r");
+    expect(writePty).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the attempted prompt body when its template changes after a failed send", async () => {
+    const workspace = useWorkspaceStore.getState().workspaces[0];
+    const template = { id: "retry-template", name: "Review changes", content: "Review exactly this diff", category: "review" as const, createdAt: 0, updatedAt: 0 };
+    usePromptStore.setState({ templates: [template] });
+    writePty.mockRejectedValueOnce(new Error("Broken pipe"));
+    render(<WorkspacePane pane={{ ...workspace.panes[0], sessionId: "pty-live" }} workspaceId={workspace.id} />);
+    fireEvent.click(screen.getByTitle("More"));
+    fireEvent.click(screen.getByText("Send prompt…"));
+    fireEvent.click(screen.getByRole("button", { name: /Review changes/ }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Prompt “Review changes” could not be sent: Broken pipe");
+    expect(screen.getByText(template.content)).toBeInTheDocument();
+    act(() => usePromptStore.setState({ templates: [{ ...template, content: "A different request" }] }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry send" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(writePty).toHaveBeenLastCalledWith("pty-live", template.content + "\r");
+    expect(currentHeaderState.onRestart).not.toHaveBeenCalled();
+  });
+
+  it("suppresses repeated command clicks while a PTY write is pending", async () => {
+    const workspace = useWorkspaceStore.getState().workspaces[0];
+    let finishWrite!: () => void;
+    writePty.mockImplementationOnce(() => new Promise<void>((resolve) => { finishWrite = resolve; }));
+    render(<WorkspacePane pane={{ ...workspace.panes[0], sessionId: "pty-live", pinnedCommands: ["git status"] }} workspaceId={workspace.id} />);
+    const button = screen.getByRole("button", { name: "git status" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Sending to terminal");
+    expect(writePty).toHaveBeenCalledTimes(1);
+    await act(async () => finishWrite());
+    expect(button).toBeEnabled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("allows dismissing a send failure without retrying or restarting", async () => {
+    const workspace = useWorkspaceStore.getState().workspaces[0];
+    writePty.mockRejectedValueOnce(new Error("Broken pipe"));
+    render(<WorkspacePane pane={{ ...workspace.panes[0], sessionId: "pty-live", pinnedCommands: ["git status"] }} workspaceId={workspace.id} />);
+    fireEvent.click(screen.getByRole("button", { name: "git status" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "git status" })).toBeEnabled();
+    expect(writePty).toHaveBeenCalledTimes(1);
+    expect(currentHeaderState.onRestart).not.toHaveBeenCalled();
+  });
+
+  it("does not send through a stale session ID after a known PTY exit", () => {
+    const workspace = useWorkspaceStore.getState().workspaces[0];
+    currentHeaderState = { ...currentHeaderState, alive: false, lastExit: { kind: "failed", exitCode: 1 } };
+    render(<WorkspacePane pane={{ ...workspace.panes[0], sessionId: "pty-stale", pinnedCommands: ["git status"] }} workspaceId={workspace.id} />);
+    fireEvent.click(screen.getByRole("button", { name: "git status" }));
+    expect(screen.getByRole("button", { name: "git status" })).toBeDisabled();
+    expect(writePty).not.toHaveBeenCalled();
   });
 
   it("codex identity resolves via lib/agentColors (text-accent-amber)", () => {

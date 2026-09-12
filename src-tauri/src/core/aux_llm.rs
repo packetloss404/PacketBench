@@ -52,7 +52,7 @@
 //! credential and never silently no-ops.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -691,31 +691,48 @@ fn local_route_unavailable_error(task: AuxTaskClass) -> String {
     )
 }
 
-/// How many auxiliary turns may be in flight at once.
-///
-/// Aux turns are background work — session summaries, memory briefs, spec
-/// import — and several routinely become due at the same instant. Closing a
-/// workspace with N terminals produces N independent PTY exits, each of which
-/// queues its own `session-summarize` turn.
-///
-/// Observed while dogfooding 2026-09-06: eight fired within 3 ms, the provider
-/// answered 429 to all eight, nothing retried, and all eight summaries were
-/// lost. There is no backoff here yet, so the only defence is not to stampede
-/// in the first place.
-///
-/// Two, deliberately. These are latency-insensitive background turns, so
-/// serialising them costs the user nothing they can perceive, while the
-/// stampede costs them the whole feature.
+/// Two turns per provider and lane (at most four per provider). Background
+/// memory capture cannot occupy the interactive lane, even during retries;
+/// one provider's failure cannot stall a different provider's requests.
 const MAX_CONCURRENT_AUX_TURNS: usize = 2;
 
-/// Gate for [`MAX_CONCURRENT_AUX_TURNS`].
-///
-/// Deliberately enforced inside [`drive_with_local_policy`] rather than at the
-/// call sites: both public entry points funnel through it, so a future caller
-/// cannot reintroduce the stampede by forgetting to queue.
-fn aux_turn_permits() -> &'static tokio::sync::Semaphore {
-    static PERMITS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
-    PERMITS.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_AUX_TURNS))
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum AuxLane {
+    Background,
+    Interactive,
+}
+
+fn aux_lane(task: AuxTaskClass) -> AuxLane {
+    match task {
+        AuxTaskClass::SessionSummarize
+        | AuxTaskClass::PatternExtract
+        | AuxTaskClass::FlightRetrospective => AuxLane::Background,
+        _ => AuxLane::Interactive,
+    }
+}
+
+#[derive(Default)]
+struct AuxTurnQueues {
+    permits: Mutex<HashMap<(String, AuxLane), Arc<tokio::sync::Semaphore>>>,
+}
+
+impl AuxTurnQueues {
+    fn for_turn(&self, provider: &str, task: AuxTaskClass) -> Arc<tokio::sync::Semaphore> {
+        // The short map lock is never held across an await. The public route
+        // resolver restricts provider ids to AUX_PROVIDERS, bounding this map.
+        let mut permits = self.permits.lock().unwrap_or_else(|e| e.into_inner());
+        permits
+            .entry((provider.to_string(), aux_lane(task)))
+            .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_AUX_TURNS)))
+            .clone()
+    }
+}
+
+fn aux_turn_permits(provider: &str, task: AuxTaskClass) -> Arc<tokio::sync::Semaphore> {
+    static QUEUES: std::sync::OnceLock<AuxTurnQueues> = std::sync::OnceLock::new();
+    QUEUES
+        .get_or_init(AuxTurnQueues::default)
+        .for_turn(provider, task)
 }
 
 /// [`drive`], plus the local-route failure policy: when the route is Ollama
@@ -740,8 +757,8 @@ async fn drive_with_local_policy(
     // refusing work, occupying the slot is backpressure rather than waste.
     // Releasing it would let the next queued turn fire straight into the same
     // limit.
-    let _permit = aux_turn_permits()
-        .acquire()
+    let _permit = aux_turn_permits(&route.provider, task)
+        .acquire_owned()
         .await
         .map_err(|_| "aux turn concurrency gate closed".to_string())?;
 
@@ -751,7 +768,9 @@ async fn drive_with_local_policy(
             .await
         {
             Ok(turn) => return Ok(turn),
-            Err(message) if is_rate_limited(&message) && attempt < RATE_LIMIT_RETRY_DELAYS.len() => {
+            Err(message)
+                if is_rate_limited(&message) && attempt < RATE_LIMIT_RETRY_DELAYS.len() =>
+            {
                 let delay = RATE_LIMIT_RETRY_DELAYS[attempt] + retry_jitter(session_id);
                 warn!(
                     task = task.id(),
@@ -932,7 +951,8 @@ mod tests {
     /// was lost. This asserts the third concurrent caller waits instead.
     #[tokio::test]
     async fn aux_turns_are_bounded_rather_than_stampeding() {
-        let gate = aux_turn_permits();
+        let queues = AuxTurnQueues::default();
+        let gate = queues.for_turn("minimax", AuxTaskClass::SessionSummarize);
         assert_eq!(
             gate.available_permits(),
             MAX_CONCURRENT_AUX_TURNS,
@@ -951,10 +971,46 @@ mod tests {
         );
 
         drop(first);
-        let third = gate.try_acquire().expect("a permit frees up when a turn finishes");
+        let third = gate
+            .try_acquire()
+            .expect("a permit frees up when a turn finishes");
         drop(third);
         drop(second);
         assert_eq!(gate.available_permits(), MAX_CONCURRENT_AUX_TURNS);
+    }
+
+    #[tokio::test]
+    async fn background_backlog_does_not_block_interactive_or_another_provider() {
+        let queues = AuxTurnQueues::default();
+        let background = queues.for_turn("minimax", AuxTaskClass::SessionSummarize);
+        let _busy = background
+            .acquire_many(MAX_CONCURRENT_AUX_TURNS as u32)
+            .await
+            .unwrap();
+        // These permits model in-flight work, including a turn in retry backoff.
+        let more_background = queues.for_turn("minimax", AuxTaskClass::PatternExtract);
+        assert!(more_background.try_acquire().is_err());
+        let other_provider = queues.for_turn("openai", AuxTaskClass::SessionSummarize);
+        assert!(other_provider.try_acquire().is_ok());
+        let interactive = queues.for_turn("minimax", AuxTaskClass::SideChat);
+        let _chat = interactive
+            .acquire_many(MAX_CONCURRENT_AUX_TURNS as u32)
+            .await
+            .unwrap();
+        let more_interactive = queues.for_turn("minimax", AuxTaskClass::SpecImport);
+        assert!(
+            more_interactive.try_acquire().is_err(),
+            "interactive lane must stay bounded"
+        );
+        drop(_busy);
+        assert!(more_background.try_acquire().is_ok());
+        // A dropped/cancelled future releases its owned lane permit as well.
+        let owned = more_background.clone().acquire_owned().await.unwrap();
+        drop(owned);
+        assert_eq!(
+            more_background.available_permits(),
+            MAX_CONCURRENT_AUX_TURNS
+        );
     }
 
     /// The classifier must key off the real message both clients produce, not
@@ -992,7 +1048,11 @@ mod tests {
         let a = retry_jitter("session-summarize-b3ccd130-862d-4db1-b68f-43d8bf90c4f1");
         let b = retry_jitter("session-summarize-a901d369-a10a-4a16-a860-3476d4c24826");
         assert_ne!(a, b, "concurrent turns must not back off in lockstep");
-        for id in ["", "x", "session-summarize-4cfd4b33-71b1-4ed2-bed7-c18d5c96ae49"] {
+        for id in [
+            "",
+            "x",
+            "session-summarize-4cfd4b33-71b1-4ed2-bed7-c18d5c96ae49",
+        ] {
             assert!(retry_jitter(id) < std::time::Duration::from_millis(500));
         }
     }
@@ -1001,7 +1061,11 @@ mod tests {
     /// rate-limited turn holding the gate for minutes.
     #[test]
     fn rate_limit_retry_budget_is_bounded_and_ordered() {
-        assert_eq!(RATE_LIMIT_RETRY_DELAYS.len(), 2, "two attempts after the first");
+        assert_eq!(
+            RATE_LIMIT_RETRY_DELAYS.len(),
+            2,
+            "two attempts after the first"
+        );
         assert!(
             RATE_LIMIT_RETRY_DELAYS.windows(2).all(|w| w[0] < w[1]),
             "delays must back off, not stay flat"
@@ -1258,8 +1322,8 @@ mod tests {
                 model: None,
             },
         );
-        let err = resolve_aux_route(AuxTaskClass::CodeQualitySummarize, &overrides, &[])
-            .unwrap_err();
+        let err =
+            resolve_aux_route(AuxTaskClass::CodeQualitySummarize, &overrides, &[]).unwrap_err();
         assert!(err.contains("without a model"), "{}", err);
         assert!(err.contains("Settings → AI Provider Routing"), "{}", err);
 
@@ -1306,7 +1370,10 @@ mod tests {
     fn cheap_tier_model_follows_the_parent_provider() {
         // Q2 — the MiniMax-only-user defect: a sub-agent must never demand a
         // vendor the parent session does not use.
-        assert_eq!(cheap_tier_model("anthropic", "claude-opus-4-8"), "claude-haiku-4-5");
+        assert_eq!(
+            cheap_tier_model("anthropic", "claude-opus-4-8"),
+            "claude-haiku-4-5"
+        );
         assert_eq!(cheap_tier_model("openai", "gpt-5.5"), "o4-mini");
         assert_eq!(cheap_tier_model("openai-agents", "gpt-5.5"), "o4-mini");
         assert_eq!(cheap_tier_model("minimax", "MiniMax-M3"), "MiniMax-M2");

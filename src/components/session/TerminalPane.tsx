@@ -5,6 +5,7 @@ import { describePtyExitOutcome, type PtyExitOutcome } from "@/lib/tauri";
 import { useTerminalSession } from "@/hooks/useTerminalSession";
 import { useXterm } from "@/hooks/useXterm";
 import { useApprovalShortcuts } from "@/hooks/useApprovalShortcuts";
+import { useTerminalFocus } from "@/hooks/useTerminalFocus";
 import { ActivityStrip } from "@/components/session/ActivityStrip";
 import { TerminalHeader } from "@/components/session/TerminalHeader";
 import { ApprovalOverlay } from "@/components/session/ApprovalOverlay";
@@ -67,6 +68,7 @@ export function TerminalPane({
   renderHeader,
 }: TerminalPaneProps) {
   const termContainerRef = useRef<HTMLDivElement>(null);
+  const approvalFocusRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef<string | null>(null);
   const setActivePaneId = useLayoutStore((s) => s.setActivePaneId);
 
@@ -110,6 +112,15 @@ export function TerminalPane({
 
   clearApprovalRef.current = clearApproval;
 
+  const focusTerminal = useTerminalFocus({
+    paneId,
+    workspaceId,
+    containerRef: termContainerRef,
+    xtermRef,
+    approvalRef: approvalFocusRef,
+    showApproval: showApproval && alive,
+  });
+
   useApprovalShortcuts({
     showApproval,
     paneId,
@@ -117,6 +128,7 @@ export function TerminalPane({
     onApprove: handleApprove,
     onDeny: handleDeny,
     onAbort: handleAbort,
+    onRestoreFocus: focusTerminal,
   });
 
   const showActivityStrip = alive && activityInfo.state !== "idle" && activityInfo.tool !== null;
@@ -125,7 +137,12 @@ export function TerminalPane({
     <div
       className="flex h-full flex-col bg-bg-primary"
       data-dictation-pty-session={sessionId ?? undefined}
-      onClick={() => setActivePaneId(paneId)}
+      data-terminal-pane={paneId}
+      onFocusCapture={() => setActivePaneId(paneId)}
+      onClick={(event) => {
+        setActivePaneId(paneId);
+        focusTerminal(event.target);
+      }}
     >
       {renderHeader ? (
         renderHeader({
@@ -155,7 +172,12 @@ export function TerminalPane({
       <div className="relative flex-1 overflow-hidden" style={{ padding: "4px 2px 0 4px" }}>
         <div ref={termContainerRef} className="h-full w-full overflow-hidden" />
         {showApproval && alive && (
-          <ApprovalOverlay onApprove={handleApprove} onDeny={handleDeny} onAbort={handleAbort} />
+          <ApprovalOverlay
+            focusRef={approvalFocusRef}
+            onApprove={handleApprove}
+            onDeny={handleDeny}
+            onAbort={handleAbort}
+          />
         )}
       </div>
 

@@ -18,6 +18,10 @@ use uuid::Uuid;
 
 use crate::core::brand::{CLAUDE_STATUSLINE_DIR_ENV, CLAUDE_STATUSLINE_HELPER_ENV};
 
+#[cfg(test)]
+#[path = "pty_live_ssh_tests.rs"]
+mod live_ssh_tests;
+
 fn pty_output_event(session_id: &str) -> String {
     format!("pty:output:{}", session_id)
 }
@@ -826,6 +830,20 @@ pub fn create_pty_session(
     let exit_child = child.clone();
 
     thread::spawn(move || {
+        let (output_tx, output_rx) = crate::core::pty_output::output_channel();
+        let output_sid = sid.clone();
+        let output_app = app_handle.clone();
+        let output_dispatcher = thread::spawn(move || {
+            crate::core::pty_output::dispatch_output(output_rx, |data| {
+                // Append exactly the batch we emit. A snapshot sequence must
+                // never cover part of an event that a mounting pane will skip.
+                let sequence = crate::core::pty::append_transcript(&output_sid, &data);
+                let payload = PtyOutputPayload { data, sequence };
+                if let Err(e) = output_app.emit(&pty_output_event(&output_sid), &payload) {
+                    warn!(session_id = %output_sid, error = %e, "Failed to emit scoped pty output");
+                }
+            });
+        });
         let mut buf = [0u8; 8192];
         // Carry-over bytes from incomplete UTF-8 sequences at read boundaries
         let mut pending: Vec<u8> = Vec::new();
@@ -838,10 +856,9 @@ pub fn create_pty_session(
                 Ok(0) => break, // EOF — process exited
                 Ok(n) => {
                     let data = crate::core::pty::decode_terminal_chunk(&buf[..n], &mut pending);
-                    let sequence = crate::core::pty::append_transcript(&sid, &data);
-                    let payload = PtyOutputPayload { data, sequence };
-                    if let Err(e) = app_handle.emit(&pty_output_event(&sid), &payload) {
-                        warn!(session_id = %sid, error = %e, "Failed to emit scoped pty output");
+                    if !data.is_empty() && output_tx.send(data).is_err() {
+                        warn!(session_id = %sid, "PTY output dispatcher stopped unexpectedly");
+                        break;
                     }
                 }
                 Err(e) => {
@@ -852,6 +869,17 @@ pub fn create_pty_session(
                     thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
+        }
+
+        // A truncated final UTF-8 sequence still represents output; expose it
+        // as replacement text rather than silently dropping the final bytes.
+        if !pending.is_empty() {
+            let _ = output_tx.send(String::from_utf8_lossy(&pending).into_owned());
+        }
+        drop(output_tx);
+        // The final output event and its transcript record must precede exit.
+        if output_dispatcher.join().is_err() {
+            warn!(session_id = %sid, "PTY output dispatcher panicked");
         }
 
         // Remove session so stale entries cannot accumulate.

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/tauri2-schema/main/tauri.conf.json.schema",
   "productName": "PacketBench",
-  "version": "0.14.0",
+  "version": "0.14.7",
   "identifier": "com.packetbench.desktop",
   "build": {
     "beforeDevCommand": "pnpm run dev",

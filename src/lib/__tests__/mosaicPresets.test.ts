@@ -23,9 +23,68 @@ import {
   presetForCount,
   reconcileLayout,
   removeFromTree,
+  readableMosaicSize,
+  balanceMosaicSizes,
+  getVisibleLeafOrder,
 } from "@/lib/mosaicPresets";
 
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `pane-${i}`);
+
+describe("readable mosaic viewport", () => {
+  it.each([1, 4, 8, 12])(
+    "allocates readable dimensions for %i panes without changing the saved arrangement",
+    (count) => {
+      const tree = buildPresetTree(presetForCount(count), ids(count));
+      const original = structuredClone(tree);
+      const size = readableMosaicSize(tree);
+      expect(size.width).toBe(count === 1 ? 360 : 720);
+      expect(size.height).toBe(count === 1 ? 240 : Math.ceil(count / 2) * 240);
+      expect(tree).toEqual(original);
+    },
+  );
+
+  it("respects unequal saved ratios when sizing a scrollable canvas", () => {
+    const tree: MosaicNode<string> = {
+      type: "split",
+      direction: "row",
+      children: ["left", "right"],
+      splitPercentages: [25, 75],
+    };
+    expect(readableMosaicSize(tree)).toEqual({ width: 1440, height: 240 });
+    expect(
+      readableMosaicSize({
+        type: "split",
+        direction: "column",
+        children: [tree, "bottom"],
+        splitPercentages: [60, 40],
+      }),
+    ).toEqual({ width: 1440, height: 600 });
+  });
+
+  it("balances sizes without moving or losing any live leaf", () => {
+    const tree: MosaicNode<string> = {
+      type: "split",
+      direction: "row",
+      splitPercentages: [70, 30],
+      children: [
+        { type: "split", direction: "column", children: ["a", "b"], splitPercentages: [25, 75] },
+        "c",
+      ],
+    };
+    const balanced = balanceMosaicSizes(tree);
+    expect(getLeafOrder(balanced)).toEqual(getLeafOrder(tree));
+    expect(leafDepths(balanced)).toEqual(leafDepths(tree));
+    expect(JSON.stringify(balanced)).not.toContain("splitPercentages");
+    expect(JSON.stringify(tree)).toContain("splitPercentages");
+  });
+
+  it("counts only a tab group's mounted pane for navigation and readable space", () => {
+    const tabs: MosaicNode<string> = { type: "tabs", tabs: ["a", "b", "c"], activeTabIndex: 1 };
+    expect(getVisibleLeafOrder(tabs)).toEqual(["b"]);
+    expect(readableMosaicSize(tabs)).toEqual({ width: 360, height: 240 });
+    expect(balanceMosaicSizes(tabs)).toBe(tabs);
+  });
+});
 
 /** Depth of each leaf, keyed by id — the quantity that decides remounting. */
 function leafDepths(tree: MosaicNode<string> | null, depth = 0): Record<string, number> {
@@ -188,9 +247,7 @@ describe("removeFromTree", () => {
 describe("isValidMosaicTree", () => {
   it("accepts the shapes MosaicRoot can render", () => {
     expect(isValidMosaicTree("pane-0")).toBe(true);
-    expect(
-      isValidMosaicTree({ type: "split", direction: "row", children: ["a", "b"] }),
-    ).toBe(true);
+    expect(isValidMosaicTree({ type: "split", direction: "row", children: ["a", "b"] })).toBe(true);
     expect(isValidMosaicTree({ type: "tabs", tabs: ["a", "b"] })).toBe(true);
   });
 

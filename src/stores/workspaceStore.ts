@@ -13,7 +13,7 @@ import { useServerStore } from "@/stores/serverStore";
 import { rememberAccountChoice, resolveAccountId } from "@/lib/sessionAccountDefaults";
 import { normalizeTerminalShellSelection } from "@/lib/terminalShells";
 import type { TerminalShellSelection } from "@/types/terminal-shell";
-import { isValidMosaicTree } from "@/lib/mosaicPresets";
+import { getVisibleLeafOrder, isValidMosaicTree } from "@/lib/mosaicPresets";
 import type { MosaicNode } from "@/types/mosaic";
 
 import { storageKey } from "@/lib/brand";
@@ -285,6 +285,10 @@ function mintPaneId(): string {
  */
 let focusToken = 0;
 
+// Pane focus is runtime UI state. Keep one remembered target per workspace so
+// switching grids does not leave keyboard input aimed at a hidden terminal.
+const lastFocusedPaneIds = new Map<string, string>();
+
 /**
  * Multi-account CLI support: settle the account a brand-new pane launches
  * under, and record the choice when it was explicit.
@@ -539,8 +543,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const serverId = sessionConfig?.serverId;
     const remoteProjectPath = sessionConfig?.remoteProjectPath;
     const executionTarget: ExecutionTargetRef =
-      sessionConfig?.executionTarget ??
-      (serverId ? { kind: "ssh", serverId } : { kind: "local" });
+      sessionConfig?.executionTarget ?? (serverId ? { kind: "ssh", serverId } : { kind: "local" });
 
     // Creation invariant — the empty-path guard lives HERE, not in the modal.
     // `WorkspaceCreationModal` used to be the only place that blocked
@@ -581,9 +584,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     // checking `serverId` still gets a stable label (used in workspace
     // headers, history, etc.). Local-only operations must guard with
     // `if (!workspace.serverId)` — see e.g. `IdeationView.handleGenerate`.
-    const effectiveProjectPath = executionTarget.kind === "ssh"
-      ? (remoteProjectPath ?? "").trim() || projectPath
-      : projectPath;
+    const effectiveProjectPath =
+      executionTarget.kind === "ssh"
+        ? (remoteProjectPath ?? "").trim() || projectPath
+        : projectPath;
 
     const id = crypto.randomUUID();
     const now = Date.now();
@@ -621,13 +625,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   archiveWorkspace: (id) => {
+    const ownsZoom = get()
+      .workspaces.find((workspace) => workspace.id === id)
+      ?.panes.some((pane) => pane.id === get().zoomedPaneId);
     set(
       commitWorkspaces((s) => {
         const workspaces = s.workspaces.map((w) =>
           w.id === id ? { ...w, status: "archived" as const, updatedAt: Date.now() } : w,
         );
         const activeWorkspaceId = s.activeWorkspaceId === id ? null : s.activeWorkspaceId;
-        return { workspaces, activeWorkspaceId };
+        return { workspaces, activeWorkspaceId, ...(ownsZoom ? { zoomedPaneId: null } : {}) };
       }),
     );
   },
@@ -646,20 +653,36 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   deleteWorkspace: (id) => {
+    const ownsZoom = get()
+      .workspaces.find((workspace) => workspace.id === id)
+      ?.panes.some((pane) => pane.id === get().zoomedPaneId);
+    lastFocusedPaneIds.delete(id);
     set(
       commitWorkspaces((s) => {
         const workspaces = s.workspaces.filter((w) => w.id !== id);
         const activeWorkspaceId = s.activeWorkspaceId === id ? null : s.activeWorkspaceId;
-        return { workspaces, activeWorkspaceId };
+        return { workspaces, activeWorkspaceId, ...(ownsZoom ? { zoomedPaneId: null } : {}) };
       }),
     );
   },
 
   setActiveWorkspace: (id) => {
+    const previous = get().workspaces.find((workspace) => workspace.id === get().activeWorkspaceId);
+    const activePaneId = useLayoutStore.getState().activePaneId;
+    if (previous?.panes.some((pane) => pane.id === activePaneId)) {
+      lastFocusedPaneIds.set(previous.id, activePaneId);
+    }
     set({ activeWorkspaceId: id });
     writeActiveWorkspaceId(id);
+    const workspace = get().workspaces.find((candidate) => candidate.id === id);
+    const rememberedPaneId = id ? lastFocusedPaneIds.get(id) : undefined;
+    const nextPaneId =
+      workspace?.panes.find((pane) => pane.id === get().zoomedPaneId)?.id ??
+      workspace?.panes.find((pane) => pane.id === rememberedPaneId)?.id ??
+      workspace?.panes[0]?.id ??
+      "";
+    if (activePaneId !== nextPaneId) useLayoutStore.getState().setActivePaneId(nextPaneId);
     if (id) {
-      const workspace = get().workspaces.find((w) => w.id === id);
       // Only sync `layoutStore.projectPath` for local workspaces — for
       // remote workspaces the path is on the remote host and would
       // confuse local-only features (file watcher, git dashboard, etc.).
@@ -877,6 +900,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   removePane: (workspaceId, paneId) => {
+    const workspace = get().workspaces.find((item) => item.id === workspaceId);
+    if (!workspace?.panes.some((pane) => pane.id === paneId)) return;
+    const paneIds = new Set(workspace.panes.map((pane) => pane.id));
+    const visibleIds = getVisibleLeafOrder(workspace.layout ?? null).filter((id) =>
+      paneIds.has(id),
+    );
+    const order = visibleIds.length ? visibleIds : workspace.panes.map((pane) => pane.id);
+    const closedIndex = order.indexOf(paneId);
+    const survivors = order.filter((id) => id !== paneId);
+    const nextPaneId = survivors[Math.min(Math.max(closedIndex, 0), survivors.length - 1)] ?? "";
+    const wasSelected =
+      get().activeWorkspaceId === workspaceId && useLayoutStore.getState().activePaneId === paneId;
     set(
       commitWorkspaces((s) => {
         const workspaces = s.workspaces.map((w) => {
@@ -910,6 +945,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     // Clear zoom if the zoomed pane was removed
     if (get().zoomedPaneId === paneId) {
       set({ zoomedPaneId: null });
+    }
+    if (wasSelected || lastFocusedPaneIds.get(workspaceId) === paneId) {
+      if (nextPaneId) lastFocusedPaneIds.set(workspaceId, nextPaneId);
+      else lastFocusedPaneIds.delete(workspaceId);
+    }
+    if (wasSelected) useLayoutStore.getState().setActivePaneId(nextPaneId);
+    if (
+      get().focusPaneRequest?.workspaceId === workspaceId &&
+      get().focusPaneRequest?.paneId === paneId
+    ) {
+      get().clearPaneFocusRequest();
     }
   },
 
@@ -978,7 +1024,26 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       // a stripped-carrier conversation pane self-heals and missing kinds
       // default to terminal before anything renders.
       const normalized = normalizePanes(workspaces);
-      set({ workspaces: normalized });
+      // The cache can be older than the backend (or absent after a storage
+      // restore). Resolve selection against the authoritative list again:
+      // module initialization could neither restore a backend-only workspace
+      // nor know that a cached workspace had since been archived/deleted.
+      const selectedId = get().activeWorkspaceId;
+      const activeWorkspaceId = normalized.some(
+        (workspace) => workspace.id === selectedId && workspace.status !== "archived",
+      )
+        ? selectedId
+        : readActiveWorkspaceId(normalized);
+      const zoomedPaneId = normalized.some(
+        (workspace) =>
+          workspace.status !== "archived" &&
+          workspace.panes.some((pane) => pane.id === get().zoomedPaneId),
+      )
+        ? get().zoomedPaneId
+        : null;
+      lastFocusedPaneIds.clear();
+      set({ workspaces: normalized, activeWorkspaceId, zoomedPaneId });
+      writeActiveWorkspaceId(activeWorkspaceId);
       syncToLocalStorage(normalized);
     }
   },

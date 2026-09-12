@@ -491,6 +491,44 @@ describe("ConversationTile lifecycle states (P3-S3)", () => {
     expect(ws.panes.find((p) => p.id === "pane-conv")).toBeUndefined();
   });
 
+  it("MISSING: the layout toolbar can zoom the fallback and restore the grid", () => {
+    seedWith([], "ghost-conv");
+    const workspace = useWorkspaceStore.getState().workspaces[0];
+    const { container, getByRole, getByText } = render(
+      <WorkspaceMosaicContainer workspace={workspace} />,
+    );
+    fireEvent.change(getByRole("combobox", { name: "Select visible pane" }), {
+      target: { value: "pane-conv" },
+    });
+    fireEvent.click(getByRole("button", { name: "Zoom selected pane" }));
+
+    // Match the actual CSS reveal selector, not merely the zoom store flag:
+    // without the fallback's marker the mosaic hides every tile here.
+    const revealed = container.querySelector(
+      '.mosaic-zoom-active .mosaic-tile:has([data-pane-zoomed="true"])',
+    );
+    expect(revealed).not.toBeNull();
+    expect(revealed).toContainElement(getByText("This conversation is no longer available."));
+    expect(revealed).toContainElement(getByRole("button", { name: "Remove tile" }));
+
+    fireEvent.click(getByRole("button", { name: "Show all panes" }));
+    expect(container.querySelector(".mosaic-zoom-active")).toBeNull();
+    expect(getByText("This conversation is no longer available.")).toBeInTheDocument();
+  });
+
+  it("MISSING: pointer and keyboard focus select the fallback pane", () => {
+    const pane = seedWith([], "ghost-conv");
+    const { getByText, getByRole } = render(
+      <ConversationTile pane={pane} workspaceId="ws-1" />,
+    );
+    fireEvent.pointerDown(getByText("This conversation is no longer available."));
+    expect(useLayoutStore.getState().activePaneId).toBe(pane.id);
+    act(() => useLayoutStore.getState().setActivePaneId("another-pane"));
+    act(() => getByRole("button", { name: "Remove tile" }).focus());
+    expect(useLayoutStore.getState().activePaneId).toBe(pane.id);
+    expect(getByRole("button", { name: "Remove tile" })).toHaveFocus();
+  });
+
   it("FAILED: shows the red pill and a Retry that calls retryLastTurn", () => {
     const pane = seedWith(
       [makeConversation("conv-1", { status: "failed" })],
