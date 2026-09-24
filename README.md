@@ -4,11 +4,11 @@
 
 PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, issue tracking, memory, and workspace management into a single native environment. It is built for running real development workflows across multiple agent CLIs without leaving the app.
 
-The latest recorded local build is **0.14.7**, with unsigned Windows NSIS/MSI
+The latest recorded local build is **0.14.8**, with unsigned Windows NSIS/MSI
 installers and source/artifact hashes in
-[`dev/workspace-release-0.14.7.md`](./dev/workspace-release-0.14.7.md).
-Source is undergoing stabilization of existing functionality; current findings
-and acceptance gaps are tracked in [`backlog.md`](./backlog.md). Build checks,
+the [September 24 release record](./dev/existing-code-stabilization-2026-09-24.md#windows-build-0148).
+The existing-code audit fixes are built; remaining acceptance gaps are tracked
+in [`backlog.md`](./backlog.md). Build checks,
 installed-app checks and paid-provider acceptance have separate evidence—passing
 one does not establish the others. Use [`HANDOFF.md`](./HANDOFF.md) for the
 recorded installed version and [`CHANGELOG.md`](./CHANGELOG.md) for build history.

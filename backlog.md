@@ -129,7 +129,8 @@ and the initial PWA under PacketBench's `remoteagents/` workspace. See
 ## Existing-code completeness sweep — 2026-09-24
 
 **Source fixes and follow-up implemented; all eleven local gate categories
-passed, including the frozen frontend/browser rerun; package proof pending.** The three-team audit of
+passed, including the frozen frontend/browser rerun. Windows 0.14.8 installers
+are built; installed-app and dogfood proof remains pending.** The three-team audit of
 `5035f98d` remains the before-fix record:
 [code-completeness-audit-2026-09-24.md](./docs/reports/code-completeness-audit-2026-09-24.md).
 The per-ID implementation and validation record is
@@ -149,7 +150,7 @@ The per-ID implementation and validation record is
   and usage-write/completion ordering.
 - **C01/C02:** Confirmed unused code removed and current claims reconciled.
   Compatibility aliases and disabled Remote Agents foundations retained.
-- **Still required:** build/install the next requested package, dogfood the
+- **Still required:** install 0.14.8 when requested, dogfood the
   changed paths and complete available native/provider/hardware acceptance.
   Paid Claude testing remains deferred for subscription cost.
 - **Accounting recovery:** failed/uncertain writes retain per-entry journals and

@@ -10,14 +10,14 @@ Workspaces, MCP configuration, permissions, Memory, and execution.
 local/SSH CLI panes, keyboard focus, session recovery, saved arrangements and
 multi-pane performance. Agents, Flight Deck and Monitor support that workflow.
 
-**Current direction: no feature expansion.** Finish the existing-code audit
-findings and dogfood the resulting build before resuming the expansion items
-below. The September 24 source audit is tracked in `backlog.md`; historical
-acceptance results do not validate these newer edits.
+**Current direction: no feature expansion.** The existing-code audit fixes are
+built into 0.14.8. Dogfood that build before resuming the expansion items below.
+The September 24 source audit is tracked in `backlog.md`; historical acceptance
+results do not validate this newer package.
 
 There is no shipped remote supervision surface today. Syndicate separated from
 the Packet\* product family on 2026-08-27 and its execution-target integration
-was removed (`CHANGELOG.md` [Unreleased]), which leaves generic SSH — remote
+was removed (see `CHANGELOG.md`), which leaves generic SSH — remote
 Workspaces, PTY panes, and agent file/bash tools over a pinned connection — as
 the only way to reach another machine. Remote Agents, unpaused 2026-08-27, is
 the program that builds a supervision surface. The rule it has to satisfy is
@@ -30,6 +30,12 @@ only product direction and ordering.
 
 ## Current baseline
 
+- **0.14.8 is built and pushed to main**, with the September 24 audit and
+  follow-up repairs. All eleven local gate categories passed, including the
+  frozen rerun of 2,869 frontend tests and 14 browser cases. Both Windows
+  installer hashes were verified. Build identity and scope:
+  `dev/existing-code-stabilization-2026-09-24.md`. Installation is outstanding;
+  the last recorded installed version remains 0.14.6.
 - **0.14.7 is built and pushed to main** with corrected Workspace/Fleet pane
   summaries, missing-conversation zoom and concurrent Monitor creation. Eleven
   full quality gates, fifteen disposable OpenSSH cases and both installer
@@ -195,11 +201,11 @@ beta.
 
 ## Release path
 
-1. Finish the September 24 existing-code findings and pass the local quality
-   gates. Keep the dated audit as the before-fix evidence.
-2. Build and install the next explicitly requested version, then dogfood
+1. September 24 existing-code findings, local gates and the 0.14.8 Windows
+   build are complete. Keep the dated audit as the before-fix evidence.
+2. Install 0.14.8 when requested, then dogfood
    Workspaces, approval focus, Git actions, prompt delivery and restored chats.
-   The last recorded installed version is 0.14.6; 0.14.7 was built separately.
+   The last recorded installed version is 0.14.6.
 3. Close available real-host, microphone, provider, MCP, and cross-product
    evidence gates against that exact package. Paid Claude testing remains
    deferred for subscription cost.

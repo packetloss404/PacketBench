@@ -7,7 +7,7 @@ For current direction, use [`ROADMAP.md`](./ROADMAP.md). For planning briefs and
 runbooks, use [`dev/README.md`](./dev/README.md). This file is history, not a
 task list.
 
-## [Unreleased]
+## [0.14.8] - 2026-09-24 (local build)
 
 - Scoped Workspace approval shortcuts to the selected visible terminal, rejected
   stale Git refreshes, and resolved conversation PR targets from worktree origin
@@ -35,7 +35,9 @@ task list.
   can explicitly disable all servers and reconnect an existing conversation
   without MCP.
 - Source scope and validation: `dev/existing-code-stabilization-2026-09-24.md`.
-  Prepared for the 0.14.8 Windows build; artifact evidence follows packaging.
+  NSIS and MSI installers built from clean commit `9367b7a1`, merged and pushed
+  to main. Artifact hashes were verified; installation and dogfooding remain
+  separate from this build.
 
 ## [0.14.7] - 2026-09-12 (local build)
 

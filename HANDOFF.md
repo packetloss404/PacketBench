@@ -11,8 +11,9 @@ the current contracts below supersede their older protocol and queue details.
 
 - **Current work is source stabilization, with no feature expansion.** The
   three-team September 24 audit and its fix ledger are linked from `backlog.md`.
-  Workspaces remain the primary focus. Read the current Git state before
-  resuming; none of these newer edits has been built into an installer yet.
+  Workspaces remain the primary focus. **0.14.8 is built and pushed to main**
+  from clean commit `9367b7a1`; both Windows installer hashes were verified.
+  Installation and dogfooding remain outstanding for this version.
   All eleven local gate categories passed after the follow-up fixes and frozen
   frontend rerun: 2,869 frontend tests and 14 browser cases passed. The follow-up
   closes usage-write failures, first-observation alerts, hidden cost/Quality
@@ -62,7 +63,8 @@ the current contracts below supersede their older protocol and queue details.
   6/7; the Flight-dependent case did not run because no Flight existed.
 - Subsequent local verification installs also report 0.14.0 but contain
   different source. The latest recorded one is `087fc57c`; its executable
-  hash is under `[Unreleased]`. Do not identify a binary by version alone.
+  hash is in the historical `CHANGELOG.md` verification-build record. Do not
+  identify a binary by version alone.
   The current validation workflow records source and payload hashes; see
   `dev/installer-ssh-acceptance.md` and its dated evidence.
 - `v0.10.3` remains the latest annotated release tag. Newer build records
