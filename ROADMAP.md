@@ -1,6 +1,6 @@
 # PacketBench Roadmap
 
-Last reconciled: 2026-09-24
+Last reconciled: 2026-09-24 (0.14.8 installed; owner dogfooding next)
 
 PacketBench is a local-first Agent Development Environment and remains the
 flagship control surface. The desktop owns local providers, models, secrets,
@@ -11,7 +11,9 @@ local/SSH CLI panes, keyboard focus, session recovery, saved arrangements and
 multi-pane performance. Agents, Flight Deck and Monitor support that workflow.
 
 **Current direction: no feature expansion.** The existing-code audit fixes are
-built into 0.14.8. Dogfood that build before resuming the expansion items below.
+built into installed 0.14.8. The owner has pinned it to the desktop and plans
+to dogfood it; no results have been reported yet. Fix reported defects before
+resuming the expansion items below.
 The September 24 source audit is tracked in `backlog.md`; historical acceptance
 results do not validate this newer package.
 
@@ -30,18 +32,21 @@ only product direction and ordering.
 
 ## Current baseline
 
-- **0.14.8 is built and pushed to main**, with the September 24 audit and
+- **0.14.8 is built, pushed to main, installed and launched**, with the September 24 audit and
   follow-up repairs. All eleven local gate categories passed, including the
   frozen rerun of 2,869 frontend tests and 14 browser cases. Both Windows
-  installer hashes were verified. Build identity and scope:
-  `dev/existing-code-stabilization-2026-09-24.md`. Installation is outstanding;
-  the last recorded installed version remains 0.14.6.
+  installer hashes were verified. The NSIS upgrade from 0.14.6 verified all
+  8,683 payload files and two bundled-sidecar echo turns; normal launch opened
+  a responding application window. Build/install identity and scope:
+  `dev/existing-code-stabilization-2026-09-24.md`. Owner dogfood feedback and
+  broader interactive acceptance remain pending.
 - **0.14.7 is built and pushed to main** with corrected Workspace/Fleet pane
   summaries, missing-conversation zoom and concurrent Monitor creation. Eleven
   full quality gates, fifteen disposable OpenSSH cases and both installer
   builds passed. Native eight-pane WebView2 profiling measured cold/warm p95
   frame intervals of 16.8 ms with mocked Tauri transport. Exact build identity:
-  `dev/workspace-release-0.14.7.md`. The installed version remains 0.14.6.
+  `dev/workspace-release-0.14.7.md`. That run left 0.14.6 installed; it has
+  since been upgraded to 0.14.8.
 - **0.14.6 is built and installed**, with Workspace reliability, shared pane
   controls and readable many-pane layouts. Native eight-column restart and
   file-pane selection/zoom cleanup passed; all 8,683 payload hashes matched,
@@ -104,8 +109,8 @@ only product direction and ordering.
   deployment path were removed on 2026-08-28, and the service is live on
   **Railway**.
 
-The current work is existing-code stabilization followed by broader
-packaged/provider/hardware acceptance.
+The next work is owner dogfooding of installed 0.14.8 and repairs from that
+feedback, followed by broader packaged/provider/hardware acceptance.
 The consolidation's 0.14.1 NSIS upgrade and real OpenSSH handshake/project-trust
 checks passed on September 8. The broader follow-up verified local Ollama turns,
 found and corrected Monitor lifecycle defects in 0.14.3, and recorded specific
@@ -116,8 +121,8 @@ protocol requirements and `CHANGELOG.md` for precise installed-build evidence.
 
 | Track                       | Priority | Current state                                                                                                                                                                                                                                                                                                       | Next action                                                                                                                                                                                                                                                |
 | --------------------------- | -------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace daily workflow    |       P1 | Installed 0.14.6 adds shared pane controls and Readable/Fit all/Balance sizes. Native eight-column restart, selected file closure, four browser checks and 15 real OpenSSH cases pass. The 0.14.7 source separates viewer badges and passes isolated native WebView2 profiling (eight panes, cold/warm p95 16.8 ms) | Extend packaged live-PTY and GUI-to-SSH recovery coverage. Paid Claude reply testing is deferred at the user's request pending subscription renewal. Evidence: `dev/workspace-release-0.14.7.md`; outstanding work: `backlog.md`                           |
-| Packaged Windows acceptance |       P1 | 0.14.1 NSIS upgrade, 8,683 payload hashes, packaged v12 echo runtime and normal startup passed; real Linux OpenSSH handshake/trust matrix 9/9. Exact scope/hashes: `dev/installer-ssh-evidence-2026-09-08.md`. Historical interactive evidence remains version-specific.                                            | Run the outstanding hardware, Monitor, Flight and paid-provider/GUI SSH matrices. Do not transfer old checkmarks to new binaries without verification.                                                                                                     |
+| Workspace daily workflow    |       P1 | 0.14.8 is installed and pinned to the owner's desktop for dogfooding. Audit fixes include approval focus, stale Git refresh rejection and prompt retry; local gate results are in `dev/existing-code-stabilization-2026-09-24.md`. Earlier native performance/SSH results remain version-specific. | Reproduce and fix owner reports, prioritizing local/SSH panes, focus, saved arrangements and restart. Paid Claude reply testing is deferred for subscription cost. Track findings in `backlog.md`. |
+| Packaged Windows acceptance |       P1 | 0.14.8 NSIS upgrade exited 0; all 8,683 payload hashes matched, bundled Node 24.15.0/protocol-v12 echo runtime passed two turns, and normal launch opened a responding window. Exact scope/hashes: `dev/existing-code-stabilization-2026-09-24.md`. | Dogfood the installed package; broader hardware, Monitor, Flight and provider/GUI SSH matrices remain. Startup and echo checks do not establish interactive acceptance. |
 | Distribution trust          |       P1 | **DEFERRED ON COST 2026-08-27** — owner decision to spend nothing on signing for now; v0.10.3 reported 0 failures / 6 readiness warnings and all artifacts remain unsigned                                                                                                                                          | Keep shipping unsigned local builds. On the stated trigger — the first build handed to anyone who is not the owner — take the cheapest path (Azure Trusted Signing, ~$10/month), then wire hosted CI, notarization, and the updater. Terms in `backlog.md` |
 | macOS release               |       P1 | Builds, bundles a DMG, and runs from source on real hardware; never signed, notarized, or interactively accepted                                                                                                                                                                                                    | Run the unsigned acceptance matrix; start Apple Developer Program enrollment when v1.1 starts rather than now (deferred alongside signing on 2026-08-27); ship arm64 DMG in v1.1 (`dev/macos-release-plan.md`)                                             |
 | Remote Agents               |       P1 | **ACTIVE; Sprint 0 complete 2026-09-01.** The feature-off deployment is healthy, managed PostgreSQL is live privately, and the final IaC plan is clean. Remote Agents remains disabled/fail-closed; Sprint 1 and product auth are not started                                                                       | Close the replay/ACK/ticket/hello/E2EE security gates, then implement the accepted Sprint 1 host-presence slice. Keep PostgreSQL PITR + scheduled backups + offsite restore drill as external-beta gates                                                   |
@@ -203,9 +208,10 @@ beta.
 
 1. September 24 existing-code findings, local gates and the 0.14.8 Windows
    build are complete. Keep the dated audit as the before-fix evidence.
-2. Install 0.14.8 when requested, then dogfood
+2. Dogfood installed 0.14.8 and repair reported defects in
    Workspaces, approval focus, Git actions, prompt delivery and restored chats.
-   The last recorded installed version is 0.14.6.
+   The owner has pinned it to the desktop; feedback is pending. This checkpoint
+   is documentation-only, with no deployment or new build requested.
 3. Close available real-host, microphone, provider, MCP, and cross-product
    evidence gates against that exact package. Paid Claude testing remains
    deferred for subscription cost.

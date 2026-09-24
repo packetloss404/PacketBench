@@ -1,6 +1,6 @@
 # PacketBench Backlog
 
-Last reconciled: 2026-09-24 (existing-code completeness sweep)
+Last reconciled: 2026-09-24 (0.14.8 installed; dogfood feedback pending)
 
 This is the single task register for work that has not shipped or has not yet
 earned its required real/package proof. Completed implementation history belongs
@@ -14,6 +14,9 @@ Priority: **P1** = release blocker, real bug, or major user-facing gap;
 
 **Current direction, 2026-09-24:** no feature expansion. Stabilize and finish
 the existing product paths identified below before resuming expansion plans.
+The owner has pinned installed 0.14.8 to the desktop and plans to dogfood it.
+Resume with reported defects, prioritizing Workspaces. No dogfood outcome has
+been reported; this documentation checkpoint requests no deployment.
 
 These are the only current product decisions blocking implementation.
 
@@ -129,8 +132,8 @@ and the initial PWA under PacketBench's `remoteagents/` workspace. See
 ## Existing-code completeness sweep — 2026-09-24
 
 **Source fixes and follow-up implemented; all eleven local gate categories
-passed, including the frozen frontend/browser rerun. Windows 0.14.8 installers
-are built; installed-app and dogfood proof remains pending.** The three-team audit of
+passed, including the frozen frontend/browser rerun. Windows 0.14.8 is built,
+installed and launched; owner dogfood feedback remains pending.** The three-team audit of
 `5035f98d` remains the before-fix record:
 [code-completeness-audit-2026-09-24.md](./docs/reports/code-completeness-audit-2026-09-24.md).
 The per-ID implementation and validation record is
@@ -150,8 +153,12 @@ The per-ID implementation and validation record is
   and usage-write/completion ordering.
 - **C01/C02:** Confirmed unused code removed and current claims reconciled.
   Compatibility aliases and disabled Remote Agents foundations retained.
-- **Still required:** install 0.14.8 when requested, dogfood the
-  changed paths and complete available native/provider/hardware acceptance.
+- **Installation complete:** NSIS upgrade from 0.14.6 exited 0, all 8,683
+  installed files matched, bundled protocol-v12 sidecar passed two echo turns,
+  and normal launch opened a responding 0.14.8 window. MSI installation was
+  not tested.
+- **Still required:** owner dogfooding of the changed paths and follow-up fixes
+  from concrete reports; broader native/provider/hardware acceptance remains.
   Paid Claude testing remains deferred for subscription cost.
 - **Accounting recovery:** failed/uncertain writes retain per-entry journals and
   block further API requests until reconciled. First-observation threshold

@@ -1,6 +1,6 @@
 # PacketBench Development Plans
 
-Last reconciled: 2026-09-24
+Last reconciled: 2026-09-24 (0.14.8 installation and resume checkpoint)
 
 This directory contains active implementation plans, proof runbooks, research,
 and historical evidence. It is not a second backlog.
@@ -16,7 +16,11 @@ Its follow-up covers usage recovery, alerts, remaining obsolete APIs and native
 local MCP transports. All eleven gate categories passed; the final frontend
 rerun includes 2,869 tests and 14 browser cases. Both 0.14.8 Windows installers
 are built and hash-verified; the same record contains their source/artifact
-identity. Installed-app acceptance remains separate.
+identity. The NSIS upgrade from 0.14.6 passed all 8,683 installed hashes and
+two bundled-sidecar echo turns; normal launch opened a responding window.
+The owner has pinned 0.14.8 to the desktop and plans to dogfood it. Resume
+with their feedback, keeping Workspaces the priority and feature expansion
+deferred. Broader interactive/provider/hardware acceptance remains separate.
 
 The consolidation installer and live OpenSSH workflow is documented in
 [`installer-ssh-acceptance.md`](./installer-ssh-acceptance.md). It produces
@@ -31,8 +35,9 @@ The 0.14.7 build and native WebView2 profiling evidence is in
 [`workspace-release-0.14.7.md`](./workspace-release-0.14.7.md). It records the
 Workspace summary, missing-conversation zoom and Monitor concurrency fixes;
 all eleven full gates, fifteen OpenSSH cases and both installer builds passed.
-The installed application remains 0.14.6. The real Claude test is deferred at the
-user's request because subscription renewal is required.
+That run left 0.14.6 installed; the current installation is now 0.14.8 as
+recorded above. The real Claude test remains deferred at the user's request
+because of subscription cost; do not ask for a login refresh.
 
 Use these documents in order:
 
@@ -50,7 +55,8 @@ work. Completed work belongs in `CHANGELOG.md`.
 
 | Document                                                                     | Status                                                                                                                                                                                    |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`../CHANGELOG.md`](../CHANGELOG.md) | **CURRENT BUILD RECORD** — 0.14.8 built and pushed to main; 0.14.6 is the last recorded installed version. Latest annotated release tag remains v0.10.3. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | **CURRENT BUILD RECORD** — 0.14.8 built, pushed to main, installed and launched. Latest annotated release tag remains v0.10.3. |
+| [`existing-code-stabilization-2026-09-24.md`](./existing-code-stabilization-2026-09-24.md) | **CURRENT CHECKPOINT** — audit/follow-up fixes, eleven gate categories, exact 0.14.8 build/install evidence and owner dogfooding next. |
 | [`workspace-release-0.14.7.md`](./workspace-release-0.14.7.md) | **BUILT** — summary/zoom/Monitor fixes, isolated native WebView2 profiles, eleven full gates, fifteen OpenSSH cases and both Windows installers passed. Exact source and artifact hashes recorded. |
 | [`proof-audit-2026-08-01.md`](./proof-audit-2026-08-01.md)                   | **DATED SNAPSHOT** - exact August 1 source/package proof; superseded for current counts and package identity by v0.10.3, but still authoritative for why each external gate remained open |
 | [`acceptance.md`](./acceptance.md) | **HISTORICAL MATRIX** — rows describe 0.13.2. Current 0.14.1 installer/OpenSSH proof is in [`installer-ssh-evidence-2026-09-08.md`](./installer-ssh-evidence-2026-09-08.md); later GUI/provider/hardware observations are in the September 8 GUI report. Existing ticks are not promoted. |

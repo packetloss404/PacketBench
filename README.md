@@ -4,11 +4,13 @@
 
 PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, issue tracking, memory, and workspace management into a single native environment. It is built for running real development workflows across multiple agent CLIs without leaving the app.
 
-The latest recorded local build is **0.14.8**, with unsigned Windows NSIS/MSI
+The latest recorded local build and installed version is **0.14.8**, with unsigned Windows NSIS/MSI
 installers and source/artifact hashes in
 the [September 24 release record](./dev/existing-code-stabilization-2026-09-24.md#windows-build-0148).
-The existing-code audit fixes are built; remaining acceptance gaps are tracked
-in [`backlog.md`](./backlog.md). Build checks,
+The NSIS upgrade, 8,683 installed-file hashes, bundled sidecar checks and normal
+startup passed. The owner has pinned it to the desktop and plans to dogfood
+Workspaces; no dogfood results have been reported yet. Remaining acceptance
+gaps are tracked in [`backlog.md`](./backlog.md). Build checks,
 installed-app checks and paid-provider acceptance have separate evidence—passing
 one does not establish the others. Use [`HANDOFF.md`](./HANDOFF.md) for the
 recorded installed version and [`CHANGELOG.md`](./CHANGELOG.md) for build history.
@@ -538,19 +540,19 @@ PacketBench is developed on Windows but is designed to ship on macOS and Linux a
 
 ### Beta Distribution Status
 
-**Nothing current is published.** The newest build on GitHub Releases is
-`v0.5.0` from May 2026, and its installers still carry the previous `PacketADE`
-product name. Unsigned Windows NSIS and MSI artifacts exist locally for 0.11.0,
-0.12.0, 0.12.1 and 0.13.0 but have not been uploaded, and no packaged install has
-completed the acceptance matrix. Building from source is the only way to run
-current PacketBench.
+**0.14.8 is a local owner build.** Unsigned Windows NSIS/MSI installers were
+built from `9367b7a1`; the NSIS upgrade and normal startup were verified on
+September 24. It is installed for owner dogfooding. No public release or
+deployment was performed for this build, and the full acceptance matrix is
+not complete. Exact artifact and installed-executable hashes are in the
+[release record](./dev/existing-code-stabilization-2026-09-24.md#windows-build-0148).
 
 Windows Authenticode signing, macOS Developer ID signing/notarization, and the
 Tauri v2 auto-updater are planned release-trust gates and are not enabled in the
 repo today. Until those credentials and updater manifests exist, any fresh
 download will raise SmartScreen or Gatekeeper warnings.
 
-The source tag and application version move together. Local release gates are
+Local builds do not imply matching release tags. Local release gates are
 explicit: run `pnpm lint`, `pnpm test`, `pnpm build`,
 `cargo check --manifest-path src-tauri/Cargo.toml`, and `pnpm tauri build`
 before publishing an installer. The updater setup runbook lives in

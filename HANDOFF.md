@@ -1,6 +1,6 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-09-24
+Last reconciled: 2026-09-24 (0.14.8 installed; owner dogfooding next)
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
@@ -9,11 +9,18 @@ the current contracts below supersede their older protocol and queue details.
 
 ## Checkout and artifacts
 
+- **Resume here:** the owner has pinned 0.14.8 to the desktop and plans to
+  dogfood it. No dogfood results have been reported yet. Keep Workspaces the
+  priority and fix reported defects in existing functionality; no feature
+  expansion. This checkpoint is documentation-only: no new build or deployment.
 - **Current work is source stabilization, with no feature expansion.** The
   three-team September 24 audit and its fix ledger are linked from `backlog.md`.
   Workspaces remain the primary focus. **0.14.8 is built and pushed to main**
   from clean commit `9367b7a1`; both Windows installer hashes were verified.
-  Installation and dogfooding remain outstanding for this version.
+  The NSIS upgrade from 0.14.6 to **0.14.8 is installed**: exit 0, all 8,683
+  payload hashes matched, and bundled Node 24.15.0/protocol-v12 sidecar passed
+  two isolated echo turns. Normal launch opened a responding PacketBench
+  window. These checks do not establish full interactive acceptance.
   All eleven local gate categories passed after the follow-up fixes and frozen
   frontend rerun: 2,869 frontend tests and 14 browser cases passed. The follow-up
   closes usage-write failures, first-observation alerts, hidden cost/Quality
@@ -27,8 +34,9 @@ the current contracts below supersede their older protocol and queue details.
   OpenSSH cases and both Windows installer builds passed. Native WebView2
   profiling measured eight-pane cold/warm p95 frame intervals of 16.8 ms.
   Exact hashes and scope: `dev/workspace-release-0.14.7.md`. Installation was
-  outside this build request; the installed app remains 0.14.6. Paid Claude
-  testing is deferred at the user's request pending subscription renewal.
+  outside that build request; 0.14.6 remained installed at that time. Paid
+  Claude testing is deferred at the user's request because of subscription
+  cost; do not request a login refresh or retry without new direction.
 - This consolidation started on clean `main` at `7019094b`, matching
   `origin/main`. The old `feat/quality-gates-pty-outcomes-durable-state`
   handoff is obsolete: `f7200bfb` is already part of main. Use `git status`
@@ -167,16 +175,24 @@ The 0.14.7 source has completed isolated native WebView2 profiling: eight panes,
 about 22 MB of output, 16.8 ms p95 frame intervals in cold and warm runs, and no
 long tasks. Tauri transport is mocked in that profile. The paid Claude-over-SSH
 reply test is deferred at the user's request pending subscription renewal;
-GUI-to-SSH and wider hardware acceptance remain separate. Current release
+GUI-to-SSH and wider hardware acceptance remain separate. Historical release
 evidence: `dev/workspace-release-0.14.7.md`.
 
-1. Follow `dev/installer-ssh-acceptance.md` to reproduce the newly versioned
-   package and live OpenSSH checks; inspect the dated evidence for run status.
-2. Keep wider packaged/provider acceptance distinct from the isolated echo
-   transport and installed-payload checks.
-3. Continue the remaining real-hardware and real-host gates: dictation with
+Current installation and startup evidence is in
+`dev/existing-code-stabilization-2026-09-24.md`, including the executable hash
+and local report paths. It supersedes older installed-version statements.
+
+1. Resume with the owner's 0.14.8 dogfood feedback. Prioritize Workspace
+   local/SSH panes, focus/approval ownership, saved layouts and restart,
+   Git actions, prompt delivery and restored chats. Record concrete steps,
+   expected/actual behavior and the affected version in `backlog.md`.
+2. Reproduce and fix reported defects, validate the affected paths and keep
+   new package evidence tied to its source. Use `dev/installer-ssh-acceptance.md`
+   when a future build/install or live OpenSSH run is requested.
+3. Broader native/provider/hardware gates remain separate: dictation with
    working audio input, Monitor stale-state/denial/Flight cases, Flight
-   supervision, paid provider/MCP behavior, and PacketAgent PH10.
+   supervision, MCP/GUI SSH behavior, and PacketAgent PH10. Paid Claude
+   testing remains deferred for cost; the echo check does not cover it.
 4. Keep outstanding items in `backlog.md`; do not turn historical audit
    narratives or this handoff into competing task registers.
 

@@ -165,8 +165,8 @@ or power loss before directory metadata reaches disk.
 
 - The fixes were committed, merged and pushed to main as `9367b7a1` before
   building both 0.14.8 Windows installers. Artifact hashes were verified.
-  Installation was outside this build request; the last recorded installed
-  application is 0.14.6.
+  A subsequent owner request upgraded the local installation from 0.14.6 to
+  0.14.8 and launched it; installation/startup evidence follows below.
 - Mocked frontend tests and local Rust fixtures do not constitute native GUI,
   hardware or paid-provider acceptance. Paid Claude testing remains deferred
   at the user's request because of subscription cost.
@@ -224,3 +224,39 @@ This release record was updated after the build. Its documentation commit does
 not change the artifact's source identity above. Native GUI, real-provider and
 hardware acceptance still require version-specific evidence; paid Claude
 testing remains deferred for subscription cost.
+
+## Installation, launch and resume checkpoint
+
+After the build, the owner requested updating the local application and running
+it. On September 24, `scripts/validate-installer.ps1 -Install` used the exact
+manifest above and upgraded the existing per-user 0.14.6 installation:
+
+- PacketBench was not running before installation; no active session was killed.
+- NSIS exited 0. All **8,683 installed payload files** matched the manifest.
+- Installed path: `C:/Users/ianwalmsley/AppData/Local/PacketBench/packetbench.exe`.
+- Installed product version: **0.14.8**, also confirmed in the uninstall registry.
+- Installed executable SHA-256:
+  `df06ee96c33c552dde4757dfc84432f7ff27261f60970bf7908bed0323e535fa`.
+- Bundled Node reported **v24.15.0**; the installed sidecar passed protocol
+  **v12** and **two exact echo turns** using the isolated acceptance profile.
+- Normal launch using the owner's profile opened a `PacketBench` window. At
+  `2026-09-24T18:38:48Z`, the process remained running and Windows reported it
+  responding. This is a startup observation, not an interactive GUI test.
+
+Local reports alongside the build manifest under
+`test-results/acceptance/windows/2026-09-24T18-00-41-372Z/`:
+`installation.json`, `packaged-sidecar.json`, and `launch.json`.
+MSI packaging was verified earlier; MSI installation was not exercised.
+
+The owner subsequently reported pinning the app to the desktop and said they
+will dogfood it. No dogfood results have been reported yet. The next work is
+to reproduce and fix their findings, with Workspaces first: local/SSH panes,
+focus and approval ownership, layout/restart recovery, Git actions, prompt
+delivery and restored conversations. Track actual reports in `backlog.md`;
+`HANDOFF.md` is the restart entry point. No feature expansion is requested.
+Paid Claude tests remain deferred for subscription cost, not a login-refresh
+task. Broader provider, native GUI and hardware acceptance remains separate.
+
+The owner requested this documentation checkpoint be committed, merged to
+main and pushed **without deployment**. It changes no application source or
+artifact and requires no new build, install, application restart or release tag.

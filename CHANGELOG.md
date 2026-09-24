@@ -36,8 +36,12 @@ task list.
   without MCP.
 - Source scope and validation: `dev/existing-code-stabilization-2026-09-24.md`.
   NSIS and MSI installers built from clean commit `9367b7a1`, merged and pushed
-  to main. Artifact hashes were verified; installation and dogfooding remain
-  separate from this build.
+  to main. Artifact hashes were verified.
+- Subsequently upgraded the owner's local installation from 0.14.6 to 0.14.8:
+  NSIS exit 0, all 8,683 installed payload hashes matched, and bundled Node
+  24.15.0/protocol-v12 sidecar passed two isolated echo turns. Normal launch
+  opened a responding application window. The owner reports pinning it to the
+  desktop for dogfooding; interactive acceptance is not inferred from startup.
 
 ## [0.14.7] - 2026-09-12 (local build)
 
