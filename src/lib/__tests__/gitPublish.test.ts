@@ -1,16 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  gitGetOriginUrl: vi.fn(),
+  gitHostListConnections: vi.fn(),
   gitPushBranch: vi.fn(),
   githubCreatePr: vi.fn(),
 }));
 
 vi.mock("@/lib/tauri", () => ({
+  gitGetOriginUrl: mocks.gitGetOriginUrl,
+  gitHostListConnections: mocks.gitHostListConnections,
   gitPushBranch: mocks.gitPushBranch,
   githubCreatePr: mocks.githubCreatePr,
 }));
 
-import { publishBranchAsPr } from "@/lib/gitPublish";
+import { publishBranchAsPr, resolveWorktreePrTarget } from "@/lib/gitPublish";
 
 const baseInput = {
   worktreePath: "/repo/.pkt-worktrees/conv-1",
@@ -32,7 +36,11 @@ describe("gitPublish.publishBranchAsPr", () => {
   it("pushes the branch then opens a draft PR and records the PR number", async () => {
     const result = await publishBranchAsPr(baseInput);
 
-    expect(mocks.gitPushBranch).toHaveBeenCalledWith("/repo/.pkt-worktrees/conv-1", "pkt/conv-1", false);
+    expect(mocks.gitPushBranch).toHaveBeenCalledWith(
+      "/repo/.pkt-worktrees/conv-1",
+      "pkt/conv-1",
+      false,
+    );
     // draft defaults to true.
     expect(mocks.githubCreatePr).toHaveBeenCalledWith(
       "acme",
@@ -94,5 +102,52 @@ describe("gitPublish.publishBranchAsPr", () => {
     mocks.githubCreatePr.mockResolvedValue(JSON.stringify({ html_url: "x" }));
     const result = await publishBranchAsPr(baseInput);
     expect(result).toEqual({ ok: true, prNumber: null });
+  });
+});
+
+describe("worktree PR authority", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.gitHostListConnections.mockResolvedValue([
+      { id: "cloud", kind: "github", baseUrl: "https://api.github.com" },
+    ]);
+  });
+  it.each([
+    "git@github.com:actual/project.git",
+    "https://github.com/actual/project.git",
+    "ssh://git@github.com/actual/project.git",
+  ])("resolves %s without global repo selection", async (origin) => {
+    mocks.gitGetOriginUrl.mockResolvedValue(origin);
+    const target = await resolveWorktreePrTarget(baseInput.worktreePath);
+    expect(target).toEqual({ owner: "actual", repo: "project", connectionId: "cloud" });
+    await publishBranchAsPr({ ...baseInput, ...target });
+    expect(mocks.githubCreatePr).toHaveBeenCalledWith(
+      "actual",
+      "project",
+      "Land conv-1",
+      "body",
+      "pkt/conv-1",
+      "main",
+      true,
+      "cloud",
+    );
+  });
+  it.each([
+    "https://unknown.example/actual/project.git",
+    "/local/repository",
+    "https://github.com/owner/project/extra",
+  ])("rejects unsupported authority %s before publication", async (origin) => {
+    mocks.gitGetOriginUrl.mockResolvedValue(origin);
+    await expect(resolveWorktreePrTarget(baseInput.worktreePath)).rejects.toThrow();
+    expect(mocks.gitPushBranch).not.toHaveBeenCalled();
+    expect(mocks.githubCreatePr).not.toHaveBeenCalled();
+  });
+  it("refuses ambiguous matching hosts", async () => {
+    mocks.gitGetOriginUrl.mockResolvedValue("git@forge.example:owner/repo.git");
+    mocks.gitHostListConnections.mockResolvedValue([
+      { id: "one", kind: "gitea", baseUrl: "https://forge.example" },
+      { id: "two", kind: "gitea", baseUrl: "https://forge.example" },
+    ]);
+    await expect(resolveWorktreePrTarget(baseInput.worktreePath)).rejects.toThrow(/exactly one/);
   });
 });

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { storageKey } from "@/lib/brand";
 import type { AnalyticsData } from "../analyticsStore";
+import type { AgentConversation } from "@/types/agent-conversation";
+import { sessionCostUsd } from "@/lib/sessionCost";
 
 const invokeMock = vi.fn();
 
@@ -68,5 +70,19 @@ describe("cost guardrail launch gates", () => {
 
     await expect(assertCostGuardrailsAllowLaunch("api-openai")).resolves.toBeUndefined();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("enforces the conversation cap with stamped costs and durable child usage without adding them twice", async () => {
+    const conversation = { id: "session-a", model: "new-model", messages: [
+      { role: "assistant", costUsd: 3, timestamp: 1 },
+      { role: "assistant", costUsd: 1, timestamp: 2 },
+    ] } as AgentConversation;
+    expect(sessionCostUsd(conversation, { "session-a": 5 })).toBe(5);
+    expect(sessionCostUsd(conversation, { "session-a": 2 })).toBe(4);
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ sessionLimitUsd: 4.5 }));
+    invokeMock.mockResolvedValue(JSON.stringify(analytics({ sessionCostsById: { "session-a": 5 } })));
+    const { assertCostGuardrailsAllowLaunch } = await loadStore();
+    await expect(assertCostGuardrailsAllowLaunch("openai", undefined, conversation)).rejects.toThrow(/Current session spend is at \$5\.00/);
+    await expect(assertCostGuardrailsAllowLaunch("openai")).resolves.toBeUndefined();
   });
 });

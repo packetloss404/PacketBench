@@ -9,10 +9,9 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
-import { useGitHubStore } from "@/stores/githubStore";
 import { deriveLegacyWorktree } from "@/stores/agentConversationPersistence";
 import { mergeConversationBranch } from "@/lib/tauri";
-import { publishBranchAsPr } from "@/lib/gitPublish";
+import { publishBranchAsPr, resolveWorktreePrTarget } from "@/lib/gitPublish";
 import { APP_NAME } from "@/lib/brand";
 
 /**
@@ -60,14 +59,9 @@ export function WorktreeLifecycleBar({
   const conversation = useAgentTaskStore((s) =>
     s.conversations.find((c) => c.id === conversationId),
   );
-  const setConversationWorktreeState = useAgentTaskStore(
-    (s) => s.setConversationWorktreeState,
-  );
+  const setConversationWorktreeState = useAgentTaskStore((s) => s.setConversationWorktreeState);
   const recordConversationPr = useAgentTaskStore((s) => s.recordConversationPr);
-  const discardConversationWorktree = useAgentTaskStore(
-    (s) => s.discardConversationWorktree,
-  );
-  const selectedRepo = useGitHubStore((s) => s.config.selectedRepo);
+  const discardConversationWorktree = useAgentTaskStore((s) => s.discardConversationWorktree);
 
   const [busy, setBusy] = useState<Busy>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -117,23 +111,16 @@ export function WorktreeLifecycleBar({
 
   const handleCreatePr = useCallback(async () => {
     if (!worktree || busy) return;
-    if (!selectedRepo) {
-      onFeedback({
-        type: "err",
-        msg: "Create PR: no GitHub repo selected. Connect a repo in the GitHub pane first.",
-      });
-      return;
-    }
     setBusy("pr");
     try {
+      const target = await resolveWorktreePrTarget(worktree.worktreePath);
       const title = `[${APP_NAME}] ${conversation?.title ?? worktree.branch}`.slice(0, 256);
       const body = `Auto-generated from ${APP_NAME} conversation \`${conversationId}\`.`;
       const result = await publishBranchAsPr({
         worktreePath: worktree.worktreePath,
         branch: worktree.branch,
         baseBranch: effectiveBase,
-        owner: selectedRepo.owner,
-        repo: selectedRepo.repo,
+        ...target,
         title,
         body,
         draft: true,
@@ -159,7 +146,6 @@ export function WorktreeLifecycleBar({
   }, [
     worktree,
     busy,
-    selectedRepo,
     conversation,
     conversationId,
     effectiveBase,
@@ -237,7 +223,7 @@ export function WorktreeLifecycleBar({
       <div className="flex items-center gap-1.5">
         <Clock size={11} className="shrink-0 text-accent-amber" />
         <span
-          className="border-accent-amber/30 bg-accent-amber/10 rounded-full border px-1.5 py-0.5 text-meta text-accent-amber"
+          className="rounded-full border border-accent-amber/30 bg-accent-amber/10 px-1.5 py-0.5 text-meta text-accent-amber"
           data-testid="worktree-pending-chip"
         >
           worktree pending
@@ -264,7 +250,7 @@ export function WorktreeLifecycleBar({
             onChange={(e) => setBaseBranchInput(e.target.value)}
             placeholder="main"
             aria-label="PR base branch"
-            className="focus:border-accent-green/50 min-w-0 flex-1 rounded border border-bg-border bg-bg-primary px-1.5 py-0.5 text-ui text-text-primary placeholder:text-text-muted focus:outline-none"
+            className="min-w-0 flex-1 rounded border border-bg-border bg-bg-primary px-1.5 py-0.5 text-ui text-text-primary placeholder:text-text-muted focus:border-accent-green/50 focus:outline-none"
           />
         </label>
       )}
@@ -279,7 +265,7 @@ export function WorktreeLifecycleBar({
               ? "Remote commit/push/pull not yet supported"
               : "Squash-merge this branch back into the root checkout and clean up"
           }
-          className="bg-accent-green/20 hover:bg-accent-green/30 flex items-center gap-1 rounded px-2 py-1 text-ui font-medium text-accent-green transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-1 rounded bg-accent-green/20 px-2 py-1 text-ui font-medium text-accent-green transition-colors hover:bg-accent-green/30 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {merging ? <Loader2 size={11} className="animate-spin" /> : <GitMerge size={11} />}
           Merge back
@@ -313,7 +299,7 @@ export function WorktreeLifecycleBar({
           onClick={() => runDiscard(false)}
           disabled={anyBusy}
           title="Discard this worktree and its branch"
-          className="hover:bg-accent-red/10 ml-auto flex items-center gap-1 rounded px-2 py-1 text-ui text-accent-red transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-ui text-accent-red transition-colors hover:bg-accent-red/10 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {discarding && !confirmDiscard ? (
             <Loader2 size={11} className="animate-spin" />
@@ -325,7 +311,7 @@ export function WorktreeLifecycleBar({
       </div>
 
       {confirmDiscard && (
-        <div className="border-accent-red/30 bg-accent-red/5 flex items-center gap-2 rounded border px-2 py-1.5 text-meta">
+        <div className="flex items-center gap-2 rounded border border-accent-red/30 bg-accent-red/5 px-2 py-1.5 text-meta">
           <AlertTriangle size={12} className="shrink-0 text-accent-red" />
           <span className="flex-1 text-text-secondary">
             This worktree has uncommitted changes. Discarding loses them permanently.
@@ -342,7 +328,7 @@ export function WorktreeLifecycleBar({
             type="button"
             onClick={() => runDiscard(true)}
             disabled={discarding}
-            className="bg-accent-red/20 hover:bg-accent-red/30 rounded px-1.5 py-0.5 font-medium text-accent-red transition-colors disabled:opacity-40"
+            className="rounded bg-accent-red/20 px-1.5 py-0.5 font-medium text-accent-red transition-colors hover:bg-accent-red/30 disabled:opacity-40"
           >
             {discarding ? <Loader2 size={11} className="animate-spin" /> : "Discard anyway"}
           </button>

@@ -4,15 +4,14 @@
 
 PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, issue tracking, memory, and workspace management into a single native environment. It is built for running real development workflows across multiple agent CLIs without leaving the app.
 
-Source is at **0.14.0**, built, hashed in `CHANGELOG.md`, and installed — the live MCP smoke test passes 6 of 7 against it. `v0.10.3` (2026-08-02, commit `61e0669`) remains the
-newest annotated tag, but `main` has advanced well past it — see
-[`CHANGELOG.md`](./CHANGELOG.md). Unsigned Windows NSIS and MSI artifacts have
-been built locally at 0.11.0 through 0.13.0 but **none has been published**;
-the newest build on GitHub Releases is `v0.5.0` from May 2026, still carrying the
-previous `PacketADE` product name. Nothing is code signed, and no packaged
-install has completed the acceptance matrix. For the v0.10.3 record, see
-[`HANDOFF.md`](./HANDOFF.md#latest-windows-build) for the exact artifacts and
-hashes.
+The latest recorded local build is **0.14.7**, with unsigned Windows NSIS/MSI
+installers and source/artifact hashes in
+[`dev/workspace-release-0.14.7.md`](./dev/workspace-release-0.14.7.md).
+Source is undergoing stabilization of existing functionality; current findings
+and acceptance gaps are tracked in [`backlog.md`](./backlog.md). Build checks,
+installed-app checks and paid-provider acceptance have separate evidence—passing
+one does not establish the others. Use [`HANDOFF.md`](./HANDOFF.md) for the
+recorded installed version and [`CHANGELOG.md`](./CHANGELOG.md) for build history.
 
 ![PacketBench Workspace running Claude Code and PacketCode side by side](./docs/screenshots/workspace-claude-packetcode.png)
 
@@ -31,7 +30,7 @@ also serves the reports below. It moved out of this repo so that an unrelated
 app commit no longer triggers a docs deploy. Edit the Markdown under `src/packetbench/`
 there — not here, and never the generated HTML.
 
-- [State of the ADE](https://docs.ianlan.dev/reports/state-of-the-ade-2026-07-30.md) — primary AI-readable living record; Section 0 is the current 2026-08-03 authority.
+- [State of the ADE](https://docs.ianlan.dev/reports/state-of-the-ade-2026-07-30.md) — historical July/August assessment; use this repository's handoff and backlog for current state.
 - [State of the ADE (PDF)](https://docs.ianlan.dev/reports/state-of-the-ade-2026-07-30.pdf) — identical paginated human edition.
 - [Fable 5 review](https://docs.ianlan.dev/reports/fable5-review-2026-08-05.md) — the 2026-08-05 seven-team deep review and v1.0.0 plan (`.html` sibling is the human edition with screenshots).
 - [`HANDOFF.md`](./HANDOFF.md) — exact restart point, completed decisions,
@@ -64,10 +63,10 @@ before any external beta.
 
 ## What It Does
 
-- Create and supervise structured conversations with nine API-agent providers
+- Create and supervise structured conversations with eight API-agent provider rows
   in the first-class **Agents** surface — Claude Agent SDK/API, OpenAI
-  API/Agents SDK, MiniMax, OpenRouter, local Ollama, the PacketCode engine over
-  ACP, and any OpenAI-compatible endpoint you configure all normalize into one
+  API/Agents SDK, MiniMax, OpenRouter, local Ollama,
+  and a configured OpenAI-compatible endpoint all normalize into one
   event contract
 - Run PacketCode, Claude Code, Codex CLI, OpenCode, and plain shells in
   CLI-first **Workspaces** with persistent draggable mosaics
@@ -133,8 +132,10 @@ endings:
 | MiniMax (Token Plan)    | `api-minimax`       | API key in OS keyring                    |
 | OpenRouter              | `api-openrouter`    | API key in OS keyring                    |
 | Ollama (Local)          | `api-ollama`        | none — local daemon at `localhost:11434` |
+| Custom endpoint        | `api-custom`        | optional API key; configured OpenAI-compatible URL |
 
-**Every API-agent row authenticates with an API key.** PacketBench does not offer
+**Hosted provider rows use API keys.** Ollama is keyless, and Custom endpoints
+can be configured without a key. PacketBench does not offer
 Claude.ai or ChatGPT subscription login for API agents — Anthropic's
 [legal and compliance policy](https://code.claude.com/docs/en/legal-and-compliance)
 states that it "does not permit third-party developers to offer Claude.ai login
@@ -176,12 +177,12 @@ reference the same durable conversation ID, but PacketBench no longer exposes an
 action or API that creates a new one. Normal creation, project/Git/Flight
 handoffs, and deep links never materialize wrapper Workspaces.
 
-- **Live status in the tile header**: model · context % gauge · cumulative tokens · session $ · git branch
+- **Conversation context**: model, reported token/context usage, provider auth and project/Git context; availability depends on the provider's reported metadata
 - **Drag-drop and clipboard-paste images** into the launcher (5 MB cap, removable thumbnail chips); image blocks land in the SDK content array on send
 - **Keyboard**: `Ctrl+K` opens the app-wide **command palette** (search and navigate everything — the primary navigation affordance); `Shift+Tab` cycles a single mode chip (`default | plan | manual | yolo`); `Ctrl/Cmd+N` starts a new Agent while in Agents and a new empty Workspace elsewhere; `Ctrl+Shift+1` jumps to Agents, `Ctrl+Shift+W` jumps to Workspace, and `Ctrl+Shift+O` cycles the transcript view mode. Route chords match on physical key, so they survive non-QWERTY layouts. Bare `Tab` is unbound in the composer (it only picks a highlighted popover row when one is open)
 - **Slash commands**: `/plan /permissions /model /compact /review /history /clear /new /help` plus saved prompt templates as native `/<slug>` commands and project skills
 - **`@`-mention files and sources** in the composer via a file-mention popover, so you can pull specific files into a turn without pasting paths
-- **Header context badges**: provider auth (live `provider-auth:changed`), linked Flight with click-to-jump, and an MCP `N/M` server toggle dropdown. A separate **memory toggle** in the header overflow menu carries a tooltip previewing the actual injected memory context
+- **Header context badges**: provider auth (live `provider-auth:changed`) and linked Flight with click-to-jump. MCP defaults are configured in Settings; the conversation context strip displays reported MCP sources and discovery errors. A separate **memory toggle** in the header overflow menu previews the injected memory context
 - **Persistent Plan / Todo panel** docked above the chat scroll, parsing Anthropic SDK `TodoWrite` (structured `plan_block` events) plus the markdown `task_list` tool with a fallback parser
 - **Per-hunk diff acceptance** in `PendingEditPrompt`: pick which hunks to accept, the merged content lands via `edit_response.mergedContent` (sidecar Anthropic + every in-process provider)
 - **Batch approvals**: when 2+ writes or permissions stack up, "Apply all / Reject all / Cancel pending" rollups appear; "Cancel pending" drains parked prompts as denied without killing the agent loop
@@ -213,10 +214,10 @@ handoffs, and deep links never materialize wrapper Workspaces.
 
 ### Sidecar Protocol
 
-The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that emits a normalized `api-agent:*` event vocabulary the frontend listens to (the same shape the in-process Rust providers emit). PROTOCOL_VERSION is currently **11**:
+The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that emits a normalized `api-agent:*` event vocabulary the frontend listens to (the same shape the in-process Rust providers emit). PROTOCOL_VERSION and the minimum accepted sidecar version are **12**:
 
 - Events: `ready` (handshake), `chunk`, `thinking`, `thinking_stop`, `tool_start`, `tool_result`, `permission_request` (with optional `batchId`/`batchSize`), `pending_edit`, `done` (with optional `resumeToken` and v10 `cancelled` marker), `error`, `plan_block`, `tool_output_extended` (Bash exit code + stdout/stderr; Write/Edit modified paths), `turn_summary` (running tokens between turns), and `rate_limited` (v6, typed provider quota-pause)
-- Requests: `start_session` (with image attachments, resume, and v11 frozen MCP trust snapshots), `send_message`, `permission_response`, `edit_response` (v9-correlated by required `toolUseId`, with optional `mergedContent` for per-hunk acceptance), `cancel`, `close_session`, `set_permission_mode`, `set_model`, `retry`, `cancel_pending_tools`, `inject_user_turn` (v5)
+- Requests: `start_session` (with image attachments, resume, frozen MCP trust snapshots and v12 execution-host project trust), `send_message`, `permission_response`, `edit_response` (v9-correlated by required `toolUseId`, with optional `mergedContent` for per-hunk acceptance), `cancel`, `close_session`, `set_permission_mode`, `set_model`, `retry`, `cancel_pending_tools`, `inject_user_turn` (v5)
 
 ### Workspaces — Terminal CLI Command Center
 
@@ -365,9 +366,11 @@ The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that 
 
 - Language, complexity, and test breakdowns with per-category scores, donut
   charts, and an Overview / Complexity / Languages / Tests tab layout
-- Auto-detected per-project checks (lint, typecheck, tests, cargo, ruff) run
-  live with streaming ANSI output, cancellation, and persisted run history
-- Streamed AI run summaries and per-finding explanations
+- Auto-detected per-project checks (lint, typecheck, tests, cargo, ruff) report
+  aggregate completed-check results, with cancellation for the active run
+- Streamed AI run summaries and persisted code-metrics snapshots. The current
+  view does not expose raw ANSI check output, per-finding explanations or
+  persisted execution-run history
 - One-click **auto-fix** with its own review panel, backed by a dedicated Rust
   command family (`quality_runner.rs`, `code_quality_autofix.rs`)
 
@@ -414,6 +417,15 @@ The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that 
   Agents SDK providers, plus the in-process providers, enforce the frozen
   snapshot. The retired Codex chat-provider trust proxy is not part of the
   current runtime.
+- Local Claude (API), OpenAI (API), MiniMax, OpenRouter, Ollama and Custom
+  conversations resolve global and trusted project MCP configuration, including
+  stdio, Streamable HTTP and legacy SSE servers. Each session retains its
+  resolved configuration, tool mapping and trust permissions; project overrides
+  cannot fall back to a same-named global server. URL-based servers require
+  network permission. Static request headers are supported; interactive OAuth
+  is not provided by this native runtime. MCP on an SSH execution host uses the
+  SDK-backed providers. Native SSH conversations must explicitly deselect MCP;
+  they never run a desktop server in place of a remote one.
 - PacketBench's loopback provider organizes scoped resources for Flights, Issues,
   coordination, review, global/project Memory, workspaces, and PacketCode
   integration health. It remains loopback-only with bearer/origin controls;

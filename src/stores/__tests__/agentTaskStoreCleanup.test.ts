@@ -192,6 +192,15 @@ describe("agentTaskStore.deleteConversation — substore cleanup", () => {
     expect(deleteConversationFileMock).toHaveBeenCalledWith(id);
   });
 
+  it.each(["done", "failed"] as const)("closes the backend when deleting a %s conversation", async (status) => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const id = await useAgentTaskStore.getState().createApiConversation({ agent: "api-openai", projectPath: "D:/projects/example", model: "gpt-4o", initialMessage: "test" });
+    useAgentTaskStore.setState((state) => ({ conversations: state.conversations.map((conv) => ({ ...conv, status })) }));
+    await useAgentTaskStore.getState().deleteConversation(id);
+    expect(closeApiAgentSessionMock).toHaveBeenCalledWith(id);
+    expect(cancelApiAgentSessionMock).not.toHaveBeenCalled();
+  });
+
   it("clears the selectedConversationId when the deleted conversation was selected", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const id = await useAgentTaskStore

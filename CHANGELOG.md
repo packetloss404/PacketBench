@@ -9,6 +9,34 @@ task list.
 
 ## [Unreleased]
 
+- Scoped Workspace approval shortcuts to the selected visible terminal, rejected
+  stale Git refreshes, and resolved conversation PR targets from worktree origin
+  with a pinned Git host connection.
+- Preserved Monitor conversation status, restored permission controls before
+  resume, retained failed Prompt Library sends for retry, closed deleted backend
+  sessions, and respected Flight notification preferences.
+- Enforced parent tool authority during dispatch and delegation, isolated task
+  state per conversation, froze custom-agent definitions, accounted for child
+  usage, and reported sub-agent iteration exhaustion as incomplete.
+- Applied conversation spending to budget admission for resumed and subsequent
+  turns. Reviewer gates recover interrupted sessions and persist authoritative
+  verdicts before reporting success.
+- Removed unsupported custom CLI creation and unused UI/helpers. Kept the
+  existing Quality aggregate runner with cancellation; narrowed diagnostics
+  claims and removed the unused per-diagnostic AI command and route.
+- Preserved usage-write evidence, blocked API requests on incomplete accounting,
+  and recorded completed native requests before later tool/provider failures.
+  Budget alerts now cover already-exceeded thresholds on first observation.
+- Removed the hidden dollar statusline and unused cost-display calculations;
+  token displays, pricing and budget accounting remain.
+- Bound native MCP connections to each session's resolved global/trusted project
+  configuration and added HTTP/SSE transport support. Native SSH refuses desktop
+  MCP substitution and directs remote MCP sessions to an SDK provider. Settings
+  can explicitly disable all servers and reconnect an existing conversation
+  without MCP.
+- Source scope and validation: `dev/existing-code-stabilization-2026-09-24.md`.
+  Prepared for the 0.14.8 Windows build; artifact evidence follows packaging.
+
 ## [0.14.7] - 2026-09-12 (local build)
 
 - Workspace and Fleet summaries distinguish file viewers and saved conversations

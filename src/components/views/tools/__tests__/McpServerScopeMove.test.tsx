@@ -25,6 +25,7 @@ vi.mock("@/lib/tauri", () => tauri);
 import { McpServersCard } from "@/components/views/tools/McpServersCard";
 import { useMcpStore } from "@/stores/mcpStore";
 import { useLayoutStore } from "@/stores/layoutStore";
+import { useAgentSettingsStore } from "@/stores/agentSettingsStore";
 import type { McpServerEntry } from "@/types/mcp";
 
 const GLOBAL_ENTRY: McpServerEntry = {
@@ -41,6 +42,20 @@ beforeEach(() => {
   tauri.deleteMcpServer.mockResolvedValue(undefined);
   useLayoutStore.setState({ projectPath: "D:\\work\\app" });
   useMcpStore.setState({ servers: [GLOBAL_ENTRY], loading: false, error: null });
+  useAgentSettingsStore.setState({ defaultEnabledMcpServerIds: null });
+});
+
+it("explicitly disables MCP for new conversations even with no configured servers", async () => {
+  tauri.readMcpServers.mockResolvedValue([]);
+  useMcpStore.setState({ servers: [] });
+  render(<McpServersCard />);
+  fireEvent.click(screen.getByRole("button", { name: "Disable all" }));
+  expect(useAgentSettingsStore.getState().defaultEnabledMcpServerIds).toEqual([]);
+  expect(
+    await screen.findByText(/All MCP servers are disabled for new conversations/),
+  ).toBeInTheDocument();
+  expect(tauri.writeMcpServer).not.toHaveBeenCalled();
+  expect(tauri.deleteMcpServer).not.toHaveBeenCalled();
 });
 
 async function openEditForm() {

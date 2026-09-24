@@ -25,11 +25,7 @@ import { addPaneControlListener, OPEN_MODEL_DROPDOWN_EVENT } from "../paneEvents
 import { capabilitiesFor } from "@/lib/agentCapabilities";
 import { providerEnumeratesLive } from "@/lib/liveModels";
 import { useLiveModels } from "../hooks/useLiveModels";
-import {
-  sessionUsageFor,
-  shouldShowCost,
-  usageStatusline,
-} from "@/lib/usageStatusline";
+import { sessionUsageFor, usageStatusline } from "@/lib/usageStatusline";
 import { ContextStrip } from "./ContextStrip";
 import { ProjectPicker } from "./ProjectPicker";
 import { ModeSelector } from "./ModeSelector";
@@ -47,11 +43,7 @@ import {
   type ComposerMode,
 } from "./utils";
 import { buildComposerKeyboardHandler } from "./buildComposerKeyboardHandler";
-import {
-  buildSlashItems,
-  templatesToSlashDefs,
-  type SlashItem,
-} from "./slashCommandSource";
+import { buildSlashItems, templatesToSlashDefs, type SlashItem } from "./slashCommandSource";
 import { slashCommandHandlers } from "./slashCommandHandlers";
 
 export interface LaunchComposerProps {
@@ -122,10 +114,7 @@ export function Composer(props: ComposerProps) {
   const draftKey = isChat ? conversationId : LAUNCH_DRAFT_KEY;
   const input = useAgentDraftStore((s) => s.drafts[draftKey] ?? "");
   const setDraft = useAgentDraftStore((s) => s.setDraft);
-  const setInput = useCallback(
-    (text: string) => setDraft(draftKey, text),
-    [draftKey, setDraft],
-  );
+  const setInput = useCallback((text: string) => setDraft(draftKey, text), [draftKey, setDraft]);
 
   const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = launch ? launch.textareaRef : internalTextareaRef;
@@ -150,12 +139,10 @@ export function Composer(props: ComposerProps) {
     s.profiles.find((p) => p.id === "builtin-reviewer"),
   );
   const activeProfileId = launch?.selectedProfileId ?? defaultProfileId;
-  const activeProfile =
-    profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
 
   // ─── Attachment staging (paste / drag-drop) — both variants ──────────
-  const { staged, addFiles, removeStaged, clear: clearStaged } =
-    useAttachmentStaging();
+  const { staged, addFiles, removeStaged, clear: clearStaged } = useAttachmentStaging();
   const [dragActive, setDragActive] = useState(false);
   // Enter/leave depth counter so the drag border doesn't flicker off when the
   // pointer crosses into nested children (textarea, staged chips, popovers).
@@ -230,9 +217,7 @@ export function Composer(props: ComposerProps) {
    * nothing and fetches nothing; the launch card's own ModelSelector does its
    * own lookup from `launch.selectedAgent`.
    */
-  const { answer: liveModelAnswer } = useLiveModels(
-    conversation?.agent ?? ("" as AgentCli),
-  );
+  const { answer: liveModelAnswer } = useLiveModels(conversation?.agent ?? ("" as AgentCli));
   const caps = conversation ? capabilitiesFor(conversation, liveModelAnswer) : null;
 
   // ─── Prefix-trigger pickers (@ mentions, / slash-commands) ───────────
@@ -252,12 +237,8 @@ export function Composer(props: ComposerProps) {
       : "";
 
   const promptTemplates = usePromptStore((s) => s.templates);
-  const templateDefs = useMemo(
-    () => templatesToSlashDefs(promptTemplates),
-    [promptTemplates],
-  );
-  const { customSlashCommands, userSkills } =
-    useProjectSlashCommands(mentionProjectPath);
+  const templateDefs = useMemo(() => templatesToSlashDefs(promptTemplates), [promptTemplates]);
+  const { customSlashCommands, userSkills } = useProjectSlashCommands(mentionProjectPath);
   const allCustomSlashCommands = useMemo(
     () => [...customSlashCommands, ...templateDefs],
     [customSlashCommands, templateDefs],
@@ -320,14 +301,8 @@ export function Composer(props: ComposerProps) {
   // ─── Chat prompt history (↑/↓ recall) ────────────────────────────────
   const [historyIndex, setHistoryIndex] = useState(-1);
   const historySourceRef = useRef<"user" | "history">("user");
-  const messages = useMemo(
-    () => conversation?.messages ?? [],
-    [conversation?.messages],
-  );
-  const turnCount = useMemo(
-    () => messages.filter((m) => m.role === "user").length,
-    [messages],
-  );
+  const messages = useMemo(() => conversation?.messages ?? [], [conversation?.messages]);
+  const turnCount = useMemo(() => messages.filter((m) => m.role === "user").length, [messages]);
 
   const handleTextChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -469,21 +444,16 @@ export function Composer(props: ComposerProps) {
   const [modelOpenSignal, setModelOpenSignal] = useState(0);
   useEffect(() => {
     if (!isChat || !conversationId) return undefined;
-    return addPaneControlListener(
-      OPEN_MODEL_DROPDOWN_EVENT,
-      conversationId,
-      () => setModelOpenSignal((n) => n + 1),
+    return addPaneControlListener(OPEN_MODEL_DROPDOWN_EVENT, conversationId, () =>
+      setModelOpenSignal((n) => n + 1),
     );
   }, [isChat, conversationId]);
 
   const selectedAuth = launch ? authStatus[launch.selectedAgent] : undefined;
   const selectedAuthStatus: AuthStatus =
-    selectedAuth === "loading" || !selectedAuth
-      ? "loading"
-      : selectedAuth.status;
+    selectedAuth === "loading" || !selectedAuth ? "loading" : selectedAuth.status;
   const launchReady = selectedAuthStatus === "ready";
-  const launchLabel =
-    selectedAuthStatus === "coming_soon" ? "Coming soon" : "Launch";
+  const launchLabel = selectedAuthStatus === "coming_soon" ? "Coming soon" : "Launch";
   // No API-agent row uses an interactive subscription login any more, so the
   // old inline "Log in" button (which fired `packetbench:open-claude-login` /
   // `packetbench:open-codex-login`) is gone from this surface. Interactive
@@ -529,8 +499,7 @@ export function Composer(props: ComposerProps) {
     // attachments, so keep any staged images for the next live send
     // instead of silently dropping them.
     const streaming =
-      conversation.status === "active" &&
-      conversation.messages.some((m) => m.isStreaming);
+      conversation.status === "active" && conversation.messages.some((m) => m.isStreaming);
     const attachments = streaming ? null : staged.map((s) => s.attachment);
     setInput("");
     mention.close();
@@ -573,9 +542,7 @@ export function Composer(props: ComposerProps) {
     slashItems,
     pickSlashItem,
     submit,
-    history: isChat
-      ? { messages, historyIndex, setHistoryIndex, historySourceRef }
-      : undefined,
+    history: isChat ? { messages, historyIndex, setHistoryIndex, historySourceRef } : undefined,
     cycleMode: isChat ? props.onCycleMode : undefined,
   });
 
@@ -619,16 +586,10 @@ export function Composer(props: ComposerProps) {
           key={s.id}
           className="flex items-center gap-1.5 rounded-md bg-bg-secondary py-0.5 pl-1 pr-1.5 text-meta text-text-secondary"
         >
-          <Tooltip
-            content={`${s.name} · ${(s.sizeBytes / 1024).toFixed(1)} KB`}
-          >
+          <Tooltip content={`${s.name} · ${(s.sizeBytes / 1024).toFixed(1)} KB`}>
             <span className="flex items-center gap-1.5">
-              <img
-                src={s.previewUrl}
-                alt=""
-                className="w-5 h-5 rounded object-cover"
-              />
-              <span className="truncate max-w-[140px]">{s.name}</span>
+              <img src={s.previewUrl} alt="" className="h-5 w-5 rounded object-cover" />
+              <span className="max-w-[140px] truncate">{s.name}</span>
             </span>
           </Tooltip>
           <Tooltip content="Remove">
@@ -636,7 +597,7 @@ export function Composer(props: ComposerProps) {
               type="button"
               aria-label="Remove"
               onClick={() => removeStaged(s.id)}
-              className="p-0.5 rounded hover:bg-bg-hover text-text-muted hover:text-accent-red"
+              className="rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-accent-red"
             >
               <X size={9} />
             </button>
@@ -660,10 +621,7 @@ export function Composer(props: ComposerProps) {
         isChat
           ? // Degrades with capability — never promise a key this session
             // cannot serve (see composerPlaceholder above).
-            composerPlaceholder(
-              caps?.slashCommands ?? true,
-              caps?.fileMentions ?? false,
-            )
+            composerPlaceholder(caps?.slashCommands ?? true, caps?.fileMentions ?? false)
           : "What would you like to work on?"
       }
       rows={isChat ? 1 : 4}
@@ -695,10 +653,7 @@ export function Composer(props: ComposerProps) {
   // ─── Chat variant shell — the floating Codex-style composer card ──────
   if (isChat && conversation && caps) {
     const usage = caps.reportsUsage ? sessionUsageFor(conversation) : null;
-    const statusline = usageStatusline(
-      usage,
-      shouldShowCost(caps.reportsCost, conversation, usage),
-    );
+    const statusline = usageStatusline(usage);
 
     return (
       <div
@@ -745,23 +700,17 @@ export function Composer(props: ComposerProps) {
               )}
 
               {caps.canCancelTurn && isActive && (
-                <Tooltip
-                  content={
-                    isStopping ? "Waiting for Stop acknowledgement" : "Stop turn"
-                  }
-                >
+                <Tooltip content={isStopping ? "Waiting for Stop acknowledgement" : "Stop turn"}>
                   <button
                     type="button"
                     onClick={handleStop}
                     disabled={isStopping}
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-red/20 text-accent-red transition-colors motion-reduce:transition-none hover:bg-accent-red/30 disabled:cursor-wait disabled:opacity-60"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-red/20 text-accent-red transition-colors hover:bg-accent-red/30 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none"
                   >
                     <Square
                       size={12}
                       className={
-                        isStopping
-                          ? "animate-pulse motion-reduce:animate-none"
-                          : undefined
+                        isStopping ? "animate-pulse motion-reduce:animate-none" : undefined
                       }
                     />
                   </button>
@@ -806,19 +755,14 @@ export function Composer(props: ComposerProps) {
                     // Nothing to pick FROM and nothing that could ever arrive,
                     // but the session still knows what it runs ON — read-only
                     // rather than hidden.
-                    <span className="truncate text-chip text-text-muted">
-                      {conversation.model}
-                    </span>
+                    <span className="truncate text-chip text-text-muted">{conversation.model}</span>
                   )}
 
                 {/* Effort segments — omitted while no adapter advertises them. */}
                 {caps.effortLevels && caps.effortLevels.length > 0 && (
                   <div className="flex items-center overflow-hidden rounded-md border border-bg-border">
                     {caps.effortLevels.map((level) => (
-                      <span
-                        key={level}
-                        className="px-1.5 py-0.5 text-chip text-text-muted"
-                      >
+                      <span key={level} className="px-1.5 py-0.5 text-chip text-text-muted">
                         {level}
                       </span>
                     ))}
@@ -831,7 +775,7 @@ export function Composer(props: ComposerProps) {
                     onClick={submitChat}
                     disabled={!input.trim() || (isActive && !caps.canCancelTurn)}
                     aria-label="Send"
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-green text-bg-primary transition-colors motion-reduce:transition-none hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-green text-bg-primary transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30 motion-reduce:transition-none"
                   >
                     <ArrowUp size={14} />
                   </button>
@@ -841,9 +785,7 @@ export function Composer(props: ComposerProps) {
           </div>
 
           {statusline && (
-            <div className="mt-1.5 px-1 font-mono text-meta text-text-faint">
-              {statusline}
-            </div>
+            <div className="mt-1.5 px-1 font-mono text-meta text-text-faint">{statusline}</div>
           )}
         </div>
       </div>
@@ -862,10 +804,7 @@ export function Composer(props: ComposerProps) {
           a live conversation read as one object rather than two designs. */}
       <div className="w-full max-w-composer">
         <div className="flex items-center gap-1.5 rounded-t-xl border border-b-0 border-bg-border bg-bg-secondary px-2 py-0.5">
-          <ProjectPicker
-            selectedRepo={selectedRepo}
-            setSelectedRepo={setSelectedRepo}
-          />
+          <ProjectPicker selectedRepo={selectedRepo} setSelectedRepo={setSelectedRepo} />
         </div>
 
         <div
@@ -927,8 +866,7 @@ export function Composer(props: ComposerProps) {
             <AdvancedAccordion
               summary={[
                 {
-                  label:
-                    agentMode === "agent" ? null : MODE_META[agentMode].label,
+                  label: agentMode === "agent" ? null : MODE_META[agentMode].label,
                 },
                 {
                   // Profile: "default" here means the built-in default —
@@ -960,10 +898,7 @@ export function Composer(props: ComposerProps) {
                 setDefaultProfile={setDefaultProfile}
               />
               {selectedRepo && !isSshUri(selectedRepo) && (
-                <ComposerModePicker
-                  value={composerMode}
-                  onChange={launch.onComposerModeChange}
-                />
+                <ComposerModePicker value={composerMode} onChange={launch.onComposerModeChange} />
               )}
             </AdvancedAccordion>
           </div>

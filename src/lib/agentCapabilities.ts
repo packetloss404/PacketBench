@@ -1,14 +1,9 @@
 import type { AgentCli } from "@/stores/agentTaskStore";
 import type { AgentConversation } from "@/types/agent-conversation";
 import type { AgentMode } from "@/components/agents/AgentModeChip";
-import {
-  getProviderForAgent,
-  providerSupportsApprovals,
-  type ApiModel,
-} from "@/lib/api-models";
+import { getProviderForAgent, providerSupportsApprovals, type ApiModel } from "@/lib/api-models";
 import { modesForApprovals } from "@/components/agents/agentModeChipUtils";
 import { getModelContextWindow } from "@/lib/modelContext";
-import { getModelRates } from "@/lib/conversationCost";
 import { type LiveModelAnswer } from "@/lib/liveModels";
 import { isRemoteConversation } from "@/lib/remoteConversation";
 
@@ -97,8 +92,6 @@ export interface SessionCapabilities {
   contextWindow: number | null;
   /** Turns report token counts (drives the statusline's ctx/in/out). */
   reportsUsage: boolean;
-  /** This session's model has published rates, so a $ figure is meaningful. */
-  reportsCost: boolean;
 
   // ── environment ────────────────────────────────────────────────────────
   /** Tools execute on a remote host — the local filesystem is NOT this one. */
@@ -124,12 +117,7 @@ export interface SessionCapabilities {
  */
 export type CapabilityConversation = Pick<
   AgentConversation,
-  | "agent"
-  | "mode"
-  | "model"
-  | "projectPath"
-  | "sshTarget"
-  | "mcpSources"
+  "agent" | "mode" | "model" | "projectPath" | "sshTarget" | "mcpSources"
 >;
 
 /**
@@ -151,9 +139,7 @@ export type CapabilityConversation = Pick<
  * or issue IPC (see its docblock), so the caller subscribes to
  * `stores/liveModelStore` and passes the answer down.
  */
-function authoritativeModels(
-  live: LiveModelAnswer | undefined,
-): ApiModel[] | undefined {
+function authoritativeModels(live: LiveModelAnswer | undefined): ApiModel[] | undefined {
   if (live?.status === "ready" && live.models !== undefined) return live.models;
   return undefined;
 }
@@ -182,16 +168,6 @@ function isApiAgentId(agent: AgentCli): boolean {
  */
 function emitsStructuredPlans(agent: AgentCli): boolean {
   return agent === "api-claude" || agent === "api-claude-oauth";
-}
-
-/**
- * "A dollar figure is meaningful for this model." Mirrors the guard
- * `api-models.ts` applies when it populates `ApiModel.pricing`: an entry of
- * 0/0 (Ollama, free tiers) is a real row, but not a real price.
- */
-function hasMeaningfulRates(model: string | undefined): boolean {
-  const rates = getModelRates(model);
-  return !!rates && (rates.input > 0 || rates.output > 0);
 }
 
 /**
@@ -276,19 +252,11 @@ export function capabilitiesFor(
     contextWindow: getModelContextWindow(conversation.model),
     // Api sessions report usage.
     reportsUsage: isApi,
-    // Source: conversationCost.getModelRates → shared/model-pricing.json,
-    // with the SAME zero-rate guard api-models.ts applies when populating the
-    // picker's price labels: a free/local model has an entry at 0/0, and
-    // "$0.00" is a fiction, not a price.
-    reportsCost: hasMeaningfulRates(conversation.model),
-
     // Source: remoteConversation.isRemoteConversation.
     remote: isRemoteConversation(conversation),
     // Source: the `mcp_sources` event persisted on the conversation (same
     // condition SessionMetaLine used for its pill).
-    mcp:
-      !!mcpSources &&
-      (mcpSources.sources.length > 0 || mcpSources.readErrors.length > 0),
+    mcp: !!mcpSources && (mcpSources.sources.length > 0 || mcpSources.readErrors.length > 0),
     // Every conversation record is renamable; the sidebar has simply never
     // offered the affordance. Busy-state gating stays the caller's job.
     canRename: true,

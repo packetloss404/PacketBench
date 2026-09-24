@@ -6,11 +6,11 @@
 //! up a sub-agent loop with the agent's own system prompt, model, and
 //! allowed tool subset.
 
-use crate::commands::custom_agents::{discover_custom_agents, CustomAgentDef};
+use crate::commands::custom_agents::CustomAgentDef;
 use crate::core::execution::ExecutionTarget;
 use crate::core::llm_provider::get_provider;
 use crate::core::llm_types::ToolDefinition;
-use crate::core::tool_runtime;
+use crate::core::tool_subagent::current_parent_llm;
 
 const TOOL_PREFIX: &str = "agent_";
 
@@ -38,13 +38,10 @@ fn sanitize_name(name: &str) -> String {
     out
 }
 
-/// Discover custom agents at startup (home directory only — project agents
-/// are re-discovered at invocation time using the parent's project path).
-#[allow(dead_code)]
-pub fn load_custom_agent_definitions() -> Vec<ToolDefinition> {
-    let agents = discover_custom_agents("");
+/// Advertise the same trusted, frozen definitions that invocation will use.
+pub fn custom_agent_definitions(agents: &[CustomAgentDef]) -> Vec<ToolDefinition> {
     agents
-        .into_iter()
+        .iter()
         .filter_map(|a| {
             let suffix = sanitize_name(&a.name);
             if suffix.is_empty() {
@@ -68,12 +65,9 @@ pub fn load_custom_agent_definitions() -> Vec<ToolDefinition> {
         .collect()
 }
 
-fn find_agent(tool_name: &str, project_path: &str) -> Option<CustomAgentDef> {
+fn find_agent<'a>(tool_name: &str, agents: &'a [CustomAgentDef]) -> Option<&'a CustomAgentDef> {
     let suffix = tool_name.strip_prefix(TOOL_PREFIX)?;
-    let agents = discover_custom_agents(project_path);
-    agents
-        .into_iter()
-        .find(|a| sanitize_name(&a.name) == suffix)
+    agents.iter().find(|a| sanitize_name(&a.name) == suffix)
 }
 
 /// Build the tool subset this agent is allowed to call. Empty `allowed_tools`
@@ -86,8 +80,7 @@ fn filter_subagent_tools(agent_name: &str, requested: Vec<String>) -> Vec<String
     requested
         .into_iter()
         .filter(|name| {
-            let denied = crate::core::tool_subagent::SUBAGENT_DENIED_TOOLS
-                .contains(&name.as_str());
+            let denied = crate::core::tool_subagent::SUBAGENT_DENIED_TOOLS.contains(&name.as_str());
             if denied {
                 tracing::warn!(
                     target: "packetbench::auth",
@@ -101,7 +94,10 @@ fn filter_subagent_tools(agent_name: &str, requested: Vec<String>) -> Vec<String
         .collect()
 }
 
-async fn build_allowed_tools(agent: &CustomAgentDef) -> Vec<ToolDefinition> {
+fn build_allowed_tools(
+    agent: &CustomAgentDef,
+    parent_tools: &[ToolDefinition],
+) -> Vec<ToolDefinition> {
     let allowed: Vec<String> = if agent.allowed_tools.is_empty() {
         DEFAULT_READ_ONLY_TOOLS
             .iter()
@@ -111,30 +107,11 @@ async fn build_allowed_tools(agent: &CustomAgentDef) -> Vec<ToolDefinition> {
         filter_subagent_tools(&agent.name, agent.allowed_tools.clone())
     };
 
-    let mut tools: Vec<ToolDefinition> = tool_runtime::tool_definitions()
-        .await
-        .into_iter()
+    parent_tools
+        .iter()
         .filter(|t| allowed.iter().any(|name| name == &t.name))
-        .collect();
-
-    // `web_fetch` may not be defined in tool_runtime — provide a minimal
-    // fallback so the model can still call it when listed.
-    if allowed.iter().any(|n| n == "web_fetch") && !tools.iter().any(|t| t.name == "web_fetch") {
-        tools.push(ToolDefinition {
-            name: "web_fetch".to_string(),
-            description: "Fetch the contents of a URL and return the response body as text."
-                .to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "The URL to fetch." }
-                },
-                "required": ["url"]
-            }),
-        });
-    }
-
-    tools
+        .cloned()
+        .collect()
 }
 
 /// Tool entry-point for `agent_*` invocations dispatched from `tool_runtime::execute_tool`.
@@ -144,40 +121,30 @@ pub async fn execute_custom_agent(
     args: &serde_json::Value,
     parent_target: &ExecutionTarget,
 ) -> Result<String, String> {
-    // Share the sub-agent recursion-depth counter with spawn_subagent so a
-    // malicious prompt can't chain `agent_a -> agent_a -> agent_a` beyond
-    // MAX_SUBAGENT_DEPTH.
-    let _depth_guard = crate::core::tool_subagent::SubagentDepthGuard::acquire()?;
-
     let task = args
         .get("task")
         .and_then(|t| t.as_str())
         .ok_or("Missing 'task' parameter")?
         .to_string();
 
-    let project_path = match parent_target {
-        ExecutionTarget::Local { project_path } => project_path.clone(),
-        // Custom agents run local-only today: an SSH parent target has no local
-        // project path, so we degrade to an empty path (home-dir agents only).
-        // Documented rather than silently misleading — remote custom-agent
-        // execution isn't wired.
-        ExecutionTarget::Ssh { .. } => String::new(),
-    };
-
-    let agent = find_agent(name, &project_path)
-        .ok_or_else(|| format!("Custom agent not found for tool '{}'", name))?;
+    let parent = current_parent_llm().ok_or("Custom agent requires an active conversation")?;
+    let agent = find_agent(name, &parent.custom_agents).ok_or_else(|| {
+        format!(
+            "Custom agent not in this session's frozen definitions: '{}'",
+            name
+        )
+    })?;
 
     // Q2: run on the PARENT session's provider — never on a hardcoded vendor
     // the user may have no key for. An explicit frontmatter `model` still
     // wins (it is the agent author's choice); the derived cheap-tier model is
     // only the default.
-    let (provider_id, derived_model) =
-        crate::core::tool_subagent::subagent_provider_and_model();
+    let (provider_id, derived_model) = crate::core::tool_subagent::subagent_provider_and_model();
     let api_key = crate::commands::api_keys::load_api_key(&provider_id)
         .map_err(|e| format!("Custom agent requires a {} API key: {}", provider_id, e))?;
 
     let provider = get_provider(&provider_id)?;
-    let tools = build_allowed_tools(&agent).await;
+    let tools = build_allowed_tools(agent, &parent.tools);
     let model = agent
         .model
         .as_ref()
@@ -185,7 +152,6 @@ pub async fn execute_custom_agent(
         .filter(|m| !m.is_empty())
         .unwrap_or(derived_model);
 
-    // `_depth_guard` (acquired above) stays alive across the whole loop.
     crate::core::tool_subagent::run_agent_loop(
         &*provider,
         &api_key,
@@ -203,6 +169,50 @@ pub async fn execute_custom_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_definition_is_advertised_and_invoked_from_the_same_snapshot() {
+        let agent = CustomAgentDef {
+            name: "Project Reviewer".into(),
+            description: "project-only instructions".into(),
+            model: None,
+            color: None,
+            allowed_tools: vec![],
+            system_prompt: "trusted project body".into(),
+            source: "project".into(),
+        };
+        let frozen = vec![agent];
+        let tools = custom_agent_definitions(&frozen);
+        assert_eq!(tools[0].name, "agent_project_reviewer");
+        let invoked = find_agent(&tools[0].name, &frozen).unwrap();
+        assert_eq!(invoked.description, tools[0].description);
+        assert_eq!(invoked.system_prompt, "trusted project body");
+    }
+
+    #[test]
+    fn custom_tools_intersect_parent_authority_without_rediscovery_or_fallback() {
+        let agent = CustomAgentDef {
+            name: "reviewer".into(),
+            description: "".into(),
+            model: None,
+            color: None,
+            allowed_tools: vec![
+                "mcp__excluded__read".into(),
+                "web_fetch".into(),
+                "read_file".into(),
+            ],
+            system_prompt: "".into(),
+            source: "global".into(),
+        };
+        let parent = vec![ToolDefinition {
+            name: "read_file".into(),
+            description: "".into(),
+            parameters: serde_json::json!({}),
+        }];
+        let tools = build_allowed_tools(&agent, &parent);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "read_file");
+    }
 
     #[test]
     fn custom_agents_cannot_be_granted_execution_tools() {

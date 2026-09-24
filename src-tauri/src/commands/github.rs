@@ -1,3 +1,6 @@
+use crate::commands::git_host_probe::{
+    GitHostProbeOutcome, GitHostProbeRequest, GitHostProbeResult, GitHostProbeSpec,
+};
 use crate::core::brand::{
     DATA_DIR_NAME, KEYRING_SERVICE, LEGACY_DATA_DIR_NAME, LEGACY_KEYRING_SERVICE,
     USER_AGENT as BRAND_USER_AGENT,
@@ -5,9 +8,6 @@ use crate::core::brand::{
 use crate::core::git_host::{
     self, host_label_from_url, sanitize_host_error, GitHost, GitHostKind, HostCapability,
     ListState, RepoRef,
-};
-use crate::commands::git_host_probe::{
-    GitHostProbeOutcome, GitHostProbeRequest, GitHostProbeResult, GitHostProbeSpec,
 };
 use reqwest::header::{ACCEPT, LINK, USER_AGENT};
 use serde::{Deserialize, Serialize};
@@ -398,6 +398,20 @@ async fn repo_session(
 ) -> Result<(reqwest::Client, GitHost, RepoRef), String> {
     let r = RepoRef::new(owner, repo)?;
     let (client, host) = active_host_session(auth).await?;
+    Ok((client, host, r))
+}
+
+async fn repo_session_for_connection(
+    auth: &GitHubAuthState,
+    owner: &str,
+    repo: &str,
+    connection_id: Option<&str>,
+) -> Result<(reqwest::Client, GitHost, RepoRef), String> {
+    let r = RepoRef::new(owner, repo)?;
+    let (client, host) = match connection_id {
+        Some(id) => git_host_session(auth, id).await?,
+        None => active_host_session(auth).await?,
+    };
     Ok((client, host, r))
 }
 
@@ -1173,8 +1187,7 @@ fn plan_connection_update(
         // caller that cannot describe how to check the credential cannot be
         // allowed to replace a working one with it.
         return Err(
-            "A replacement token must be verified against the host before it is saved."
-                .to_string(),
+            "A replacement token must be verified against the host before it is saved.".to_string(),
         );
     }
 
@@ -1259,10 +1272,9 @@ where
             .unwrap_or_default()
             .trim()
             .to_string();
-        let spec = update
-            .probe
-            .clone()
-            .ok_or_else(|| "A replacement token must be verified before it is saved.".to_string())?;
+        let spec = update.probe.clone().ok_or_else(|| {
+            "A replacement token must be verified before it is saved.".to_string()
+        })?;
         let result = probe(spec.into_request(conn.base_url.clone(), token.clone())).await?;
         if result.outcome != GitHostProbeOutcome::Ok {
             return Err(rotation_refusal(result.outcome));
@@ -1567,8 +1579,10 @@ pub async fn github_create_pr(
     head: String,
     base: String,
     draft: Option<bool>,
+    connection_id: Option<String>,
 ) -> Result<String, String> {
-    let (client, host, r) = repo_session(auth.inner(), &owner, &repo).await?;
+    let (client, host, r) =
+        repo_session_for_connection(auth.inner(), &owner, &repo, connection_id.as_deref()).await?;
     // Field names, and the very meaning of "draft", differ per host — see
     // `GitHost::create_change_request_body`.
     let payload = host.create_change_request_body(&title, &body, &head, &base, draft);
@@ -4470,6 +4484,34 @@ mod tests {
             tokens: RwLock::new(map),
             active_connection_id: RwLock::new(active.to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn explicit_pr_connection_stays_pinned_when_active_connection_changes() {
+        let auth = auth_state_with_tokens(
+            vec![GitHostConnection::github(), gitea_connection()],
+            "github",
+            &[("github", "fixture-token"), ("gitea-1", "fixture-token")],
+        );
+        let (_, pinned, _) = repo_session_for_connection(&auth, "owner", "repo", Some("gitea-1"))
+            .await
+            .unwrap();
+        assert_eq!(pinned.kind, GitHostKind::Gitea);
+        assert_eq!(*auth.active_connection_id.read().await, "github");
+        let (_, legacy, _) = repo_session_for_connection(&auth, "owner", "repo", None)
+            .await
+            .unwrap();
+        assert_eq!(legacy.kind, GitHostKind::GitHub);
+        assert!(
+            repo_session_for_connection(&auth, "owner", "repo", Some("missing"))
+                .await
+                .is_err()
+        );
+        assert!(
+            repo_session_for_connection(&auth, "owner", "repo", Some(""))
+                .await
+                .is_err()
+        );
     }
 
     fn gitea_connection() -> GitHostConnection {

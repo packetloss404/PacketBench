@@ -56,6 +56,7 @@ vi.mock("@/lib/tauri", () => ({
   listPtySessions: vi.fn().mockResolvedValue([]),
   detectAgent: vi.fn(),
   loadPersistedState: vi.fn(),
+  readUsageAnalytics: () => invokeMock("read_usage_analytics"),
   saveAgentsSlice: vi.fn().mockResolvedValue(undefined),
   startApiAgentSession: (...args: unknown[]) => startApiAgentSessionMock(...args),
   sendApiAgentMessage: (...args: unknown[]) => sendApiAgentMessageMock(...args),
@@ -328,6 +329,29 @@ describe("apiAgentListeners queued message drain", () => {
     sendApiAgentMessageMock.mockResolvedValue(undefined);
   });
 
+  it("checks the completed turn's cost before dispatching a queued follow-up", async () => {
+    vi.useFakeTimers();
+    try {
+      const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+      const { installApiAgentListeners } = await import("@/stores/apiAgentListeners");
+      const { storageKey } = await import("@/lib/brand");
+      localStorage.setItem(storageKey("cost-guardrails"), JSON.stringify({ sessionLimitUsd: 0.01 }));
+      invokeMock.mockResolvedValue(JSON.stringify({ modelUsage: [], dailyCosts: [], totalCostUsd: 1, sessionCostsById: { "queued-cap": 1 } }));
+      const conv = makeActiveConversation("queued-cap");
+      conv.messages.push(makeMessage({ id: "queued", content: "preserve me", queued: true }));
+      conv.queuedMessages = ["preserve me"];
+      useAgentTaskStore.setState({ conversations: [conv] });
+      await installApiAgentListeners(conv.id);
+      listeners.get(`api-agent:done:${conv.id}`)?.({ payload: { input_tokens: 1, output_tokens: 1 } });
+      await vi.runAllTimersAsync();
+      expect(sendApiAgentMessageMock).not.toHaveBeenCalled();
+      const updated = useAgentTaskStore.getState().conversations[0];
+      expect(updated.status).toBe("failed");
+      expect(updated.messages.some((message) => message.content === "preserve me")).toBe(true);
+      expect(updated.messages.some((message) => message.isStreaming)).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("promotes the drained queued bubble in place before the remaining queued messages", async () => {
     vi.useFakeTimers();
     try {
@@ -375,7 +399,7 @@ describe("apiAgentListeners queued message drain", () => {
         },
       });
 
-      vi.runAllTimers();
+      await vi.runAllTimersAsync();
 
       expect(sendApiAgentMessageMock).toHaveBeenCalledWith("conv-order", "queued A", undefined);
 

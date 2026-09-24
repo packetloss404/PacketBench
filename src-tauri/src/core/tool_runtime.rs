@@ -118,6 +118,15 @@ pub async fn tool_definitions_with_mcp_trust(
     enabled_mcp_server_ids: Option<&[String]>,
     mcp_trust_snapshot: Option<&[crate::core::mcp_bridge::McpTrustSnapshot]>,
 ) -> Vec<ToolDefinition> {
+    let agents = crate::commands::custom_agents::discover_custom_agents("");
+    tool_definitions_for_session(enabled_mcp_server_ids, mcp_trust_snapshot, &agents).await
+}
+
+pub async fn tool_definitions_for_session(
+    _enabled_mcp_server_ids: Option<&[String]>,
+    _mcp_trust_snapshot: Option<&[crate::core::mcp_bridge::McpTrustSnapshot]>,
+    custom_agents: &[crate::commands::custom_agents::CustomAgentDef],
+) -> Vec<ToolDefinition> {
     let base = vec![
         ToolDefinition {
             name: "read_file".to_string(),
@@ -238,15 +247,10 @@ pub async fn tool_definitions_with_mcp_trust(
     // Append MCP tool defs discovered from user-configured servers.
     let mut all = base;
     all.extend(crate::core::tool_tasks::task_tool_definitions());
-    all.extend(
-        crate::core::mcp_bridge::load_mcp_tool_definitions_with_trust(
-            enabled_mcp_server_ids,
-            mcp_trust_snapshot,
-        )
-        .await,
-    );
     // Append custom-agent tool defs (~/.claude/agents/<name>.md).
-    all.extend(crate::core::tool_custom_agent::load_custom_agent_definitions());
+    all.extend(crate::core::tool_custom_agent::custom_agent_definitions(
+        custom_agents,
+    ));
     // Append GitHub tools (gh_list_issues, gh_get_issue, gh_list_prs).
     all.extend(crate::core::tool_github::github_tool_definitions());
     all
@@ -339,19 +343,21 @@ pub async fn execute_tool_with_mcp_trust(
             crate::core::tool_pull_request::execute_create_pull_request(&call.arguments, target)
                 .await
         }
-        "task_create" => {
-            // Host-agnostic: tasks live in the PacketBench process.
-            let _ = target;
-            crate::core::tool_tasks::execute_task_create(&call.arguments)
-        }
-        "task_update" => {
-            let _ = target;
-            crate::core::tool_tasks::execute_task_update(&call.arguments)
-        }
-        "task_list" => {
-            let _ = target;
-            crate::core::tool_tasks::execute_task_list(&call.arguments)
-        }
+        "task_create" => crate::core::tool_subagent::current_parent_llm()
+            .ok_or_else(|| "Task tools require an active conversation".to_string())
+            .and_then(|parent| {
+                crate::core::tool_tasks::execute_task_create(&parent.tasks, &call.arguments)
+            }),
+        "task_update" => crate::core::tool_subagent::current_parent_llm()
+            .ok_or_else(|| "Task tools require an active conversation".to_string())
+            .and_then(|parent| {
+                crate::core::tool_tasks::execute_task_update(&parent.tasks, &call.arguments)
+            }),
+        "task_list" => crate::core::tool_subagent::current_parent_llm()
+            .ok_or_else(|| "Task tools require an active conversation".to_string())
+            .and_then(|parent| {
+                crate::core::tool_tasks::execute_task_list(&parent.tasks, &call.arguments)
+            }),
         name if name.starts_with("mcp__") => {
             crate::core::mcp_bridge::execute_mcp_tool_with_trust(
                 name,
@@ -750,7 +756,7 @@ async fn execute_list_directory(
 /// orphaning those. On timeout we kill the whole tree so nothing outlives the
 /// deadline — parity with the sidecar's `killTree`.
 #[cfg(unix)]
-fn kill_process_tree(pid: u32) {
+pub(crate) fn kill_process_tree(pid: u32) {
     // The child leads its own process group (see `process_group(0)` at spawn),
     // so a negative pid signals every process in that group, not just `sh`.
     unsafe {
@@ -759,7 +765,7 @@ fn kill_process_tree(pid: u32) {
 }
 
 #[cfg(windows)]
-fn kill_process_tree(pid: u32) {
+pub(crate) fn kill_process_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     // taskkill walks the tree from `pid` (/T) and force-kills it (/F). It must
     // run while the root is still alive, otherwise the snapshot can't reach

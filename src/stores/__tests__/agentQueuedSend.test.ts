@@ -69,7 +69,7 @@ vi.mock("@/lib/tauri", () => ({
  * (consensus keep list): sending from the composer while the assistant is
  * still streaming must queue the message (queued bubble + queuedMessages)
  * instead of dispatching it mid-turn; sending while idle dispatches
- * immediately with attachments forwarded.
+ * after budget admission with attachments forwarded.
  */
 describe("agentTaskStore.sendMessage — queued-send-while-streaming (protected)", () => {
   beforeEach(() => {
@@ -134,7 +134,7 @@ describe("agentTaskStore.sendMessage — queued-send-while-streaming (protected)
     expect(sendApiAgentMessageMock).not.toHaveBeenCalled();
   });
 
-  it("dispatches immediately (with attachments) when no turn is streaming", async () => {
+  it("dispatches after budget admission (with attachments) when no turn is streaming", async () => {
     const { useAgentTaskStore, id } = await createStreamingConversation();
     // Settle the stream: what the done-listener does to the transcript.
     useAgentTaskStore.setState((s) => ({
@@ -157,6 +157,8 @@ describe("agentTaskStore.sendMessage — queued-send-while-streaming (protected)
     const sent = conv?.messages.find((m) => m.content === "idle send");
     expect(sent?.role).toBe("user");
     expect(sent?.queued).toBeUndefined();
-    expect(sendApiAgentMessageMock).toHaveBeenCalledWith(id, "idle send", attachments);
+    await vi.waitFor(() =>
+      expect(sendApiAgentMessageMock).toHaveBeenCalledWith(id, "idle send", attachments),
+    );
   });
 });

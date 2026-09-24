@@ -1,6 +1,6 @@
 # PacketBench Backlog
 
-Last reconciled: 2026-09-08 (installer/SSH proof updates)
+Last reconciled: 2026-09-24 (existing-code completeness sweep)
 
 This is the single task register for work that has not shipped or has not yet
 earned its required real/package proof. Completed implementation history belongs
@@ -11,6 +11,9 @@ Priority: **P1** = release blocker, real bug, or major user-facing gap;
 **P2** = bounded correctness/UX work; **P3** = later enhancement or cleanup.
 
 ## Owner decisions
+
+**Current direction, 2026-09-24:** no feature expansion. Stabilize and finish
+the existing product paths identified below before resuming expansion plans.
 
 These are the only current product decisions blocking implementation.
 
@@ -90,33 +93,18 @@ These are the only current product decisions blocking implementation.
    shipped but the first served update deferred to 1.1, and an explicit "1.0 is
    NOT" list (macOS/Linux, Remote Agents, Global Undo, hosted CI, the
    environment-gated proof matrices). The owner **rejected** that definition on
-   2026-08-16; PacketBench continues the 0.x cadence (now 0.13.0) with no 1.0
+   2026-08-16; PacketBench continues the 0.x cadence with no 1.0
    milestone. See
    [`docs/reports/fable5-review-2026-08-05.md`](./docs/reports/fable5-review-2026-08-05.md).
 
-5. **OPEN 2026-08-26 - PacketCode ACP fold-in leftovers.** Three product
-   calls remain after the ACP transport landed. (a) **Cost statusline.** The
-   `$` segment is implemented behind `packetbench:agents:show-cost`, which
-   defaults off and has no Settings toggle — so the feature is present, tested
-   and unreachable. Either wire the toggle (Agents & Models -> Agent behavior)
-   or delete `fmtCost`/`shouldShowCost`/`setCostDisplayEnabled`. Design review
-   found the 2026-07-31 removal reason that still holds ("the dashboard was
-   never used to change a decision"); the subscription-fiction reason is moot
-   now every API row is BYOK. (b) **Retire the PTY-scraping packetcode
-   adapter** (`src/agents/packetcode.ts`) now the structured transport is at
-   parity. (c) **Archive packetcode-gui** — decide whether that means a README
-   notice or archiving the GitHub repo.
-
-   Re-verified 2026-08-27: (a) still true — `SHOW_COST_STORAGE_KEY` /
-   `setCostDisplayEnabled` / `shouldShowCost` exist in
-   `src/lib/usageStatusline.ts` and are consumed at
-   `src/components/agents/composer/Composer.tsx:799`, but the only non-test
-   caller of `setCostDisplayEnabled` is the test file, so no Settings control
-   reaches it. (b) still true — `src/agents/packetcode.ts` exists and is still
-   imported by `src/stores/agentStore.ts:7`. (c) **unverified from this repo**:
-   packetcode-gui is a separate GitHub repository, so its archive state cannot
-   be confirmed from the PacketBench tree. Treat as open until checked on
-   GitHub.
+5. **RECONCILED 2026-09-24 - Former PacketCode ACP leftovers.** ACP was
+   removed on September 1. Keep `src/agents/packetcode.ts`: it serves the
+   supported PTY CLI. Retiring it in favour of the removed transport is no
+   longer an action item. The September 24 follow-up removes the hidden
+   cost-statusline opt-in and unused aggregate cost display calculations;
+   token displays and budget accounting remain. Disposition of the separate
+   packetcode-gui repository remains unverified and is not evidence that ACP
+   is a current capability.
 
 6. **RESOLVED 2026-08-27 - PacketRelay ownership and deployment.**
    PacketRelay (`D:\projects\packetrelay`) **belongs to PacketBench**. It is
@@ -137,6 +125,38 @@ Remote Agents relay architecture and code location are already decided: extend
 the standalone Rust service at `D:\projects\packetrelay`; keep shared schemas
 and the initial PWA under PacketBench's `remoteagents/` workspace. See
 [`dev/remoteagents/09-open-decisions.md`](./dev/remoteagents/09-open-decisions.md).
+
+## Existing-code completeness sweep — 2026-09-24
+
+**Source fixes and follow-up implemented; all eleven local gate categories
+passed, including the frozen frontend/browser rerun; package proof pending.** The three-team audit of
+`5035f98d` remains the before-fix record:
+[code-completeness-audit-2026-09-24.md](./docs/reports/code-completeness-audit-2026-09-24.md).
+The per-ID implementation and validation record is
+[existing-code-stabilization-2026-09-24.md](./dev/existing-code-stabilization-2026-09-24.md).
+
+- **F01–F06:** Workspace approval ownership, worktree PR identity, stale Git
+  refresh rejection, Monitor status, unsupported custom CLI creation and
+  unreachable Quality diagnostics addressed. F05/F06 use removal and honest
+  scope instead of adding features.
+- **B01–B08:** Parent/child tool authority, child usage, session task isolation,
+  custom-agent discovery, incomplete outcomes and per-chain depth addressed.
+  The follow-up adds native local project/network MCP with session-owned
+  configuration; native SSH explicitly refuses desktop MCP substitution.
+- **S01–S08:** Session/turn budget admission, reviewer recovery/durability,
+  restored settings, failed prompt delivery, backend cleanup and notification
+  preferences addressed. Integration review also fixed Stop during admission
+  and usage-write/completion ordering.
+- **C01/C02:** Confirmed unused code removed and current claims reconciled.
+  Compatibility aliases and disabled Remote Agents foundations retained.
+- **Still required:** build/install the next requested package, dogfood the
+  changed paths and complete available native/provider/hardware acceptance.
+  Paid Claude testing remains deferred for subscription cost.
+- **Accounting recovery:** failed/uncertain writes retain per-entry journals and
+  block further API requests until reconciled. First-observation threshold
+  alerts now notify under the existing preferences. Guardrails still cannot
+  cap an in-flight request's cost. Recovery procedure and physical storage
+  limits are in the implementation record.
 
 ## Remote Agents implementation
 
@@ -748,19 +768,14 @@ they are listed under *Landed since the review* at the end of this section so
 nobody re-opens them. What follows is only what is still open — each entry
 below was re-read in source on that date unless it says otherwise.
 
-- **P2 - Sub-agent permission holes.** All three halves still open.
-  `run_agent_loop` builds a read-only tool subset
-  (`core/tool_subagent.rs:82-88`) but then dispatches straight into
-  `tool_runtime::execute_tool(&call, …)` with no check that the returned call
-  is in that subset (`core/tool_subagent.rs:~228`), so the allowlist is
-  advisory. `spawn_subagent` is still absent from `RISKY_TOOLS`
-  (`commands/api_agent.rs:2005` — `["bash", "write_file", "edit_file"]`),
-  routing around DenyAll. And `execute_grep`'s `walk_dir` recurses on
-  `path.is_dir()` with no `symlink_metadata` check
-  (`core/tool_runtime.rs:939-941`), so `grep` still follows symlinks out of
-  the workspace while `read_file`/`write_file`/`edit_file` canonicalize and
-  reject them. Also still undecided: whether permission mode `Auto` should
-  remain the shipped default for local `bash`.
+- **RECONCILED 2026-09-24 — Sub-agent permission findings.** The old claim that
+  all three holes remain open is obsolete: the child loop now checks tool
+  membership and denies destructive tools, grep skips symlinks, and the default
+  permission mode is `AskForRisky`. The current concrete authority findings are
+  **B01** (custom-agent MCP selection/root snapshot loss) and **B02** (parent
+  in-process profile advertisement without dispatch membership validation),
+  tracked in the completeness sweep above. Do not reopen the corrected child
+  checks from this historical review description.
 - **P2 - Flight cost integrity.** Narrowed but still open. The permanent-
   inflation half is gone — `flightStore.hydrateFromBackend` no longer does a
   `max()` merge, it takes the backend value for any id the backend knows

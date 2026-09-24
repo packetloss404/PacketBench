@@ -38,12 +38,8 @@
 //! roughly a *third* of the spend the user actually authorised. Repricing is
 //! what stops the guardrail from locking the user out of their own app.
 //!
-//! By contrast, `costUsd` on persisted conversation messages currently has
-//! **no reader at all** — `aggregateConversationCost` recomputes from tokens
-//! and ignores the stored field, and the pills that used to render it were
-//! deleted. It is repriced here anyway (it is cheap, and a stored figure that
-//! disagrees with the table is a trap for the next reader), but nothing
-//! behavioural depends on it.
+//! Persisted conversation `costUsd` values are also repriced. Session budget
+//! admission uses these stamped prices as a fallback to the durable usage ledger.
 //!
 //! # Contract
 //!
@@ -178,6 +174,13 @@ fn run_reprice(ledger: &Path, conversations: &Path) -> Option<(RepriceStats, Rep
         // Already done. The per-record markers would make a rerun a no-op
         // anyway; this just avoids rescanning a large ledger every launch.
         info!(repriced_at = %at, "Historical cost reprice already applied; skipping");
+        return None;
+    }
+
+    // A retained write journal refers to exact ledger bytes and offsets.
+    // Startup migration must preserve that evidence until accounting is repaired.
+    if let Err(error) = usage::read_usage_ledger(ledger) {
+        warn!(%error, "Historical cost reprice deferred until usage accounting is reconciled");
         return None;
     }
 
@@ -446,8 +449,8 @@ fn reprice_ledger(path: &Path, now_iso: &str, today: &str) -> Result<RepriceStat
 ///
 /// The model lives once per conversation (`AgentConversation.model`), not per
 /// message; a conversation whose model was switched mid-thread therefore
-/// reprices every turn at the latest model — the same assumption the live
-/// estimator and `aggregateConversationCost` already make.
+/// reprices every turn at the latest model. This is a historical migration
+/// limitation; current session admission prefers already stamped turn prices.
 ///
 /// Only top-level `*.json` files are considered — the same single-level,
 /// files-only shape `load_conversations` reads, so the pass sees exactly the
@@ -1351,6 +1354,39 @@ mod tests {
         );
         let rows = read_lines(&ledger);
         assert_eq!(rows[0]["cost_usd"].as_f64().unwrap(), 30.0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn startup_reprice_preserves_unresolved_usage_journal_offsets() {
+        let dir = tmpdir("pending-usage");
+        let _guard = crate::core::storage::redirect_data_dir_for_test(dir.clone());
+        let ledger = dir.join("usage.jsonl");
+        let line = format!(
+            "{}\n",
+            ledger_line(
+                "claude-opus-4-8",
+                "2026-06-01T10:00:00Z",
+                1_000_000,
+                1_000_000,
+                90.0
+            )
+        );
+        std::fs::write(&ledger, &line).unwrap();
+        let pending = dir.join("usage-pending");
+        std::fs::create_dir(&pending).unwrap();
+        let journal = serde_json::to_vec(&json!({ "prior_len": 0, "line": line })).unwrap();
+        std::fs::write(pending.join("pending.json"), &journal).unwrap();
+
+        assert!(run_reprice(&ledger, &dir.join("conversations")).is_none());
+        assert_eq!(std::fs::read_to_string(&ledger).unwrap(), line);
+        assert_eq!(
+            std::fs::read(pending.join("pending.json")).unwrap(),
+            journal
+        );
+        assert!(crate::core::storage::load_state()
+            .cost_reprice_v1_at
+            .is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "packetbench"
-version = "0.14.7"
+version = "0.14.8"
 description = "PacketBench — Agent Development Environment (IDE + multi-agent orchestration)"
 authors = ["PacketBench"]
 edition = "2021"
@@ -57,7 +57,8 @@ tauri-plugin-window-state = "2"
 # N3 — PacketBench-as-MCP-server (Streamable HTTP, loopback-only). `rmcp` is the
 # official Rust MCP SDK; axum hosts the transport service; tokio-util provides
 # the CancellationToken used for graceful shutdown.
-rmcp = { version = "2", features = ["transport-streamable-http-server"] }
+rmcp = { version = "2", features = ["transport-streamable-http-server", "client", "transport-streamable-http-client"] }
+sse-stream = "0.2"
 axum = "0.8"
 tokio-util = "0.7"
 tempfile = "3"

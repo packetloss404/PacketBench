@@ -122,6 +122,8 @@ export function TerminalPane({
   });
 
   useApprovalShortcuts({
+    workspaceId,
+    containerRef: termContainerRef,
     showApproval,
     paneId,
     xtermRef,

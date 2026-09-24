@@ -22,9 +22,9 @@ interface AgentStreamingState {
    * or when the turn completes. */
   thinkingStream: Map<string, string>;
   /** A3: Codex MultiAgentV2 sub-agent token totals, keyed by
-   * conversationId → address (`/root/agent_a` etc). `aggregateConversationCost`
-   * rolls these into the conversation total so multi-agent flights don't
-   * under-count against the budget guardrails. */
+   * conversationId → address (`/root/agent_a` etc). `aggregateConversationTokens`
+   * includes these snapshots in the token readout. Durable budget costs are
+   * tracked separately in the usage ledger. */
   subAgentTokens: Map<string, Record<string, SubAgentTokenBucket>>;
 
   /** Append reasoning delta. Called from the `api-agent:thinking` listener. */
@@ -34,16 +34,10 @@ interface AgentStreamingState {
   clearThinking: (conversationId: string) => void;
   /** Replace a sub-agent bucket. Codex emits cumulative totals — replace,
    * not increment. */
-  setSubAgentBucket: (
-    conversationId: string,
-    address: string,
-    bucket: SubAgentTokenBucket,
-  ) => void;
+  setSubAgentBucket: (conversationId: string, address: string, bucket: SubAgentTokenBucket) => void;
 
   getThinking: (conversationId: string) => string;
-  getSubAgentTokens: (
-    conversationId: string,
-  ) => Record<string, SubAgentTokenBucket> | undefined;
+  getSubAgentTokens: (conversationId: string) => Record<string, SubAgentTokenBucket> | undefined;
 
   clearConversation: (conversationId: string) => void;
 }

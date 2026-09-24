@@ -72,6 +72,8 @@ export function PromptLibrary({ onClose }: PromptLibraryProps) {
   const [editCategory, setEditCategory] = useState<PromptTemplate["category"]>("general");
   const [isCreating, setIsCreating] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PromptTemplate | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const filtered = templates.filter((t) => {
     if (activeCategory !== "all" && t.category !== activeCategory) return false;
@@ -119,14 +121,18 @@ export function PromptLibrary({ onClose }: PromptLibraryProps) {
     navigator.clipboard.writeText(content);
   }
 
-  function handleSendTerminal(id: string) {
-    sendToTerminal(id);
-    onClose();
-  }
-
-  function handleSendScout(id: string) {
-    void sendToAgentChat(id);
-    onClose();
+  async function handleSend(id: string, target: "terminal" | "scout") {
+    if (sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      await (target === "terminal" ? sendToTerminal(id) : sendToAgentChat(id));
+      onClose();
+    } catch (error) {
+      setSendError(`${String(error)} Your template is kept here. Check the destination before retrying to avoid sending twice.`);
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -137,6 +143,7 @@ export function PromptLibrary({ onClose }: PromptLibraryProps) {
       width="w-[600px]"
     >
       <div className="p-4 space-y-3">
+        {sendError && <p role="alert" className="text-xs text-accent-red">{sendError}</p>}
         {/* Search + New */}
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -257,7 +264,8 @@ export function PromptLibrary({ onClose }: PromptLibraryProps) {
                   </p>
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => handleSendTerminal(t.id)}
+                      onClick={() => void handleSend(t.id, "terminal")}
+                      disabled={sending}
                       className="flex items-center gap-1 px-2 py-0.5 text-ui text-text-muted hover:text-accent-green bg-bg-secondary rounded transition-colors"
                       title="Send to Terminal — writes this prompt to the active PTY session."
                     >
@@ -265,7 +273,8 @@ export function PromptLibrary({ onClose }: PromptLibraryProps) {
                       Terminal
                     </button>
                     <button
-                      onClick={() => handleSendScout(t.id)}
+                      onClick={() => void handleSend(t.id, "scout")}
+                      disabled={sending}
                       className="flex items-center gap-1 px-2 py-0.5 text-ui text-text-muted hover:text-accent-cyan bg-bg-secondary rounded transition-colors"
                       title="Send to Scout — opens a read-only agent chat with this prompt and project memory."
                     >

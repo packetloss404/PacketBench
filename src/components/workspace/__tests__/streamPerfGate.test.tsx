@@ -1,32 +1,7 @@
 /**
- * N-stream perf gate (P3-S3) — recorded measurement + the profiler/isolation
- * assertion the ruling requires.
- *
- * ─────────────────────────── HARNESS (machine + method) ───────────────────────────
- * Ruling: "4 concurrent streams in a 2×2 mosaic hold p95 frame < 16 ms on
- * documented reference hardware." A headless test cannot time a real browser
- * paint, so the harness measures the load-bearing per-frame CPU work the
- * `streamCoalescer` was built to bound: the coalesced store write that lands one
- * conversation's buffered deltas by replacing ONLY that conversation's entry in
- * the conversations array (modeled byte-for-byte on the apply in
- * `src/stores/apiAgentListeners.ts`). One "frame" = all four streams' coalesced
- * writes applied back-to-back (worst case: every tile flushes on the same frame).
- *
- *   Reference hardware (recorded 2026-07-08):
- *     - Machine  : Apple M5 Pro, 15 cores, macOS 26.5.1 (25F80)
- *     - Runtime  : Node v26.4.0, vitest 4.x, jsdom environment
- *     - Method   : 300 frames × 4 concurrent streams; each stream appends a
- *                  ~40-char delta to a transcript growing to ~4 k chars; p95 of
- *                  per-frame wall time via performance.now().
- *     - Result   : p95 per-frame apply well under the 16 ms budget (typically
- *                  < 1 ms on this machine). The gate PASSES; the 4 Hz fallback
- *                  (`streamFallbackScheduler.ts`) stays dormant but is proven in
- *                  `src/lib/__tests__/streamFallbackScheduler.test.ts`.
- *
- * The numeric assertion below uses a generous ceiling so it documents the gate
- * without flaking on slower CI; the true measured p95 is logged for the record.
- * If it ever exceeds 16 ms, the ruled fallback engages and the gate re-runs.
- * ───────────────────────────────────────────────────────────────────────────────────
+ * Synthetic store-write timing and subscriber-isolation checks.
+ * These exercise four conversation updates; they do not measure browser paint,
+ * native frame rate, real provider streaming, or an automatic fallback.
  */
 import { render } from "@testing-library/react";
 import { act, Profiler } from "react";
@@ -83,7 +58,13 @@ function streamingConv(id: string): AgentConversation {
     status: "active",
     messages: [
       { id: `${id}-u`, role: "user", content: "go", timestamp: 1 } as AgentMessage,
-      { id: `${id}-a`, role: "assistant", content: "", timestamp: 2, isStreaming: true } as AgentMessage,
+      {
+        id: `${id}-a`,
+        role: "assistant",
+        content: "",
+        timestamp: 2,
+        isStreaming: true,
+      } as AgentMessage,
     ],
     sessionId: id,
     rawOutput: "",
@@ -123,8 +104,8 @@ beforeEach(() => {
   useAgentTaskStore.setState({ conversations: [] });
 });
 
-describe("N-stream perf gate — recorded measurement", () => {
-  it("holds p95 per-frame coalesced-write time under the 16 ms budget for 4 concurrent streams", () => {
+describe("Synthetic conversation update performance", () => {
+  it("keeps p95 synthetic four-conversation update time below 16 ms", () => {
     const ids = ["s1", "s2", "s3", "s4"];
     useAgentTaskStore.setState({ conversations: ids.map(streamingConv) });
 
@@ -142,7 +123,7 @@ describe("N-stream perf gate — recorded measurement", () => {
     // Record for the run log (visible with --reporter=verbose / on failure).
     console.log(`[perf-gate] p95 per-frame apply (4 streams): ${measured.toFixed(3)} ms`);
 
-    // Generous ceiling: documents the < 16 ms gate without flaking on slow CI.
+    // CPU-work regression bound for this synthetic workload.
     expect(measured).toBeLessThan(16);
 
     // Sanity: every stream actually accumulated its full transcript in order.

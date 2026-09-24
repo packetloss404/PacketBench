@@ -2771,6 +2771,7 @@ export async function githubCreatePr(
   head: string,
   base: string,
   draft?: boolean,
+  connectionId?: string,
 ): Promise<string> {
   return invoke<string>("github_create_pr", {
     owner,
@@ -2780,6 +2781,7 @@ export async function githubCreatePr(
     head,
     base,
     draft: draft ?? null,
+    connectionId: connectionId ?? null,
   });
 }
 
@@ -4083,47 +4085,8 @@ export async function getProviderLaunchStats(): Promise<ProviderLaunchStats> {
   return invoke<ProviderLaunchStats>("get_provider_launch_stats");
 }
 
-// === v0.8.8 quality ai =====================================================
-//
-// AI-powered actions for the Code Quality modal. Both commands kick off a
-// one-shot `claude-oauth` sidecar session in the backend and return the
-// freshly minted `sessionId`. The caller subscribes to the existing
-// `api-agent:chunk:<sessionId>` / `api-agent:done:<sessionId>` /
-// `api-agent:error:<sessionId>` events to receive streamed chunks and
-// detect completion. See `QualityAIExplanation.tsx` and `QualityAISummary.tsx`
-// for the canonical consumer pattern (mirrors `PRReviewPanel.tsx`).
-
-/**
- * Start a one-shot AI explanation for a single diagnostic. Returns the
- * `sessionId` to subscribe to; the call itself does not wait for the
- * assistant turn to finish.
- *
- * Callers SHOULD pre-allocate `sessionIdOverride` (e.g.
- * `"quality-ai-explain-" + crypto.randomUUID()`) and attach the
- * `api-agent:chunk|done|error:<sid>` listeners BEFORE invoking, so the
- * sidecar can't emit chunks before subscription.
- *
- * `errorId` is an opaque UI handle the backend logs for observability
- * and otherwise ignores. `line` / `column` are 1-indexed; pass `0` when
- * the diagnostic didn't carry a value.
- */
-export async function codeQualityAiExplain(
-  errorId: string,
-  errorText: string,
-  filePath: string,
-  line: number,
-  column: number,
-  sessionIdOverride?: string,
-): Promise<string> {
-  return invoke<string>("code_quality_ai_explain", {
-    errorId,
-    errorText,
-    filePath,
-    line,
-    column,
-    sessionIdOverride: sessionIdOverride ?? null,
-  });
-}
+// Code Quality summaries use the configured auxiliary API route and stream
+// api-agent:{chunk,done,error}:<sessionId> events to QualityAISummary.
 
 /**
  * Start a one-shot AI summary of every failing check in a run. Returns

@@ -1,5 +1,3 @@
-import type { AgentConversation } from "@/types/agent-conversation";
-import { useAgentStreamingStore } from "@/stores/agentStreamingStore";
 import { calculateCostUsd, ratesForModel, type PricedAt } from "@/lib/modelPricing";
 
 /**
@@ -7,8 +5,7 @@ import { calculateCostUsd, ratesForModel, type PricedAt } from "@/lib/modelPrici
  *
  * NOTE (2026-07-31): the user-facing cost REPORTING surface was removed. What
  * remains here is measurement, not display — `estimateTurnCostUsd` stamps
- * `costUsd` on assistant messages at receipt time and `aggregateConversationCost`
- * still supplies token totals. The dollar figures feed the budget guardrails
+ * `costUsd` on assistant messages at receipt time. The dollar figures feed the budget guardrails
  * (`lib/costGuardrails.ts`), which stop runaway agents. Do not add formatting
  * helpers here; there is no dashboard to format for any more.
  *
@@ -18,8 +15,7 @@ import { calculateCostUsd, ratesForModel, type PricedAt } from "@/lib/modelPrici
  * that table is gone and must not come back. Add rates to the shared JSON.
  *
  * Every cache class is priced at its own published rate (read / 5-minute write
- * / 1-hour write) rather than one blended ratio, because cache creation is the
- * most expensive token class and is about to become non-zero (CE6).
+ * / 1-hour write) rather than one blended ratio.
  */
 
 /** Raw per-turn token counts as the listeners record them. */
@@ -72,7 +68,8 @@ function costForTurn(model: string | undefined, tokens: TurnTokens, at?: PricedA
 
 /**
  * Estimate the USD cost of a single turn. Returns `null` when the model is
- * unknown so callers can hide the cost rather than show a false $0.00.
+ * unknown so budget guardrails can preserve missing pricing rather than
+ * treating it as zero spend.
  *
  * Used to stamp `costUsd` on assistant messages at receipt time
  * (apiAgentListeners) — no per-message IPC.
@@ -83,45 +80,4 @@ export function estimateTurnCostUsd(
   at?: PricedAt,
 ): number | null {
   return costForTurn(model, tokens, at);
-}
-
-/**
- * Sum tokens across a conversation and estimate total USD cost.
- *
- * Each message is priced at the rates in effect on ITS OWN timestamp, so a
- * conversation spanning a published rate change (e.g. Claude Sonnet 5 leaving
- * introductory pricing on 2026-09-01) is not retroactively repriced.
- *
- * Returns `{ totalTokens, estCost }`; `estCost` is `null` when the model is
- * unknown (so callers can hide the pill).
- */
-export function aggregateConversationCost(
-  conv: AgentConversation,
-): { totalTokens: number; estCost: number | null } {
-  let totalTokens = 0;
-  let estCost = 0;
-  const priced = ratesForModel(conv.model) !== null;
-
-  for (const m of conv.messages ?? []) {
-    totalTokens += (m.inputTokens ?? 0) + (m.outputTokens ?? 0) + (m.reasoningTokens ?? 0);
-    if (!priced) continue;
-    estCost += costForTurn(conv.model, m, m.timestamp) ?? 0;
-  }
-
-  // A3: roll Codex MultiAgentV2 sub-agent buckets into the totals so
-  // multi-agent flights account for their children's spend. Without this
-  // the conversation looks artificially cheap (root totals only) while
-  // the user actually paid for N sub-agent threads. Buckets live in
-  // agentStreamingStore (ephemeral; reset between sessions) and carry no
-  // timestamp, so they price at current rates.
-  const buckets = useAgentStreamingStore.getState().getSubAgentTokens(conv.id);
-  if (buckets) {
-    for (const bucket of Object.values(buckets)) {
-      totalTokens += bucket.inputTokens + bucket.outputTokens + bucket.reasoningTokens;
-      if (!priced) continue;
-      estCost += costForTurn(conv.model, bucket) ?? 0;
-    }
-  }
-
-  return { totalTokens, estCost: priced ? estCost : null };
 }

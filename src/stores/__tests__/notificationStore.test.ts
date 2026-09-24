@@ -1,8 +1,36 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useNotificationStore } from "../notificationStore";
+import { notifyAttemptCompleted, notifyAttemptFailed } from "@/lib/notifications";
 
 const STORAGE_KEY = "packetbench:notifications";
 const store = () => useNotificationStore.getState();
+
+describe("Flight notification preferences", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it("honors global/event preferences and the focus policy before delivering", async () => {
+    const notification = vi.fn(function () {});
+    Object.defineProperty(notification, "permission", { value: "granted" });
+    vi.stubGlobal("Notification", notification);
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    useNotificationStore.setState({ enabled: false, onSessionComplete: true, onSessionError: true, onlyWhenUnfocused: false });
+    await notifyAttemptCompleted("flight", "attempt");
+    await notifyAttemptFailed("flight", "attempt");
+    expect(notification).not.toHaveBeenCalled();
+    useNotificationStore.setState({ enabled: true, onSessionComplete: false, onSessionError: false });
+    await notifyAttemptCompleted("flight", "attempt");
+    await notifyAttemptFailed("flight", "attempt");
+    expect(notification).not.toHaveBeenCalled();
+    useNotificationStore.setState({ onSessionComplete: true, onSessionError: true, onlyWhenUnfocused: true });
+    await notifyAttemptCompleted("flight", "attempt");
+    expect(notification).not.toHaveBeenCalled();
+    useNotificationStore.setState({ onlyWhenUnfocused: false });
+    await notifyAttemptCompleted("flight", "attempt");
+    await notifyAttemptFailed("flight", "attempt");
+    await notifyAttemptCompleted("flight", "attempt");
+    expect(notification).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("notificationStore", () => {
   beforeEach(() => {

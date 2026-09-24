@@ -93,9 +93,10 @@ export async function notifyAttemptCompleted(
   flightTitle: string,
   attemptLabel: string
 ): Promise<void> {
-  if (document.visibilityState !== "hidden") return;
+  if (!useNotificationStore.getState().onSessionComplete) return;
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
+  if (!shouldNotify(`attempt-completed-${flightTitle}-${attemptLabel}`)) return;
 
   new Notification("Attempt ready", {
     body: `${flightTitle}: ${attemptLabel} finished — review in Flight Deck`,
@@ -108,9 +109,10 @@ export async function notifyAttemptFailed(
   attemptLabel: string,
   errorMsg?: string
 ): Promise<void> {
-  if (document.visibilityState !== "hidden") return;
+  if (!useNotificationStore.getState().onSessionError) return;
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
+  if (!shouldNotify(`attempt-failed-${flightTitle}-${attemptLabel}`)) return;
 
   const body = errorMsg
     ? `${flightTitle}: ${attemptLabel} failed — ${errorMsg}`

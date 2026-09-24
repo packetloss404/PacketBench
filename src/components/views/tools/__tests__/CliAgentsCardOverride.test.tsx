@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { CliCatalogCard } from "../CliAgentsCard";
+import { CliAgentsCard, CliCatalogCard } from "../CliAgentsCard";
 import type { CliCatalogEntry } from "@/lib/cli-catalog";
 
 /**
@@ -88,4 +88,34 @@ describe("CliCatalogCard manual-path override", () => {
     renderCard({ manualPath: null });
     expect(screen.queryByTitle("Clear manual path override")).toBeNull();
   });
+});
+
+it("retains saved custom entries while removing unsupported creation", async () => {
+  const { useAgentStore } = await import("@/stores/agentStore");
+  const tauri = await import("@/lib/tauri");
+  const detect = vi.spyOn(tauri, "detectCliCatalog").mockResolvedValue([]);
+  const original = useAgentStore.getState().agents;
+  const saved = {
+    ...original[0],
+    id: "custom-legacy",
+    name: "Saved legacy CLI",
+    command: "legacy-cli",
+    isBuiltin: false,
+  };
+  useAgentStore.setState({ agents: [...original, saved] });
+  try {
+    render(<CliAgentsCard />);
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/ }));
+    expect(screen.getByText(/Custom CLI launching is not supported/)).toBeInTheDocument();
+    expect(screen.getByText("Saved legacy CLI")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Custom$/ })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Delete custom CLI agent Saved legacy CLI" }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(detect).toHaveBeenCalled());
+    expect(useAgentStore.getState().agents.find((agent) => agent.id === saved.id)).toEqual(saved);
+  } finally {
+    useAgentStore.setState({ agents: original });
+    detect.mockRestore();
+  }
 });

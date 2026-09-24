@@ -4,7 +4,7 @@
  * engine, so a commit is never blind. This covers the row-click → correct
  * file diff path; DiffRows/hunkDiff are consumed UNMODIFIED.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -26,21 +26,18 @@ vi.mock("@/lib/tauri", async (importActual) => {
 });
 
 vi.mock("@/stores/serverStore", () => ({
-  useServerStore: (selector: (s: { servers: unknown[] }) => unknown) =>
-    selector({ servers: [] }),
+  useServerStore: (selector: (s: { servers: unknown[] }) => unknown) => selector({ servers: [] }),
 }));
 vi.mock("@/stores/flightStore", () => ({
-  useFlightStore: (
-    selector: (s: { flights: unknown[]; setActiveFlight: () => void }) => unknown,
-  ) => selector({ flights: [], setActiveFlight: vi.fn() }),
+  useFlightStore: (selector: (s: { flights: unknown[]; setActiveFlight: () => void }) => unknown) =>
+    selector({ flights: [], setActiveFlight: vi.fn() }),
 }));
 vi.mock("@/stores/appStore", () => ({
   useAppStore: (selector: (s: { setActiveView: () => void }) => unknown) =>
     selector({ setActiveView: vi.fn() }),
 }));
 vi.mock("@/stores/issueStore", () => ({
-  useIssueStore: (selector: (s: { issues: unknown[] }) => unknown) =>
-    selector({ issues: [] }),
+  useIssueStore: (selector: (s: { issues: unknown[] }) => unknown) => selector({ issues: [] }),
 }));
 
 import { GitDashboard } from "@/components/workspace/GitDashboard";
@@ -55,6 +52,33 @@ describe("GitDashboard clickable diff rows", () => {
     mocks.readFileForDiff.mockResolvedValue("line1\nline2\n");
   });
 
+  it("drops delayed repository A results after switching to B", async () => {
+    let resolveOld!: (value: string) => void;
+    mocks.getGitStatus.mockImplementation((path: string) =>
+      path === "/old"
+        ? new Promise<string>((resolve) => {
+            resolveOld = resolve;
+          })
+        : Promise.resolve(" M new.ts\n"),
+    );
+    const view = render(<GitDashboard projectPath="/old" workspaceId="old" />);
+    view.rerender(<GitDashboard projectPath="/new" workspaceId="new" />);
+    await screen.findByTitle("new.ts — click to view diff");
+    await act(async () => {
+      resolveOld(" M old.ts\n");
+    });
+    expect(screen.queryByTitle("old.ts — click to view diff")).toBeNull();
+    fireEvent.click(screen.getByTitle("new.ts — click to view diff"));
+    await waitFor(() => expect(mocks.getFileHeadContent).toHaveBeenCalledWith("/new", "new.ts"));
+  });
+  it("clears old rows immediately while the new repository is loading", async () => {
+    const view = render(<GitDashboard projectPath="/old" />);
+    await screen.findByTitle("src/foo.ts — click to view diff");
+    mocks.getGitStatus.mockImplementation(() => new Promise(() => {}));
+    view.rerender(<GitDashboard projectPath="/new" />);
+    expect(screen.queryByTitle("src/foo.ts — click to view diff")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
   it("opens the diff for the clicked file and renders DiffRows output", async () => {
     render(<GitDashboard projectPath="/repo" />);
 
@@ -82,8 +106,6 @@ describe("GitDashboard clickable diff rows", () => {
     fireEvent.click(row);
     await waitFor(() => expect(screen.getByLabelText("Close diff")).toBeTruthy());
     fireEvent.click(screen.getByLabelText("Close diff"));
-    await waitFor(() =>
-      expect(screen.queryByLabelText("Close diff")).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByLabelText("Close diff")).toBeNull());
   });
 });

@@ -60,11 +60,11 @@ describe("routingStore auxiliary routing", () => {
   });
 
   it("persists pins across a reload and re-pushes them on boot", () => {
-    useRoutingStore.getState().setAuxMapping("code-quality-explain", "openrouter", null);
+    useRoutingStore.getState().setAuxMapping("code-quality-summarize", "openrouter", null);
 
     const stored = JSON.parse(localStorage.getItem("packetbench:routing-aux") ?? "[]");
     expect(stored).toContainEqual({
-      taskClass: "code-quality-explain",
+      taskClass: "code-quality-summarize",
       provider: "openrouter",
       model: null,
     });
@@ -72,7 +72,32 @@ describe("routingStore auxiliary routing", () => {
     setAuxRoutingOverridesMock.mockClear();
     useRoutingStore.getState().syncAuxRouting();
     expect(setAuxRoutingOverridesMock).toHaveBeenCalledWith({
-      "code-quality-explain": { provider: "openrouter", model: null },
+      "code-quality-summarize": { provider: "openrouter", model: null },
+    });
+  });
+
+  it("ignores the retired diagnostic route while retaining the saved run-summary route", async () => {
+    localStorage.setItem(
+      "packetbench:routing-aux",
+      JSON.stringify([
+        { taskClass: "code-quality-explain", provider: "anthropic", model: "legacy" },
+        { taskClass: "code-quality-summarize", provider: "openrouter", model: "saved-summary" },
+      ]),
+    );
+    vi.resetModules();
+    const { useRoutingStore: reloaded } = await import("@/stores/routingStore");
+    expect(
+      reloaded
+        .getState()
+        .auxMappings.some((mapping) => String(mapping.taskClass) === "code-quality-explain"),
+    ).toBe(false);
+    expect(reloaded.getState().resolveForAuxTask("code-quality-summarize")).toEqual({
+      provider: "openrouter",
+      model: "saved-summary",
+    });
+    reloaded.getState().syncAuxRouting();
+    expect(setAuxRoutingOverridesMock).toHaveBeenLastCalledWith({
+      "code-quality-summarize": { provider: "openrouter", model: "saved-summary" },
     });
   });
 

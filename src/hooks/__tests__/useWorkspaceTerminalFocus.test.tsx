@@ -7,7 +7,7 @@ import { useLayoutStore } from "@/stores/layoutStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTerminalFocus } from "@/hooks/useTerminalFocus";
 import { useWorkspacePaneNavigation } from "@/hooks/useWorkspacePaneNavigation";
-import { useApprovalShortcuts, resetApprovalRegistry } from "@/hooks/useApprovalShortcuts";
+import { useApprovalShortcuts } from "@/hooks/useApprovalShortcuts";
 import { registerModal, resetModalStack } from "@/lib/modalStack";
 import type { Workspace } from "@/types/workspace";
 import type { MosaicNode } from "@/types/mosaic";
@@ -81,6 +81,8 @@ function Pane({
     showApproval: approval,
   });
   useApprovalShortcuts({
+    workspaceId,
+    containerRef,
     paneId: id,
     showApproval: approval,
     xtermRef,
@@ -162,7 +164,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   resetModalStack();
-  resetApprovalRegistry();
   vi.restoreAllMocks();
 });
 

@@ -31,8 +31,8 @@ vi.mock("@/lib/sessionStatus", () => ({
   useConversationAttention: () => new Map([["conv-stopping", "working"]]),
 }));
 
-vi.mock("@/lib/conversationCost", () => ({
-  aggregateConversationCost: () => ({ totalTokens: 0 }),
+vi.mock("@/lib/conversationTokens", () => ({
+  aggregateConversationTokens: () => 0,
 }));
 
 import { RunningAgentsChip } from "@/components/layout/RunningAgentsChip";

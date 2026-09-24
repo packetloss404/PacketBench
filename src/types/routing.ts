@@ -34,7 +34,7 @@ export interface RouteMapping {
 //
 // Distinct from the `TaskType` routing above, which assigns a coding AGENT to a
 // workflow role. These are the short, single-shot generation tasks PacketBench
-// runs on the user's behalf: parse a spec, explain a lint failure, write PR
+// runs on the user's behalf: parse a spec, summarize failed checks, write PR
 // prose. They do not need a frontier model and they are never routed through a
 // Claude / ChatGPT subscription login — see `src-tauri/src/core/aux_llm.rs`.
 //
@@ -42,7 +42,6 @@ export interface RouteMapping {
 
 export type AuxTaskClass =
   | "spec-import"
-  | "code-quality-explain"
   | "code-quality-summarize"
   | "pr-description"
   | "pr-review"
@@ -62,7 +61,6 @@ export const ALL_AUX_TASK_CLASSES: AuxTaskClass[] = [
   "spec-import",
   "spec-to-flight",
   "spec-to-tickets",
-  "code-quality-explain",
   "code-quality-summarize",
   "pr-description",
   "pr-review",
@@ -81,10 +79,6 @@ export const AUX_TASK_CLASS_LABELS: Record<AuxTaskClass, { label: string; descri
   "spec-import": { label: "Spec import", description: "Spec / PRD → issue drafts" },
   "spec-to-flight": { label: "Spec → flight plan", description: "Spec text → structured flight" },
   "spec-to-tickets": { label: "Spec → tickets", description: "Spec text → ticket array" },
-  "code-quality-explain": {
-    label: "Explain diagnostic",
-    description: "Code Quality error explanations",
-  },
   "code-quality-summarize": {
     label: "Summarize checks",
     description: "Code Quality run summaries",
@@ -140,7 +134,7 @@ export const AUX_TASK_CLASS_CAVEATS: Partial<Record<AuxTaskClass, string>> = {
  */
 export const AUX_TASK_CLASS_GROUPS: { label: string; classes: AuxTaskClass[] }[] = [
   { label: "Spec & issues", classes: ["spec-import", "spec-to-flight", "spec-to-tickets"] },
-  { label: "Code Quality", classes: ["code-quality-explain", "code-quality-summarize"] },
+  { label: "Code Quality", classes: ["code-quality-summarize"] },
   {
     label: "GitHub",
     classes: [

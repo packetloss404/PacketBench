@@ -13,10 +13,7 @@ vi.mock("@/lib/tauri", () => ({
   saveServersSlice: vi.fn(),
 }));
 
-import {
-  capabilitiesFor,
-  type CapabilityConversation,
-} from "@/lib/agentCapabilities";
+import { capabilitiesFor, type CapabilityConversation } from "@/lib/agentCapabilities";
 import {
   MODE_ORDER,
   SANDBOX_MODE_ORDER,
@@ -158,27 +155,14 @@ describe("capabilitiesFor — composer inputs", () => {
 
 describe("capabilitiesFor — context & accounting", () => {
   it("resolves the model's context window through the shared helper", () => {
-    expect(capabilitiesFor(conv({ model: "claude-opus-4-8" })).contextWindow).toBe(
-      1_000_000,
-    );
+    expect(capabilitiesFor(conv({ model: "claude-opus-4-8" })).contextWindow).toBe(1_000_000);
     // Unknown ids still resolve to the directional default — the ring renders.
     expect(capabilitiesFor(conv({ model: "who-knows" })).contextWindow).toBe(200_000);
   });
 
   it("reports usage for api sessions only", () => {
     expect(capabilitiesFor(conv()).reportsUsage).toBe(true);
-    expect(
-      capabilitiesFor(conv({ mode: "pty", agent: "claude-code" })).reportsUsage,
-    ).toBe(false);
-  });
-
-  it("reports cost only for models with published rates", () => {
-    expect(capabilitiesFor(conv({ model: "claude-opus-4-8" })).reportsCost).toBe(true);
-    // A local Ollama tag has no entry in shared/model-pricing.json, so a dollar
-    // figure would be a fiction.
-    expect(
-      capabilitiesFor(conv({ agent: "api-ollama", model: "llama3.3:70b" })).reportsCost,
-    ).toBe(false);
+    expect(capabilitiesFor(conv({ mode: "pty", agent: "claude-code" })).reportsUsage).toBe(false);
   });
 });
 
@@ -202,9 +186,7 @@ describe("capabilitiesFor — environment", () => {
 
   it("reports MCP only when sources or read errors were recorded", () => {
     expect(capabilitiesFor(conv()).mcp).toBe(false);
-    expect(
-      capabilitiesFor(conv({ mcpSources: { sources: [], readErrors: [] } })).mcp,
-    ).toBe(false);
+    expect(capabilitiesFor(conv({ mcpSources: { sources: [], readErrors: [] } })).mcp).toBe(false);
     expect(
       capabilitiesFor(
         conv({
@@ -231,14 +213,11 @@ describe("capabilitiesFor — environment", () => {
     // This IS the `agent.startsWith("api-")` branch AgentHeaderBadges carried.
     // A stored conversation on the retired Codex id must not lose its badge,
     // which is why this does not go through the provider catalog.
-    expect(capabilitiesFor(conv({ agent: "api-openai-codex" })).usesProviderCredential)
-      .toBe(true);
+    expect(capabilitiesFor(conv({ agent: "api-openai-codex" })).usesProviderCredential).toBe(true);
     // Same for the retired ACP transport.
-    expect(capabilitiesFor(conv({ agent: "api-packetcode" })).usesProviderCredential)
-      .toBe(true);
+    expect(capabilitiesFor(conv({ agent: "api-packetcode" })).usesProviderCredential).toBe(true);
     expect(
-      capabilitiesFor(conv({ agent: "claude-code", mode: "pty" }))
-        .usesProviderCredential,
+      capabilitiesFor(conv({ agent: "claude-code", mode: "pty" })).usesProviderCredential,
     ).toBe(false);
   });
 });

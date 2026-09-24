@@ -1,6 +1,6 @@
 # PacketBench Roadmap
 
-Last reconciled: 2026-09-12
+Last reconciled: 2026-09-24
 
 PacketBench is a local-first Agent Development Environment and remains the
 flagship control surface. The desktop owns local providers, models, secrets,
@@ -9,6 +9,11 @@ Workspaces, MCP configuration, permissions, Memory, and execution.
 **Workspaces remain the primary daily working surface.** Prioritize reliable
 local/SSH CLI panes, keyboard focus, session recovery, saved arrangements and
 multi-pane performance. Agents, Flight Deck and Monitor support that workflow.
+
+**Current direction: no feature expansion.** Finish the existing-code audit
+findings and dogfood the resulting build before resuming the expansion items
+below. The September 24 source audit is tracked in `backlog.md`; historical
+acceptance results do not validate these newer edits.
 
 There is no shipped remote supervision surface today. Syndicate separated from
 the Packet\* product family on 2026-08-27 and its execution-target integration
@@ -93,7 +98,8 @@ only product direction and ordering.
   deployment path were removed on 2026-08-28, and the service is live on
   **Railway**.
 
-The remaining bottleneck is broader packaged/provider/hardware acceptance.
+The current work is existing-code stabilization followed by broader
+packaged/provider/hardware acceptance.
 The consolidation's 0.14.1 NSIS upgrade and real OpenSSH handshake/project-trust
 checks passed on September 8. The broader follow-up verified local Ollama turns,
 found and corrected Monitor lifecycle defects in 0.14.3, and recorded specific
@@ -121,7 +127,7 @@ protocol requirements and `CHANGELOG.md` for precise installed-build evidence.
 
 ## Next
 
-After the immediately available proof gates:
+Deferred until existing-code stabilization and dogfooding are complete:
 
 1. Implement the chosen Undo scope.
 2. Close bounded Settings and main-shell MS4 work.
@@ -189,16 +195,13 @@ beta.
 
 ## Release path
 
-1. Continue interactive acceptance of the installed 0.14.1 consolidation
-   package. Its installer/payload and real OpenSSH protocol/trust checks are
-   complete; preserve their scope and the older version-specific evidence.
-2. Close available real-host, microphone, provider, MCP, and cross-product
-   evidence gates.
-3. Resolve and implement Undo plus bounded Settings/MS4 work.
-4. Remote Agents: implement Sprint 1 host presence on PacketRelay while the
-   production feature remains disabled/fail-closed. See
-   `dev/remoteagents/README.md`.
-5. Add hosted CI, signing, notarization, and updater infrastructure once the
-   signing deferral's trigger fires.
-6. Expand E2E coverage across session creation, API-agent launch, Remote Agents
-   approvals, and Flight attempt lifecycle.
+1. Finish the September 24 existing-code findings and pass the local quality
+   gates. Keep the dated audit as the before-fix evidence.
+2. Build and install the next explicitly requested version, then dogfood
+   Workspaces, approval focus, Git actions, prompt delivery and restored chats.
+   The last recorded installed version is 0.14.6; 0.14.7 was built separately.
+3. Close available real-host, microphone, provider, MCP, and cross-product
+   evidence gates against that exact package. Paid Claude testing remains
+   deferred for subscription cost.
+4. Revisit deferred expansion only after this stabilization cycle. Preserve
+   the signing and external-beta gates recorded in `backlog.md`.

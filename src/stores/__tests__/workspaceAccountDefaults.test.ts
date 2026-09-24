@@ -72,9 +72,7 @@ describe("multi-account: session-creation account resolution", () => {
     const client = addAccount("Client work", "claude-code");
     useCliAccountStore.getState().rememberDefault(PROJECT, "claude-code", client.id);
 
-    // Exactly the shape every modal-free call site uses (issueStore, Toolbar,
-    // IssueDetailView, InvestigationPanel, QualityAIErrorActions, QualityView,
-    // agentHandoffs, workspaceCreation): no sessionConfig.accountIds at all.
+    // Programmatic creation can omit sessionConfig.accountIds entirely.
     const id = useWorkspaceStore
       .getState()
       .createWorkspace("Auto WS", ["claude-code"], PROJECT);

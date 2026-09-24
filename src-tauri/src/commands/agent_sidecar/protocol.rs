@@ -144,6 +144,7 @@ impl SidecarManager {
         mcp_trust_snapshot: Value,
         ssh_config: Option<SshConfig>,
     ) -> Result<(), String> {
+        crate::commands::usage::ensure_usage_accounting_healthy()?;
         // F7: the v11 `mcpTrustSnapshot` below is only authority if the peer
         // reading it understands v11. An older sidecar drops the field on the
         // floor and runs every MCP server unfiltered, so refuse rather than
@@ -214,6 +215,7 @@ impl SidecarManager {
         content: String,
         attachments: Value,
     ) -> Result<(), String> {
+        crate::commands::usage::ensure_usage_accounting_healthy()?;
         let req = json!({
             "type": "send_message",
             "sessionId": session_id,
@@ -308,6 +310,7 @@ impl SidecarManager {
 
     /// Forward a retry / regenerate-last-turn request to the sidecar.
     pub async fn forward_retry(&self, session_id: String) -> Result<(), String> {
+        crate::commands::usage::ensure_usage_accounting_healthy()?;
         let req = json!({
             "type": "retry",
             "sessionId": session_id,

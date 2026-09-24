@@ -4,6 +4,7 @@ export type CostGuardrailScope =
   | "daily"
   | "monthly"
   | "session"
+  | `session:${string}`
   | `provider:${string}`
   | `flight:${string}`;
 export type CostGuardrailSnapshotState = "disabled" | "safe" | "warning" | "over";
@@ -169,6 +170,7 @@ export function computeCostGuardrailStatus(
   options: {
     now?: Date;
     currentSessionCostUsd?: number | null;
+    sessionCostsById?: Record<string, number>;
     flightCostsById?: Record<string, number> | undefined;
     providerCostsBySource?: Record<string, number> | undefined;
   } = {},
@@ -195,7 +197,7 @@ export function computeCostGuardrailStatus(
   const now = options.now ?? new Date();
   const dailySpend = costForDay(data, now);
   const snapshot = deriveCostGuardrailSnapshot(
-    dailySpend + Math.max(0, options.currentSessionCostUsd ?? 0),
+    dailySpend,
     normalized,
   );
   const providerCosts = options.providerCostsBySource ?? providerCostsFromData(data);
@@ -218,12 +220,14 @@ export function computeCostGuardrailStatus(
   const scopes = [
     scopeStatus("daily", dailySpend, normalized.dailyLimitUsd, normalized),
     scopeStatus("monthly", costForMonth(data, now), normalized.monthlyLimitUsd, normalized),
-    scopeStatus(
+    ...(options.sessionCostsById ? Object.entries(options.sessionCostsById).map(([id, cost]) =>
+      scopeStatus(`session:${id}`, cost, normalized.sessionLimitUsd, normalized),
+    ) : [scopeStatus(
       "session",
       options.currentSessionCostUsd ?? 0,
       normalized.sessionLimitUsd,
       normalized,
-    ),
+    )]),
     ...providerScopes,
     ...flightScopes,
   ].filter((scope): scope is CostGuardrailScopeStatus => Boolean(scope));

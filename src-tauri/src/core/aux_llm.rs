@@ -79,8 +79,6 @@ use crate::core::llm_types::{ChatMessage, ChatRole, LlmRequest, MessageContent, 
 pub enum AuxTaskClass {
     /// Spec / PRD → issue drafts (`issues_extract_from_spec`).
     SpecImport,
-    /// Code Quality "explain this diagnostic".
-    CodeQualityExplain,
     /// Code Quality "summarize this run".
     CodeQualitySummarize,
     /// GitHub AI PR description.
@@ -122,7 +120,6 @@ impl AuxTaskClass {
         AuxTaskClass::SpecImport,
         AuxTaskClass::SpecToFlight,
         AuxTaskClass::SpecToTickets,
-        AuxTaskClass::CodeQualityExplain,
         AuxTaskClass::CodeQualitySummarize,
         AuxTaskClass::PrDescription,
         AuxTaskClass::PrReview,
@@ -141,7 +138,6 @@ impl AuxTaskClass {
     pub fn id(self) -> &'static str {
         match self {
             AuxTaskClass::SpecImport => "spec-import",
-            AuxTaskClass::CodeQualityExplain => "code-quality-explain",
             AuxTaskClass::CodeQualitySummarize => "code-quality-summarize",
             AuxTaskClass::PrDescription => "pr-description",
             AuxTaskClass::PrReview => "pr-review",
@@ -163,7 +159,6 @@ impl AuxTaskClass {
     pub fn label(self) -> &'static str {
         match self {
             AuxTaskClass::SpecImport => "Spec import",
-            AuxTaskClass::CodeQualityExplain => "Code Quality explain",
             AuxTaskClass::CodeQualitySummarize => "Code Quality summary",
             AuxTaskClass::PrDescription => "AI PR description",
             AuxTaskClass::PrReview => "AI PR review",
@@ -525,10 +520,13 @@ struct AuxErrorPayload {
 /// Drive one auxiliary turn to completion, optionally streaming text deltas out
 /// as `api-agent:chunk:<sid>` events.
 async fn drive(
+    task: AuxTaskClass,
+    session_id: &str,
     route: &AuxRoute,
     request: LlmRequest,
     emit_to: Option<(&tauri::AppHandle, &str)>,
 ) -> Result<AuxTurn, String> {
+    crate::commands::usage::ensure_usage_accounting_healthy()?;
     let api_key = api_keys::load_api_key(&route.provider)?;
     let provider = get_provider(&route.provider)?;
 
@@ -536,9 +534,46 @@ async fn drive(
     let provider_task =
         tokio::spawn(async move { provider.stream_chat(&api_key, request, tx).await });
 
-    let mut turn = AuxTurn::default();
-    let mut error: Option<String> = None;
+    let turn = match collect_aux_stream(&mut rx, emit_to, |turn| {
+        record_usage(task, route, session_id, turn)
+    })
+    .await
+    {
+        Ok(turn) => Some(turn),
+        Err(AuxStreamError::Incomplete) => None,
+        Err(AuxStreamError::Failed(error)) => {
+            provider_task.abort();
+            return Err(error);
+        }
+    };
+    // Direct provider errors carry auth/rate-limit/local-connection diagnostics.
+    // Prefer them over EOF so the existing retry and fallback policy still works.
+    let result = provider_task
+        .await
+        .map_err(|error| format!("Provider task panicked: {error}"))?;
+    finish_aux_provider_result(turn, result)
+}
 
+#[derive(Debug)]
+enum AuxStreamError {
+    Incomplete,
+    Failed(String),
+}
+
+fn finish_aux_provider_result(
+    turn: Option<AuxTurn>,
+    result: Result<(), String>,
+) -> Result<AuxTurn, String> {
+    result?;
+    turn.ok_or_else(|| "Provider stream ended before its completion and usage marker; this auxiliary request is incomplete".into())
+}
+
+async fn collect_aux_stream(
+    rx: &mut mpsc::Receiver<StreamChunk>,
+    emit_to: Option<(&tauri::AppHandle, &str)>,
+    mut record: impl FnMut(&AuxTurn) -> Result<(), String>,
+) -> Result<AuxTurn, AuxStreamError> {
+    let mut turn = AuxTurn::default();
     while let Some(chunk) = rx.recv().await {
         match chunk {
             StreamChunk::TextDelta { text } => {
@@ -546,8 +581,8 @@ async fn drive(
                     continue;
                 }
                 if let Some((app, session_id)) = emit_to {
-                    if let Err(e) = app.emit(&chunk_event(session_id), text.clone()) {
-                        warn!(session_id = %session_id, error = %e, "aux_llm: failed to emit chunk");
+                    if let Err(error) = app.emit(&chunk_event(session_id), text.clone()) {
+                        warn!(session_id = %session_id, error = %error, "aux_llm: failed to emit chunk");
                     }
                 }
                 turn.text.push_str(&text);
@@ -562,47 +597,28 @@ async fn drive(
                 turn.output_tokens = output_tokens;
                 turn.cache_read = cache_read_input_tokens;
                 turn.cache_write = cache_creation_input_tokens;
-                break;
+                record(&turn).map_err(AuxStreamError::Failed)?;
+                return Ok(turn);
             }
-            StreamChunk::Error { message } => {
-                error = Some(message);
-                break;
-            }
-            // Auxiliary turns ship no tools and disable thinking.
+            StreamChunk::Error { message } => return Err(AuxStreamError::Failed(message)),
             _ => {}
         }
     }
-
-    match provider_task.await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            if error.is_none() {
-                error = Some(e);
-            }
-        }
-        Err(join_err) => {
-            if error.is_none() {
-                error = Some(format!("Provider task panicked: {}", join_err));
-            }
-        }
-    }
-
-    match error {
-        Some(message) => Err(message),
-        None => Ok(turn),
-    }
+    Err(AuxStreamError::Incomplete)
 }
 
 /// Append the turn to `~/.packetbench/usage.jsonl`. Auxiliary spend was invisible
 /// while these features ran on the subscription sidecar (which writes no usage
 /// rows at all); metering them is a side benefit of the move.
-fn record_usage(task: AuxTaskClass, route: &AuxRoute, session_id: &str, turn: &AuxTurn) {
-    if turn.input_tokens == 0 && turn.output_tokens == 0 {
-        return;
-    }
+fn record_usage(
+    task: AuxTaskClass,
+    route: &AuxRoute,
+    session_id: &str,
+    turn: &AuxTurn,
+) -> Result<(), String> {
     let cost = pricing::calculate_cost(
         &route.model,
-        turn.input_tokens,
+        pricing::billable_input_tokens(&route.model, turn.input_tokens, turn.cache_read),
         turn.output_tokens,
         turn.cache_read,
         turn.cache_write,
@@ -620,9 +636,7 @@ fn record_usage(task: AuxTaskClass, route: &AuxRoute, session_id: &str, turn: &A
         cache_write: turn.cache_write,
         cost_usd: cost,
     };
-    if let Err(e) = crate::commands::usage::append_usage_entry(&entry) {
-        warn!(task = task.id(), error = %e, "aux_llm: failed to persist usage entry");
-    }
+    crate::commands::usage::append_usage_entry(&entry)
 }
 
 // ---------------------------------------------------------------------------
@@ -822,7 +836,7 @@ async fn drive_local_route_once(
         system_prompt.to_string(),
         user_turn.to_string(),
     );
-    match drive(route, request, emit_to).await {
+    match drive(task, session_id, route, request, emit_to).await {
         Ok(turn) => Ok(turn),
         Err(message) if route.provider == "ollama" && is_ollama_connection_error(&message) => {
             warn!(
@@ -838,7 +852,7 @@ async fn drive_local_route_once(
                 system_prompt.to_string(),
                 user_turn.to_string(),
             );
-            match drive(route, retry_request, emit_to).await {
+            match drive(task, session_id, route, retry_request, emit_to).await {
                 Ok(turn) => Ok(turn),
                 Err(retry_message) if is_ollama_connection_error(&retry_message) => {
                     Err(local_route_unavailable_error(task))
@@ -870,7 +884,6 @@ pub async fn run_aux_oneshot(
     );
     let turn =
         drive_with_local_policy(task, route, session_id, &system_prompt, &user_turn, None).await?;
-    record_usage(task, route, session_id, &turn);
     Ok(turn.text)
 }
 
@@ -905,7 +918,6 @@ pub fn spawn_aux_stream(
         .await
         {
             Ok(turn) => {
-                record_usage(task, &route, &session_id, &turn);
                 if turn.text.trim().is_empty() {
                     let _ = app_handle.emit(
                         &error_event(&session_id),
@@ -941,6 +953,90 @@ pub fn spawn_aux_stream(
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn auxiliary_premature_eof_never_records_or_succeeds() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        sender
+            .send(StreamChunk::TextDelta {
+                text: "partial".into(),
+            })
+            .await
+            .unwrap();
+        drop(sender);
+        let error = collect_aux_stream(&mut receiver, None, |_| {
+            panic!("incomplete usage must not be fabricated")
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(error, AuxStreamError::Incomplete));
+        assert!(finish_aux_provider_result(None, Ok(()))
+            .unwrap_err()
+            .contains("incomplete"));
+    }
+
+    #[tokio::test]
+    async fn auxiliary_eof_preserves_direct_auth_rate_limit_and_local_errors() {
+        for message in [
+            "HTTP 401 unauthorized",
+            "HTTP 429 rate limit",
+            "Ollama not reachable",
+        ] {
+            let (sender, mut receiver) = mpsc::channel(1);
+            let provider = tokio::spawn(async move {
+                drop(sender);
+                Err::<(), String>(message.into())
+            });
+            assert!(matches!(
+                collect_aux_stream(&mut receiver, None, |_| panic!("no completed usage")).await,
+                Err(AuxStreamError::Incomplete)
+            ));
+            assert_eq!(
+                finish_aux_provider_result(None, provider.await.unwrap()).unwrap_err(),
+                message
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn auxiliary_done_records_before_provider_failure_and_write_failure_propagates() {
+        for fail_write in [false, true] {
+            let (sender, mut receiver) = mpsc::channel(2);
+            let provider = tokio::spawn(async move {
+                sender
+                    .send(StreamChunk::Done {
+                        input_tokens: 100,
+                        output_tokens: 25,
+                        cache_read_input_tokens: 20,
+                        cache_creation_input_tokens: 0,
+                    })
+                    .await
+                    .unwrap();
+                Err::<(), _>("provider failed after usage")
+            });
+            let mut recorded = Vec::new();
+            let turn = collect_aux_stream(&mut receiver, None, |turn| {
+                recorded.push(turn.clone());
+                if fail_write {
+                    Err("disk full".into())
+                } else {
+                    Ok(())
+                }
+            })
+            .await;
+            assert_eq!(recorded.len(), 1);
+            assert_eq!(recorded[0].input_tokens, 100);
+            if fail_write {
+                assert!(
+                    matches!(turn.unwrap_err(), AuxStreamError::Failed(error) if error == "disk full")
+                );
+            } else {
+                assert!(turn.is_ok());
+            }
+            assert!(provider.await.unwrap().is_err());
+        }
+    }
+
     use super::*;
 
     /// The gate that stops a workspace close from stampeding the provider.
@@ -1174,7 +1270,7 @@ mod tests {
         // Ollama prices at zero and would win every ranking, but a stopped
         // daemon is indistinguishable from a configured one here.
         let err = resolve_aux_route(
-            AuxTaskClass::CodeQualityExplain,
+            AuxTaskClass::CodeQualitySummarize,
             &AuxOverrides::new(),
             &configured(&["ollama"]),
         )

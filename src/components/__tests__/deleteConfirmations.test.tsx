@@ -31,7 +31,7 @@ const tauriMocks = vi.hoisted(() => ({
   deletePacketAgentToken: vi.fn().mockResolvedValue(undefined),
   setPacketAgentToken: vi.fn().mockResolvedValue(undefined),
   githubOauthConfigured: vi.fn().mockResolvedValue(false),
-  detectCliCatalog: vi.fn().mockResolvedValue({ entries: [] }),
+  detectCliCatalog: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn().mockResolvedValue(null) }));
@@ -308,7 +308,7 @@ describe("GitHubSettingsCard — removing a self-hosted git host", () => {
   });
 });
 
-describe("CliAgentsCard — deleting a custom CLI agent and resetting built-ins", () => {
+describe("CliAgentsCard — deleting a saved legacy CLI entry and resetting built-ins", () => {
   it("requires a confirm for both, and cancel mutates nothing", () => {
     const builtins = useAgentStore.getState().agents.filter((a) => a.isBuiltin);
     useAgentStore.setState({
@@ -327,7 +327,10 @@ describe("CliAgentsCard — deleting a custom CLI agent and resetting built-ins"
     const before = useAgentStore.getState().agents.length;
 
     render(<CliAgentsCard />);
-    fireEvent.click(screen.getByRole("button", { name: /Advanced — custom CLI agents/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Advanced — saved CLI settings/ }));
+    expect(screen.getByText(/Custom CLI launching is not supported/)).toBeInTheDocument();
+    expect(screen.getByText("MyCLI")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Custom$/ })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Delete custom CLI agent MyCLI" }));
     expect(useAgentStore.getState().agents).toHaveLength(before);

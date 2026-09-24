@@ -10,9 +10,7 @@ import { mcpServerTransport, type McpServerEntry } from "@/types/mcp";
 export function McpServersCard() {
   const { servers, loading, error, fetchServers, addServer, updateServer, removeServer } =
     useMcpStore();
-  const defaultEnabledMcpServerIds = useAgentSettingsStore(
-    (s) => s.defaultEnabledMcpServerIds,
-  );
+  const defaultEnabledMcpServerIds = useAgentSettingsStore((s) => s.defaultEnabledMcpServerIds);
   const setDefaultEnabledMcpServerIds = useAgentSettingsStore(
     (s) => s.setDefaultEnabledMcpServerIds,
   );
@@ -31,10 +29,7 @@ export function McpServersCard() {
 
   // Default MCP set for newly started agent sessions. null = every
   // non-disabled server (mirrors the old header popover's semantics).
-  const eligibleServers = useMemo(
-    () => servers.filter((s) => !s.disabled),
-    [servers],
-  );
+  const eligibleServers = useMemo(() => servers.filter((s) => !s.disabled), [servers]);
   const activeNames = useMemo(
     () =>
       defaultEnabledMcpServerIds === null
@@ -44,11 +39,8 @@ export function McpServersCard() {
   );
 
   function toggleDefaultServer(name: string) {
-    const current =
-      defaultEnabledMcpServerIds ?? eligibleServers.map((s) => s.name);
-    const next = current.includes(name)
-      ? current.filter((n) => n !== name)
-      : [...current, name];
+    const current = defaultEnabledMcpServerIds ?? eligibleServers.map((s) => s.name);
+    const next = current.includes(name) ? current.filter((n) => n !== name) : [...current, name];
     setDefaultEnabledMcpServerIds(next);
   }
 
@@ -71,7 +63,7 @@ export function McpServersCard() {
     command: string,
     args: string[],
     env: Record<string, string>,
-    scope: "global" | "project"
+    scope: "global" | "project",
   ) {
     if (editEntry) {
       // Hand over where the row currently lives so a scope change MOVES the
@@ -79,14 +71,7 @@ export function McpServersCard() {
       // "this server's scope"; without the old scope the write only upserted
       // into the other file and left the original behind, so switching Global
       // to Project silently produced two servers of the same name.
-      await updateServer(
-        name,
-        command,
-        args,
-        env,
-        scope,
-        editEntry.scope as "global" | "project",
-      );
+      await updateServer(name, command, args, env, scope, editEntry.scope as "global" | "project");
     } else {
       await addServer(name, command, args, env, scope);
     }
@@ -98,26 +83,26 @@ export function McpServersCard() {
   }
 
   return (
-    <div className="bg-bg-secondary border border-bg-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-xs font-semibold text-text-primary flex items-center gap-2">
+    <div className="rounded-lg border border-bg-border bg-bg-secondary p-4">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-xs font-semibold text-text-primary">
           <Plug size={12} className="text-accent-blue" />
           MCP Servers
-          <span className="text-[10px] text-text-muted font-normal px-1.5 py-0.5 bg-bg-elevated rounded">
+          <span className="rounded bg-bg-elevated px-1.5 py-0.5 text-[10px] font-normal text-text-muted">
             {servers.length} server{servers.length !== 1 ? "s" : ""}
           </span>
         </h3>
         <div className="flex items-center gap-2">
           <button
             onClick={() => fetchServers()}
-            className="p-1 text-text-muted hover:text-text-primary transition-colors"
+            className="p-1 text-text-muted transition-colors hover:text-text-primary"
             title="Refresh"
           >
             <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
           </button>
           <button
             onClick={handleAdd}
-            className="flex items-center gap-1 px-2 py-1 text-[11px] text-accent-green hover:bg-accent-green/10 rounded transition-colors"
+            className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-accent-green transition-colors hover:bg-accent-green/10"
           >
             <Plus size={11} />
             Add
@@ -126,27 +111,39 @@ export function McpServersCard() {
       </div>
 
       {error && (
-        <div className="px-3 py-2 mb-3 bg-red-500/10 border border-red-500/20 rounded text-[11px] text-red-400">
+        <div className="mb-3 rounded border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-400">
           {error}
         </div>
       )}
 
-      {eligibleServers.length > 0 && (
-        <div className="flex items-center justify-between mb-3 px-3 py-1.5 bg-bg-primary border border-bg-border rounded">
-          <span className="text-[10px] text-text-muted">
-            "On for agent sessions" sets which MCP servers new agent
-            conversations start with. Applies to newly started agent
-            conversations.
-          </span>
-          <button
-            onClick={resetDefaultToAll}
-            className="text-[10px] text-text-muted hover:text-text-primary transition-colors shrink-0 ml-2"
-            title="Reset to default — every non-disabled server is enabled"
-          >
-            Reset to all
-          </button>
-        </div>
-      )}
+      <p className="mb-3 text-[11px] text-text-muted">
+        Local API conversations support global and trusted project MCP servers over stdio, HTTP and
+        SSE. URL-based servers require network permission in MCP Hub. For MCP on an SSH host, choose
+        an SDK provider; other API providers require all MCP servers to be deselected.
+      </p>
+
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded border border-bg-border bg-bg-primary px-3 py-1.5">
+        <span className="text-[10px] text-text-muted">
+          "On for agent sessions" sets which MCP servers new agent conversations start with. Applies
+          to newly started agent conversations.
+          {defaultEnabledMcpServerIds?.length === 0 &&
+            " All MCP servers are disabled for new conversations."}
+        </span>
+        <button
+          onClick={() => setDefaultEnabledMcpServerIds([])}
+          className="shrink-0 text-[10px] text-text-muted transition-colors hover:text-text-primary"
+          title="Start new agent conversations without MCP, including native API conversations on SSH"
+        >
+          Disable all
+        </button>
+        <button
+          onClick={resetDefaultToAll}
+          className="ml-2 shrink-0 text-[10px] text-text-muted transition-colors hover:text-text-primary"
+          title="Reset to default — every non-disabled server is enabled"
+        >
+          Reset to all
+        </button>
+      </div>
 
       <div className="space-y-3">
         <ServerGroup
@@ -170,7 +167,7 @@ export function McpServersCard() {
       </div>
 
       {servers.length === 0 && !loading && (
-        <div className="text-center py-8 text-text-muted text-[11px]">
+        <div className="py-8 text-center text-[11px] text-text-muted">
           <Plug size={20} className="mx-auto mb-2 opacity-30" />
           <p>No MCP servers configured</p>
           <p className="mt-1 text-[10px]">Add servers to extend Claude Code with custom tools</p>
@@ -232,9 +229,9 @@ function ServerGroup({
 
   return (
     <div>
-      <div className="flex items-center gap-1.5 mb-1.5">
+      <div className="mb-1.5 flex items-center gap-1.5">
         {icon}
-        <span className="text-[10px] font-medium text-text-secondary uppercase tracking-wider">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-text-secondary">
           {title}
         </span>
         <span className="text-[10px] text-text-muted">({servers.length})</span>
@@ -256,26 +253,26 @@ function ServerGroup({
           return (
             <div
               key={key}
-              className="flex items-center gap-3 px-3 py-2 bg-bg-primary border border-bg-border rounded-lg group"
+              className="group flex items-center gap-3 rounded-lg border border-bg-border bg-bg-primary px-3 py-2"
             >
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-medium text-text-primary">{entry.name}</span>
                   {!editable && (
                     <span
-                      className="text-[9px] px-1 py-0.5 bg-bg-elevated text-text-muted rounded"
+                      className="rounded bg-bg-elevated px-1 py-0.5 text-[9px] text-text-muted"
                       title="Remote transport — configured by url, not by a command"
                     >
                       {transport}
                     </span>
                   )}
                   {entry.disabled && (
-                    <span className="text-[9px] px-1 py-0.5 bg-bg-elevated text-text-muted rounded">
+                    <span className="rounded bg-bg-elevated px-1 py-0.5 text-[9px] text-text-muted">
                       disabled
                     </span>
                   )}
                 </div>
-                <div className="text-[10px] text-text-muted mt-0.5 truncate">
+                <div className="mt-0.5 truncate text-[10px] text-text-muted">
                   {editable ? (
                     <>
                       {entry.config.command}
@@ -296,11 +293,11 @@ function ServerGroup({
                   />
                 )}
               </div>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                 <button
                   onClick={() => onEdit(entry)}
                   disabled={!editable}
-                  className="p-1 text-text-muted hover:text-accent-blue transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-text-muted"
+                  className="p-1 text-text-muted transition-colors hover:text-accent-blue disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-text-muted"
                   title={
                     editable
                       ? "Edit"
@@ -311,7 +308,7 @@ function ServerGroup({
                 </button>
                 <button
                   onClick={() => onRequestDelete(entry)}
-                  className="p-1 text-text-muted hover:text-accent-red transition-colors"
+                  className="p-1 text-text-muted transition-colors hover:text-accent-red"
                   title={`Delete ${entry.name}`}
                   aria-label={`Delete ${entry.name}`}
                 >

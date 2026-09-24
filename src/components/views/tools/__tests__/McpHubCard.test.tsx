@@ -7,6 +7,12 @@ import { useMcpTrustStore } from "@/stores/mcpTrustStore";
 import { useProvenanceAuditStore } from "@/stores/provenanceAuditStore";
 import { diagnoseMcpServer } from "@/lib/tauri";
 
+const agentState = vi.hoisted(() => ({
+  selectedConversationId: null as string | null,
+  conversations: [] as { id: string; title: string; mode: "api" }[],
+  prepareMcpReconnect: vi.fn(),
+}));
+
 vi.mock("../McpServersCard", () => ({
   McpServersCard: () => <div>Configured servers editor</div>,
 }));
@@ -14,18 +20,7 @@ vi.mock("../McpProviderCard", () => ({
   McpProviderCard: () => <div>PacketBench provider controls</div>,
 }));
 vi.mock("@/stores/agentTaskStore", () => ({
-  useAgentTaskStore: (
-    selector: (state: {
-      selectedConversationId: null;
-      conversations: [];
-      prepareMcpReconnect: ReturnType<typeof vi.fn>;
-    }) => unknown,
-  ) =>
-    selector({
-      selectedConversationId: null,
-      conversations: [],
-      prepareMcpReconnect: vi.fn(),
-    }),
+  useAgentTaskStore: (selector: (state: typeof agentState) => unknown) => selector(agentState),
 }));
 vi.mock("@/lib/tauri", () => ({
   diagnoseMcpServer: vi.fn(),
@@ -36,6 +31,9 @@ vi.mock("@/lib/tauri", () => ({
 
 describe("McpHubCard", () => {
   beforeEach(() => {
+    agentState.selectedConversationId = null;
+    agentState.conversations = [];
+    agentState.prepareMcpReconnect.mockReset().mockResolvedValue(undefined);
     localStorage.clear();
     useLayoutStore.setState({ projectPath: "D:\\projects\\demo" });
     useMcpTrustStore.setState({ profiles: {}, capabilities: {} });
@@ -59,6 +57,28 @@ describe("McpHubCard", () => {
     });
   });
 
+  it("explicitly reconnects the selected API conversation without MCP when no servers exist", async () => {
+    agentState.selectedConversationId = "ssh-existing";
+    agentState.conversations = [{ id: "ssh-existing", title: "SSH existing", mode: "api" }];
+    useMcpStore.setState({ servers: [] });
+    render(<McpHubCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect without MCP" }));
+    await waitFor(() =>
+      expect(agentState.prepareMcpReconnect).toHaveBeenCalledWith("ssh-existing", []),
+    );
+    expect(
+      await screen.findByText(/next user turn will reconnect without MCP servers/),
+    ).toBeInTheDocument();
+  });
+
+  it("retains the current server selection for ordinary reconnect", async () => {
+    agentState.selectedConversationId = "existing";
+    agentState.conversations = [{ id: "existing", title: "Existing", mode: "api" }];
+    render(<McpHubCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect selected" }));
+    await waitFor(() => expect(agentState.prepareMcpReconnect).toHaveBeenCalledWith("existing"));
+  });
+
   it("searches the catalog and requires a review before writing config", async () => {
     render(<McpHubCard />);
 
@@ -70,21 +90,15 @@ describe("McpHubCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
 
     expect(screen.getByText("Review GitHub")).toBeInTheDocument();
-    expect(
-      screen.getByText(/GITHUB_PERSONAL_ACCESS_TOKEN.*never stored/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/GITHUB_PERSONAL_ACCESS_TOKEN.*never stored/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Approve and add" }));
 
-    await waitFor(() =>
-      expect(useMcpStore.getState().addServer).toHaveBeenCalledTimes(1),
-    );
+    await waitFor(() => expect(useMcpStore.getState().addServer).toHaveBeenCalledTimes(1));
   });
 
   it("discloses frozen trust and non-overridable denial floors", () => {
     render(<McpHubCard />);
-    expect(
-      screen.getByText(/Trust edits never broaden a running session/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Trust edits never broaden a running session/i)).toBeInTheDocument();
     expect(
       screen.getByText(/Credential, outside-workspace, and protected publish/i),
     ).toBeInTheDocument();

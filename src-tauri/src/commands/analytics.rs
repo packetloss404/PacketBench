@@ -29,6 +29,8 @@ pub struct DailyCost {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct AnalyticsData {
+    #[serde(rename = "sessionCostsById")]
+    pub session_costs_by_id: HashMap<String, f64>,
     #[serde(rename = "totalCostUsd")]
     pub total_cost_usd: f64,
     #[serde(rename = "totalSessions")]
@@ -69,26 +71,20 @@ struct CostTallyEntry {
 }
 
 #[tauri::command]
-pub async fn read_usage_analytics() -> String {
+pub async fn read_usage_analytics() -> Result<String, String> {
     // A mature Codex install can have several gigabytes of JSONL history.
     // Running filesystem discovery/parsing in a synchronous Tauri command
     // starves the native event loop (including custom-protocol assets and every
     // other invoke). Keep the command asynchronous even though the parser is
     // mostly I/O-bound so the window remains interactive during refresh.
-    match tauri::async_runtime::spawn_blocking(read_usage_analytics_blocking).await {
-        Ok(analytics) => analytics,
-        Err(error) => {
-            tracing::warn!(%error, "usage analytics worker failed");
-            empty_analytics()
-        }
-    }
+    tauri::async_runtime::spawn_blocking(read_usage_analytics_blocking)
+        .await
+        .map_err(|error| format!("Usage analytics worker failed: {error}"))?
 }
 
-fn read_usage_analytics_blocking() -> String {
-    let home = match home_dir() {
-        Some(h) => h,
-        None => return empty_analytics(),
-    };
+fn read_usage_analytics_blocking() -> Result<String, String> {
+    let home = home_dir()
+        .ok_or_else(|| "Could not resolve home directory for usage analytics".to_string())?;
 
     let claude_dir = PathBuf::from(&home).join(".claude");
 
@@ -104,6 +100,7 @@ fn read_usage_analytics_blocking() -> String {
 
     let mut model_map: HashMap<String, ModelUsage> = HashMap::new();
     let mut daily_map: HashMap<String, f64> = HashMap::new();
+    let mut session_costs_by_id = HashMap::new();
 
     for entry in &cost_entries {
         let cost = entry.cost_usd.or(entry.cost).unwrap_or(0.0);
@@ -146,7 +143,7 @@ fn read_usage_analytics_blocking() -> String {
     let usage_jsonl_path = PathBuf::from(&home)
         .join(crate::core::brand::DATA_DIR_NAME)
         .join("usage.jsonl");
-    if let Ok(contents) = fs::read_to_string(&usage_jsonl_path) {
+    if let Some(contents) = read_usage_ledger(&usage_jsonl_path)? {
         ingest_usage_jsonl(
             &contents,
             &mut total_cost,
@@ -155,6 +152,7 @@ fn read_usage_analytics_blocking() -> String {
             &mut total_output,
             &mut model_map,
             &mut daily_map,
+            &mut session_costs_by_id,
         );
     }
 
@@ -277,6 +275,7 @@ fn read_usage_analytics_blocking() -> String {
         .collect();
 
     let data = AnalyticsData {
+        session_costs_by_id,
         total_cost_usd: total_cost,
         total_sessions,
         total_input_tokens: total_input,
@@ -288,12 +287,14 @@ fn read_usage_analytics_blocking() -> String {
         unknown_pricing_model_usage,
     };
 
-    serde_json::to_string(&data).unwrap_or_else(|_| empty_analytics())
+    serde_json::to_string(&data)
+        .map_err(|error| format!("Could not serialize usage analytics: {error}"))
 }
 
 /// Fold `~/.packetbench/usage.jsonl` lines into the aggregation accumulators.
-/// One row = one `UsageEntry` = one session-turn's spend; malformed or blank
-/// lines are skipped. Extracted from `read_usage_analytics_blocking` so the
+/// One row = one `UsageEntry` = one completed request's spend. The public read
+/// validates the complete ledger first and refuses malformed/truncated rows;
+/// this aggregation helper tolerates blank lines. Extracted so the
 /// ledger→rollup behaviour — the input the daily/monthly budget guardrails
 /// evaluate — is testable without touching the real home directory.
 #[allow(clippy::too_many_arguments)]
@@ -305,6 +306,7 @@ fn ingest_usage_jsonl(
     total_output: &mut u64,
     model_map: &mut HashMap<String, ModelUsage>,
     daily_map: &mut HashMap<String, f64>,
+    session_costs_by_id: &mut HashMap<String, f64>,
 ) {
     for line in contents.lines() {
         let line = line.trim();
@@ -317,6 +319,11 @@ fn ingest_usage_jsonl(
         };
 
         let cost = entry.cost_usd;
+        if !entry.session_id.is_empty() && cost.is_finite() && cost >= 0.0 {
+            *session_costs_by_id
+                .entry(entry.session_id.clone())
+                .or_insert(0.0) += cost;
+        }
         let input = entry.input_tokens;
         let output = entry.output_tokens;
         let sessions: u32 = 1;
@@ -345,8 +352,8 @@ fn ingest_usage_jsonl(
         usage.cost_usd += cost;
 
         // Daily date = first 10 chars of ISO 8601 timestamp, or today as fallback
-        let date = if entry.ts.len() >= 10 {
-            entry.ts[..10].to_string()
+        let date = if let Some(date) = entry.ts.get(..10) {
+            date.to_string()
         } else {
             today_date_string()
         };
@@ -382,8 +389,10 @@ fn read_cost_tally(path: &PathBuf) -> Vec<CostTallyEntry> {
     vec![]
 }
 
-fn empty_analytics() -> String {
-    r#"{"totalCostUsd":0,"totalSessions":0,"totalInputTokens":0,"totalOutputTokens":0,"modelUsage":[],"dailyCosts":[],"todayCostUsd":0,"currentMonthCostUsd":0,"unknownPricingModelUsage":[]}"#.to_string()
+/// Missing ledger is a new installation; every other read failure must block
+/// budget admission rather than report fabricated zero spend.
+fn read_usage_ledger(path: &std::path::Path) -> Result<Option<String>, String> {
+    crate::commands::usage::read_usage_ledger(path)
 }
 
 fn merge_pricing_status(
@@ -576,6 +585,23 @@ fn days_to_ymd(days_since_epoch: i64) -> (i32, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usage_ledger_missing_is_empty_but_unreadable_is_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(
+            super::read_usage_ledger(&directory.path().join("missing.jsonl"))
+                .unwrap()
+                .is_none()
+        );
+        // A directory is not a readable ledger, consistently on all platforms.
+        assert!(super::read_usage_ledger(directory.path())
+            .unwrap_err()
+            .contains("Could not read usage ledger"));
+        let invalid_utf8 = directory.path().join("invalid.jsonl");
+        std::fs::write(&invalid_utf8, [0xff]).unwrap();
+        assert!(super::read_usage_ledger(&invalid_utf8).is_err());
+    }
+
     use super::*;
     use std::io::Write;
 
@@ -643,6 +669,7 @@ mod tests {
         let mut total_output = 0u64;
         let mut model_map = HashMap::new();
         let mut daily_map = HashMap::new();
+        let mut session_costs_by_id = HashMap::new();
         ingest_usage_jsonl(
             &contents,
             &mut total_cost,
@@ -651,7 +678,35 @@ mod tests {
             &mut total_output,
             &mut model_map,
             &mut daily_map,
+            &mut session_costs_by_id,
         );
+
+        assert_eq!(
+            session_costs_by_id.get("sidecar-sess-2"),
+            Some(&openai.cost_usd)
+        );
+        // A separately attributed child request must accumulate into its
+        // parent's session total, without replacing the parent-model row.
+        let mut child = openai.clone();
+        child.model = "gpt-5-mini".into();
+        child.agent_id = Some("subagent".into());
+        child.cost_usd = 0.125;
+        let mut child_sessions = HashMap::new();
+        ingest_usage_jsonl(
+            &format!(
+                "{}\n{}",
+                serde_json::to_string(&openai).unwrap(),
+                serde_json::to_string(&child).unwrap()
+            ),
+            &mut 0.0,
+            &mut 0,
+            &mut 0,
+            &mut 0,
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            &mut child_sessions,
+        );
+        assert_eq!(child_sessions["sidecar-sess-2"], openai.cost_usd + 0.125);
 
         assert_eq!(total_sessions, 2);
         assert_eq!(total_input, 2000);

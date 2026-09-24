@@ -6,7 +6,8 @@ import {
   pricingStatusForModel,
   ratesForModel,
 } from "@/lib/modelPricing";
-import { aggregateConversationCost, estimateTurnCostUsd } from "@/lib/conversationCost";
+import { estimateTurnCostUsd } from "@/lib/conversationCost";
+import { sessionCostUsd } from "@/lib/sessionCost";
 import type { AgentConversation } from "@/types/agent-conversation";
 
 interface GoldenCase {
@@ -146,7 +147,7 @@ describe("date-scheduled rates", () => {
       ],
     } as unknown as AgentConversation;
     // $2 (August, introductory) + $3 (September, standard) — not 2x either.
-    expect(aggregateConversationCost(conv).estCost).toBeCloseTo(5, 9);
+    expect(sessionCostUsd(conv)).toBeCloseTo(5, 9);
   });
 });
 

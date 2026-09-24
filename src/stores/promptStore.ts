@@ -79,7 +79,7 @@ interface PromptStore {
     updates: Partial<Pick<PromptTemplate, "name" | "content" | "category">>,
   ) => void;
   deleteTemplate: (id: string) => void;
-  sendToTerminal: (templateId: string) => void;
+  sendToTerminal: (templateId: string) => Promise<void>;
   sendToAgentChat: (templateId: string) => Promise<void>;
 }
 
@@ -115,20 +115,19 @@ export const usePromptStore = create<PromptStore>((set, get) => ({
     saveToStorage(STORAGE_KEY, updated);
   },
 
-  sendToTerminal: (templateId) => {
+  sendToTerminal: async (templateId) => {
     const template = get().templates.find((t) => t.id === templateId);
-    if (!template) return;
+    if (!template) throw new Error("This prompt template no longer exists.");
     const activePane = useLayoutStore.getState().getActivePane();
-    if (activePane?.sessionId) {
-      writePty(activePane.sessionId, template.content + "\n");
-    }
+    if (!activePane?.sessionId) throw new Error("Select a running terminal before sending this prompt.");
+    await writePty(activePane.sessionId, template.content + "\r");
   },
 
   sendToAgentChat: async (templateId) => {
     const template = get().templates.find((t) => t.id === templateId);
-    if (!template) return;
+    if (!template) throw new Error("This prompt template no longer exists.");
     const projectPath = useLayoutStore.getState().projectPath;
-    if (!projectPath) return;
+    if (!projectPath) throw new Error("Open a project before sending this prompt to Scout.");
     const agentState = useAgentTaskStore.getState();
     const selected = agentState.conversations.find(
       (c) => c.id === agentState.selectedConversationId,

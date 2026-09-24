@@ -3007,7 +3007,7 @@ dependencies = [
 
 [[package]]
 name = "packetbench"
-version = "0.14.7"
+version = "0.14.8"
 dependencies = [
  "async-trait",
  "axum",
@@ -3032,6 +3032,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "sse-stream",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

@@ -6,33 +6,13 @@ import {
   qualityEvents,
   runQualityChecks,
   type QualityCheckDoneEvent,
+  type QualityRunSummary,
 } from "@/lib/tauri";
 import { QualityAISummary } from "./QualityAISummary";
 import { clearQualityAISummaryCache } from "./qualityAIHelpers";
 
-/**
- * v0.8.8 quality ai — bottom-of-Overview "AI summary" section.
- *
- * Self-contained wrapper that:
- *   1. Runs `runQualityChecks` (q1's runner) against the active project
- *   2. Collects every `quality:check-done:<runId>` event into a map keyed
- *      by check label
- *   3. Hands the failing checks to `QualityAISummary` for streaming
- *      analysis
- *
- * Lives in its own file so the modal stays small. q2 owns the failed-
- * checks UI (per-error rows + parsing) — once that lands, this panel can
- * either keep its own run trigger or pull the latest run from a shared
- * quality store the q2 lift introduces. Until then, this is fully
- * standalone.
- *
- * The component prints a single button until the user clicks "Run checks
- * + summarize" — at which point it streams check chunks and, once every
- * check completes, fires the AI summary. The summary itself is cached
- * (module-level Map inside `QualityAISummary`) keyed on the runHash so
- * re-opening the modal with the same run skips the LLM round-trip.
- */
-
+/** Runs detected checks and summarizes required failures; diagnostic output/history
+ * is not exposed by this aggregate view. */
 interface Props {
   projectPath: string;
   projectName: string;
@@ -41,7 +21,7 @@ interface Props {
 type Phase =
   | { kind: "idle" }
   | { kind: "running"; runId: string; doneByLabel: Record<string, QualityCheckDoneEvent> }
-  | { kind: "complete"; runHash: string; checks: QualityCheckDoneEvent[] }
+  | { kind: "complete"; runHash: string; checks: QualityCheckDoneEvent[]; cancelled: boolean }
   | { kind: "error"; message: string };
 
 export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
@@ -51,6 +31,8 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
   const unlistenErrorRef = useRef<UnlistenFn | null>(null);
   const mountedRef = useRef(true);
   const runIdRef = useRef<string | null>(null);
+  const cancelRequestedRef = useRef(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const collectedRef = useRef<Record<string, QualityCheckDoneEvent>>({});
 
   const tearDown = useCallback(() => {
@@ -63,24 +45,30 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
+    setPhase({ kind: "idle" });
     return () => {
       mountedRef.current = false;
       tearDown();
       // Best-effort cancel of any in-flight run when the modal closes.
       if (runIdRef.current) {
         void cancelQualityRun(runIdRef.current).catch(() => {});
+        runIdRef.current = null;
       }
     };
-  }, [tearDown]);
+  }, [projectPath, tearDown]);
 
   const runChecksAndSummarize = useCallback(async () => {
-    if (phase.kind === "running") return;
+    if (runIdRef.current) return;
     tearDown();
     collectedRef.current = {};
+    cancelRequestedRef.current = false;
+    setCancelError(null);
 
+    const runId = `quality-ai-run-${crypto.randomUUID()}`;
+    runIdRef.current = runId;
+    const current = () => mountedRef.current && runIdRef.current === runId;
     try {
-      const runId = `quality-ai-run-${crypto.randomUUID()}`;
-      runIdRef.current = runId;
       setPhase({ kind: "running", runId, doneByLabel: {} });
 
       // Subscribe BEFORE invoking — the first chunk can land before
@@ -99,25 +87,30 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
           });
         },
       );
+      if (!current()) {
+        unlistenCheckDone();
+        return;
+      }
       unlistenCheckDoneRef.current = unlistenCheckDone;
 
-      const unlistenDone = await listen(
-        qualityEvents.done(runId),
-        () => {
-          if (!mountedRef.current) return;
-          if (runIdRef.current !== runId) return;
-          const checks = Object.values(collectedRef.current);
-          const runHash = buildRunHash(runId, checks);
-          tearDown();
-          runIdRef.current = null;
-          // Wipe any prior cached summary for the same hash — defensive,
-          // a fresh run id should already mint a fresh hash. Per-key
-          // delete (peer review fix): avoids wiping another modal
-          // instance's cached summary running in parallel.
-          clearQualityAISummaryCache(runHash);
-          setPhase({ kind: "complete", runHash, checks });
-        },
-      );
+      const unlistenDone = await listen<QualityRunSummary>(qualityEvents.done(runId), (event) => {
+        if (!mountedRef.current) return;
+        if (runIdRef.current !== runId) return;
+        const checks = event.payload.checks;
+        const runHash = buildRunHash(runId, checks);
+        tearDown();
+        runIdRef.current = null;
+        // Wipe any prior cached summary for the same hash — defensive,
+        // a fresh run id should already mint a fresh hash. Per-key
+        // delete (peer review fix): avoids wiping another modal
+        // instance's cached summary running in parallel.
+        clearQualityAISummaryCache(runHash);
+        setPhase({ kind: "complete", runHash, checks, cancelled: event.payload.cancelled });
+      });
+      if (!current()) {
+        unlistenDone();
+        return;
+      }
       unlistenDoneRef.current = unlistenDone;
 
       const unlistenError = await listen<{ message: string }>(
@@ -133,10 +126,24 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
           });
         },
       );
+      if (!current()) {
+        unlistenError();
+        return;
+      }
       unlistenErrorRef.current = unlistenError;
 
+      if (cancelRequestedRef.current) {
+        tearDown();
+        runIdRef.current = null;
+        setPhase({ kind: "complete", runHash: runId, checks: [], cancelled: true });
+        return;
+      }
       await runQualityChecks(projectPath, runId, null);
+      // A cancellation while the invoke was registering the run may have found
+      // no backend entry yet. Repeat after registration rather than lose intent.
+      if (!current() || cancelRequestedRef.current) await cancelQualityRun(runId);
     } catch (e) {
+      if (!current()) return;
       tearDown();
       runIdRef.current = null;
       setPhase({
@@ -144,26 +151,35 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
         message: e instanceof Error ? e.message : String(e),
       });
     }
-  }, [phase.kind, projectPath, tearDown]);
+  }, [projectPath, tearDown]);
+
+  const cancel = async () => {
+    const runId = runIdRef.current;
+    if (!runId) return;
+    cancelRequestedRef.current = true;
+    setCancelError(null);
+    try {
+      await cancelQualityRun(runId);
+    } catch (error) {
+      if (runIdRef.current === runId) setCancelError(String(error));
+    }
+  };
 
   if (phase.kind === "idle") {
     return (
-      <div className="flex flex-col gap-2 p-3 bg-bg-primary border border-bg-border rounded-lg">
+      <div className="flex flex-col gap-2 rounded-lg border border-bg-border bg-bg-primary p-3">
         <div className="flex items-center gap-2">
           <Sparkles size={12} className="text-accent-purple" />
-          <span className="text-[11px] font-semibold text-text-primary">
-            AI run summary
-          </span>
+          <span className="text-[11px] font-semibold text-text-primary">AI run summary</span>
         </div>
-        <p className="text-[10px] text-text-muted leading-relaxed">
-          Run the project's lint / typecheck / test / build pipeline and get a
-          structured AI summary of every failure — what's failing, root-cause
-          hypotheses, and the order to fix them.
+        <p className="text-[10px] leading-relaxed text-text-muted">
+          Run the project's lint / typecheck / test / build pipeline and get a structured AI summary
+          of every failure — what's failing, root-cause hypotheses, and the order to fix them.
         </p>
         <button
           type="button"
           onClick={runChecksAndSummarize}
-          className="self-start inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] bg-accent-purple/15 text-accent-purple border border-accent-purple/30 rounded font-medium hover:bg-accent-purple/25 transition-colors"
+          className="inline-flex items-center gap-1.5 self-start rounded border border-accent-purple/30 bg-accent-purple/15 px-2.5 py-1 text-[11px] font-medium text-accent-purple transition-colors hover:bg-accent-purple/25"
         >
           <Play size={11} />
           Run checks + summarize
@@ -175,17 +191,27 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
   if (phase.kind === "running") {
     const progress = Object.values(phase.doneByLabel);
     return (
-      <div className="flex flex-col gap-2 p-3 bg-bg-primary border border-bg-border rounded-lg">
+      <div className="flex flex-col gap-2 rounded-lg border border-bg-border bg-bg-primary p-3">
         <div className="flex items-center gap-2">
           <Loader2 size={12} className="animate-spin text-accent-purple" />
           <span className="text-[11px] font-semibold text-text-primary">
             Running quality checks…
           </span>
+          <button
+            type="button"
+            onClick={() => void cancel()}
+            className="text-xs text-text-muted hover:text-text-primary"
+          >
+            Cancel checks
+          </button>
         </div>
+        {cancelError && (
+          <p role="alert" className="text-xs text-accent-red">
+            {cancelError}
+          </p>
+        )}
         <div className="flex flex-col gap-0.5 text-[10px] text-text-muted">
-          {progress.length === 0 && (
-            <span className="italic">Spawning checks…</span>
-          )}
+          {progress.length === 0 && <span className="italic">Spawning checks…</span>}
           {progress.map((p) => (
             <span key={p.checkId} className="font-mono">
               {p.status === "passed" ? "[ok]  " : "[fail]"} {p.label}
@@ -201,23 +227,32 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
 
   if (phase.kind === "error") {
     return (
-      <div className="flex flex-col gap-2 p-3 bg-bg-primary border border-bg-border rounded-lg">
+      <div className="flex flex-col gap-2 rounded-lg border border-bg-border bg-bg-primary p-3">
         <div className="flex items-center gap-2">
           <Sparkles size={12} className="text-accent-red" />
-          <span className="text-[11px] font-semibold text-accent-red">
-            Quality run failed
-          </span>
+          <span className="text-[11px] font-semibold text-accent-red">Quality run failed</span>
         </div>
-        <div className="bg-accent-red/10 border border-accent-red/30 rounded px-3 py-2 text-[11px] text-accent-red">
+        <div className="rounded border border-accent-red/30 bg-accent-red/10 px-3 py-2 text-[11px] text-accent-red">
           {phase.message}
         </div>
         <button
           type="button"
           onClick={runChecksAndSummarize}
-          className="self-start inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent-purple transition-colors"
+          className="inline-flex items-center gap-1 self-start text-[10px] text-text-muted transition-colors hover:text-accent-purple"
         >
           <RefreshCw size={10} />
           Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (phase.cancelled) {
+    return (
+      <div className="p-3 text-xs text-text-muted">
+        Quality checks cancelled.
+        <button type="button" onClick={runChecksAndSummarize} className="ml-2">
+          Re-run checks
         </button>
       </div>
     );
@@ -230,20 +265,18 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
 
   if (failingChecks.length === 0) {
     return (
-      <div className="flex flex-col gap-2 p-3 bg-accent-green/5 border border-accent-green/20 rounded-lg">
+      <div className="flex flex-col gap-2 rounded-lg border border-accent-green/20 bg-accent-green/5 p-3">
         <div className="flex items-center gap-2">
           <Sparkles size={12} className="text-accent-green" />
-          <span className="text-[11px] font-semibold text-accent-green">
-            All checks passed
-          </span>
+          <span className="text-[11px] font-semibold text-accent-green">All checks passed</span>
         </div>
-        <p className="text-[10px] text-text-muted leading-relaxed">
+        <p className="text-[10px] leading-relaxed text-text-muted">
           Every required check returned successfully. Nothing to summarize.
         </p>
         <button
           type="button"
           onClick={runChecksAndSummarize}
-          className="self-start inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent-purple transition-colors"
+          className="inline-flex items-center gap-1 self-start text-[10px] text-text-muted transition-colors hover:text-accent-purple"
         >
           <RefreshCw size={10} />
           Re-run
@@ -266,7 +299,7 @@ export function QualityAIRunSummaryPanel({ projectPath, projectName }: Props) {
       <button
         type="button"
         onClick={runChecksAndSummarize}
-        className="self-start inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent-purple transition-colors px-3"
+        className="inline-flex items-center gap-1 self-start px-3 text-[10px] text-text-muted transition-colors hover:text-accent-purple"
       >
         <RefreshCw size={10} />
         Re-run checks

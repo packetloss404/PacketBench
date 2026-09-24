@@ -10,11 +10,8 @@ import {
 } from "lucide-react";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
 import { useEditorStore } from "@/stores/editorStore";
-import {
-  aggregateConversationDiffs,
-  type PerFileDiffStat,
-} from "@/lib/aggregateConversationDiffs";
-import { aggregateConversationCost } from "@/lib/conversationCost";
+import { aggregateConversationDiffs, type PerFileDiffStat } from "@/lib/aggregateConversationDiffs";
+import { aggregateConversationTokens } from "@/lib/conversationTokens";
 import { API_PROVIDERS } from "@/lib/api-models";
 import { AgentPreviewPane } from "./AgentPreviewPane";
 import { ReviewSurface } from "./review/ReviewSurface";
@@ -24,10 +21,7 @@ import { RightDock, type RightDockPanel } from "@/components/layout/RightDock";
 import { useRightDockStore } from "@/stores/rightDockStore";
 import { usePreviewPaneStore } from "@/stores/previewPaneStore";
 import { openInEditor } from "@/lib/openInEditor";
-import {
-  isRemoteConversation,
-  REMOTE_UNSUPPORTED_TOOLTIP,
-} from "@/lib/remoteConversation";
+import { isRemoteConversation, REMOTE_UNSUPPORTED_TOOLTIP } from "@/lib/remoteConversation";
 import { useUnviewedCount } from "./review/useUnviewedCount";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -76,11 +70,7 @@ export function AgentInspectorPane({ conversationId }: AgentInspectorPaneProps) 
       : null;
   const prevPreviewSignatureRef = useRef(previewSignature);
   useEffect(() => {
-    if (
-      previewSignature &&
-      previewSignature !== prevPreviewSignatureRef.current &&
-      !remote
-    ) {
+    if (previewSignature && previewSignature !== prevPreviewSignatureRef.current && !remote) {
       openPanel("agents", "preview");
     }
     prevPreviewSignatureRef.current = previewSignature;
@@ -327,9 +317,7 @@ function InspectorContent({ conversationId }: { conversationId: string }) {
   // Tokens only. The dollar figure that used to sit next to this was part of
   // the cost reporting surface removed on 2026-07-31; token counts stay because
   // they are the measurement the prompt-caching work depends on.
-  const { totalTokens } = conversation
-    ? aggregateConversationCost(conversation)
-    : { totalTokens: 0 };
+  const totalTokens = conversation ? aggregateConversationTokens(conversation) : 0;
 
   return (
     <>
@@ -339,29 +327,28 @@ function InspectorContent({ conversationId }: { conversationId: string }) {
           label="Files changed"
           right={`${totals.count} · +${totals.adds} −${totals.dels}`}
         />
-        <div className="p-2 flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 p-2">
           {filesLoading ? (
-            <span className="flex items-center gap-1.5 text-ui text-text-muted px-1 py-1">
+            <span className="flex items-center gap-1.5 px-1 py-1 text-ui text-text-muted">
               <Spinner size={10} />
               Computing edits…
             </span>
           ) : filesError ? (
-            <span className="flex items-center gap-1.5 text-ui text-accent-red px-1 py-1">
+            <span className="flex items-center gap-1.5 px-1 py-1 text-ui text-accent-red">
               <AlertCircle size={10} />
               Could not compute edits.
             </span>
           ) : files.length === 0 ? (
-            <span className="text-ui text-text-muted px-1 py-1">
+            <span className="px-1 py-1 text-ui text-text-muted">
               No edits in this conversation yet.
             </span>
           ) : (
             <>
               {unavailableCount > 0 && (
-                <span className="flex items-center gap-1.5 text-ui text-accent-amber px-1 py-1">
+                <span className="flex items-center gap-1.5 px-1 py-1 text-ui text-accent-amber">
                   <AlertCircle size={10} />
-                  {unavailableCount}{" "}
-                  {unavailableCount === 1 ? "file" : "files"} could not be
-                  diffed — totals are incomplete.
+                  {unavailableCount} {unavailableCount === 1 ? "file" : "files"} could not be diffed
+                  — totals are incomplete.
                 </span>
               )}
               {files.map((f, i) => (
@@ -375,7 +362,7 @@ function InspectorContent({ conversationId }: { conversationId: string }) {
       {/* Session info */}
       <div>
         <SectionHeader label="Session" />
-        <div className="px-2.5 py-2 text-ui text-text-secondary flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 px-2.5 py-2 text-ui text-text-secondary">
           <KvRow
             k="Agent"
             v={
@@ -405,7 +392,7 @@ function InspectorContent({ conversationId }: { conversationId: string }) {
             k="Worktree"
             v={
               <span
-                className="font-mono text-ui truncate"
+                className="truncate font-mono text-ui"
                 title={conversation?.projectPath ?? undefined}
               >
                 {conversation?.projectPath ?? "—"}
@@ -413,10 +400,7 @@ function InspectorContent({ conversationId }: { conversationId: string }) {
             }
           />
           <KvRow k="Started" v={startedRel} />
-          <KvRow
-            k="Tokens"
-            v={<span className="font-mono">{totalTokens.toLocaleString()}</span>}
-          />
+          <KvRow k="Tokens" v={<span className="font-mono">{totalTokens.toLocaleString()}</span>} />
         </div>
       </div>
     </>
@@ -425,11 +409,11 @@ function InspectorContent({ conversationId }: { conversationId: string }) {
 
 function SectionHeader({ label, right }: { label: string; right?: string }) {
   return (
-    <div className="px-2.5 py-1.5 flex items-center gap-1.5 text-meta font-semibold uppercase tracking-wide text-text-faint bg-bg-tertiary border-y border-line-soft">
+    <div className="flex items-center gap-1.5 border-y border-line-soft bg-bg-tertiary px-2.5 py-1.5 text-meta font-semibold uppercase tracking-wide text-text-faint">
       <span>{label}</span>
       <span className="flex-1" />
       {right && (
-        <span className="font-mono normal-case tracking-normal text-meta text-text-secondary">
+        <span className="font-mono text-meta normal-case tracking-normal text-text-secondary">
           {right}
         </span>
       )}
@@ -443,19 +427,14 @@ function FileChangedRow({ stat }: { stat: PerFileDiffStat }) {
   // rendering "+0 −0", which reads as "this file didn't really change".
   if (stat.unavailable) {
     return (
-      <div className="px-2 py-1.5 rounded border border-accent-amber/30 bg-bg-tertiary">
+      <div className="rounded border border-accent-amber/30 bg-bg-tertiary px-2 py-1.5">
         <div className="flex items-center gap-1.5">
-          <AlertCircle size={10} className="text-accent-amber shrink-0" />
-          <span
-            className="font-mono text-ui text-text-primary truncate flex-1"
-            title={stat.path}
-          >
+          <AlertCircle size={10} className="shrink-0 text-accent-amber" />
+          <span className="flex-1 truncate font-mono text-ui text-text-primary" title={stat.path}>
             {basename(stat.path)}
           </span>
-          <span className="text-meta text-accent-amber shrink-0">
-            {stat.unavailable === "remote"
-              ? "diff unavailable (SSH)"
-              : "diff unavailable"}
+          <span className="shrink-0 text-meta text-accent-amber">
+            {stat.unavailable === "remote" ? "diff unavailable (SSH)" : "diff unavailable"}
           </span>
         </div>
       </div>
@@ -465,16 +444,16 @@ function FileChangedRow({ stat }: { stat: PerFileDiffStat }) {
   const addsCells = pos === 0 ? 0 : Math.max(1, Math.round((stat.adds / pos) * cells));
   const delsCells = pos === 0 ? 0 : Math.max(stat.dels > 0 ? 1 : 0, cells - addsCells);
   return (
-    <div className="px-2 py-1.5 rounded border border-bg-border bg-bg-tertiary">
-      <div className="flex items-center gap-1.5 mb-1">
+    <div className="rounded border border-bg-border bg-bg-tertiary px-2 py-1.5">
+      <div className="mb-1 flex items-center gap-1.5">
         <FileIcon size={10} className="text-text-muted" />
-        <span className="font-mono text-ui text-text-primary truncate flex-1" title={stat.path}>
+        <span className="flex-1 truncate font-mono text-ui text-text-primary" title={stat.path}>
           {basename(stat.path)}
         </span>
         <span className="font-mono text-meta text-accent-green">+{stat.adds}</span>
         <span className="font-mono text-meta text-accent-red">−{stat.dels}</span>
       </div>
-      <div className="flex gap-px h-[3px] rounded overflow-hidden">
+      <div className="flex h-[3px] gap-px overflow-hidden rounded">
         {Array.from({ length: cells }).map((_, j) => {
           const filled =
             j < addsCells
@@ -493,7 +472,7 @@ function KvRow({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2">
       <span className="w-[70px] text-text-muted">{k}</span>
-      <span className="flex-1 min-w-0 truncate">{v}</span>
+      <span className="min-w-0 flex-1 truncate">{v}</span>
     </div>
   );
 }

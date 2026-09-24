@@ -11,6 +11,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  resolveWorktreePrTarget: vi.fn(),
+  publishBranchAsPr: vi.fn(),
   mergeConversationBranch: vi.fn(),
   getGitStatus: vi.fn(),
   removeConversationWorktree: vi.fn(),
@@ -27,7 +29,8 @@ vi.mock("@/lib/tauri", async (importActual) => {
 });
 
 vi.mock("@/lib/gitPublish", () => ({
-  publishBranchAsPr: vi.fn().mockResolvedValue({ ok: true, prNumber: 42 }),
+  publishBranchAsPr: mocks.publishBranchAsPr,
+  resolveWorktreePrTarget: mocks.resolveWorktreePrTarget,
 }));
 
 import { WorktreeLifecycleBar } from "@/components/workspace/WorktreeLifecycleBar";
@@ -72,6 +75,12 @@ function renderBar() {
 describe("WorktreeLifecycleBar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resolveWorktreePrTarget.mockResolvedValue({
+      owner: "actual",
+      repo: "project",
+      connectionId: "cloud",
+    });
+    mocks.publishBranchAsPr.mockResolvedValue({ ok: true, prNumber: 42 });
     mocks.getGitStatus.mockResolvedValue(""); // clean by default
     mocks.removeConversationWorktree.mockResolvedValue(undefined);
     mocks.mergeConversationBranch.mockResolvedValue({
@@ -83,6 +92,29 @@ describe("WorktreeLifecycleBar", () => {
     useAgentTaskStore.setState({ conversations: [seed()] } as never);
   });
 
+  it("resolves the worktree origin before publishing without a global repo selection", async () => {
+    renderBar();
+    fireEvent.click(screen.getByRole("button", { name: /create pr/i }));
+    await waitFor(() =>
+      expect(mocks.publishBranchAsPr).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "actual", repo: "project", connectionId: "cloud" }),
+      ),
+    );
+    expect(mocks.resolveWorktreePrTarget).toHaveBeenCalledWith("/repo/.pkt-worktrees/conv-wt");
+    expect(useAgentTaskStore.getState().conversations[0].worktree?.prNumber).toBe(42);
+  });
+  it("does not push or publish when worktree authority cannot be resolved", async () => {
+    mocks.resolveWorktreePrTarget.mockRejectedValue(new Error("Unknown Git host"));
+    const onFeedback = vi.fn();
+    render(<WorktreeLifecycleBar conversationId={CONV_ID} onFeedback={onFeedback} />);
+    fireEvent.click(screen.getByRole("button", { name: /create pr/i }));
+    await waitFor(() =>
+      expect(onFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "err", msg: expect.stringContaining("Unknown Git host") }),
+      ),
+    );
+    expect(mocks.publishBranchAsPr).not.toHaveBeenCalled();
+  });
   it("renders the four lifecycle actions and the pending chip", () => {
     renderBar();
     expect(screen.getByText("worktree pending")).toBeInTheDocument();
@@ -132,9 +164,7 @@ describe("WorktreeLifecycleBar", () => {
   });
 
   it("Merge back is disabled for remote (SSH) conversations", () => {
-    render(
-      <WorktreeLifecycleBar conversationId={CONV_ID} isRemote onFeedback={vi.fn()} />,
-    );
+    render(<WorktreeLifecycleBar conversationId={CONV_ID} isRemote onFeedback={vi.fn()} />);
     expect(screen.getByRole("button", { name: /merge back/i })).toBeDisabled();
   });
 
@@ -148,9 +178,7 @@ describe("WorktreeLifecycleBar", () => {
     expect(mocks.removeConversationWorktree).not.toHaveBeenCalled();
     const conv = useAgentTaskStore.getState().conversations.find((c) => c.id === CONV_ID);
     expect(conv?.worktree?.state).toBe("active");
-    expect(onFeedback).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "ok" }),
-    );
+    expect(onFeedback).toHaveBeenCalledWith(expect.objectContaining({ type: "ok" }));
   });
 
   it("Discard on a dirty tree requires confirm before removing anything", async () => {

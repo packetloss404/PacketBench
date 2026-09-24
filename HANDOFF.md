@@ -1,6 +1,6 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-09-12
+Last reconciled: 2026-09-24
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
@@ -9,6 +9,15 @@ the current contracts below supersede their older protocol and queue details.
 
 ## Checkout and artifacts
 
+- **Current work is source stabilization, with no feature expansion.** The
+  three-team September 24 audit and its fix ledger are linked from `backlog.md`.
+  Workspaces remain the primary focus. Read the current Git state before
+  resuming; none of these newer edits has been built into an installer yet.
+  All eleven local gate categories passed after the follow-up fixes and frozen
+  frontend rerun: 2,869 frontend tests and 14 browser cases passed. The follow-up
+  closes usage-write failures, first-observation alerts, hidden cost/Quality
+  leftovers and native local MCP project/network support. Exact scope and remaining
+  limits: `dev/existing-code-stabilization-2026-09-24.md`.
 - Working directory: `D:\projects\PacketBench`.
 - Remote: `git@github.com:packetloss404/PacketBench.git`.
 - **0.14.7 is built and pushed to main** (2026-09-12), from clean code commit

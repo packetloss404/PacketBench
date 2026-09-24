@@ -68,7 +68,7 @@ vi.mock("@/stores/appStore", () => ({
     vi.fn((selector?: (s: typeof mocks.appState) => unknown) =>
       selector ? selector(mocks.appState) : mocks.appState,
     ),
-    { getState: vi.fn(() => mocks.appState) },
+    { getState: vi.fn(() => mocks.appState), subscribe: vi.fn(() => vi.fn()) },
   ),
 }));
 

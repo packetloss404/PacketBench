@@ -19,7 +19,6 @@ import {
   type LucideIcon,
   MousePointer2,
   Pencil,
-  Plus,
   RefreshCw,
   RotateCcw,
   Sparkles,
@@ -30,7 +29,6 @@ import {
   X,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { createGenericConfig } from "@/agents/generic";
 import { useAgentStore } from "@/stores/agentStore";
 import { useCliOverrideStore } from "@/stores/cliOverrideStore";
 import { useLayoutStore } from "@/stores/layoutStore";
@@ -77,10 +75,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Diamond,
 };
 
-function renderCatalogIcon(
-  name: string,
-  className: string,
-): React.ReactElement {
+function renderCatalogIcon(name: string, className: string): React.ReactElement {
   const Resolved: LucideIcon = ICON_MAP[name] ?? Terminal;
   return <Resolved size={16} className={className} />;
 }
@@ -145,31 +140,11 @@ function agentToDraft(agent: AgentConfig): DraftState {
   };
 }
 
-function emptyDraft(): DraftState {
-  return {
-    id: null,
-    name: "",
-    command: "",
-    defaultArgsText: "",
-    description: "",
-    isBuiltin: false,
-  };
-}
-
 function parseArgs(value: string): string[] {
   return value
     .split("\n")
     .map((arg) => arg.trim())
     .filter(Boolean);
-}
-
-function makeCustomAgentId(name: string, command: string): string {
-  const seed = `${name || command}`
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32);
-  return `custom-${seed || "cli"}-${Date.now().toString(36)}`;
 }
 
 function commandSummary(agent: AgentConfig): string {
@@ -254,15 +229,17 @@ export function CliCatalogCard({
     // distinguish a missing file from one that exists but did not answer
     // `--version`, since both arrive as `installed: false` with no version.
     // Naming only the first would be wrong half the time.
-    versionText = (
-      <span className="italic text-accent-amber">pinned path not usable</span>
-    );
+    versionText = <span className="italic text-accent-amber">pinned path not usable</span>;
   } else if (variant === "browse-only") {
-    versionText = <span className="italic text-text-muted">Locate the executable to use it here.</span>;
+    versionText = (
+      <span className="italic text-text-muted">Locate the executable to use it here.</span>
+    );
   } else if (variant === "installable") {
     versionText = <span className="italic">not installed</span>;
   } else if (variant === "coming-soon") {
-    versionText = <span className="italic text-text-muted">Coming soon — track on the roadmap.</span>;
+    versionText = (
+      <span className="italic text-text-muted">Coming soon — track on the roadmap.</span>
+    );
   } else {
     versionText = <span className="italic">not installed</span>;
   }
@@ -287,18 +264,18 @@ export function CliCatalogCard({
         }
       }}
       aria-pressed={selected}
-      className={`relative flex flex-col gap-2 p-3 rounded border cursor-pointer transition-colors text-left ${outerClass}`}
+      className={`relative flex cursor-pointer flex-col gap-2 rounded border p-3 text-left transition-colors ${outerClass}`}
     >
       {/* Status dot */}
       <span
         aria-hidden="true"
-        className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full ${dotClass}`}
+        className={`absolute right-2 top-2 h-1.5 w-1.5 rounded-full ${dotClass}`}
       />
 
       <div className="flex items-start gap-3">
         {/* Icon block */}
         <div
-          className={`w-8 h-8 rounded flex items-center justify-center flex-shrink-0 ${
+          className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded ${
             installed ? brand.iconBg : "bg-bg-elevated"
           }`}
         >
@@ -307,29 +284,27 @@ export function CliCatalogCard({
           ) : variant === "coming-soon" ? (
             <Clock size={14} className="text-accent-amber/80" />
           ) : (
-            <span className="w-2 h-2 rounded-full bg-text-faint" />
+            <span className="h-2 w-2 rounded-full bg-text-faint" />
           )}
         </div>
 
         {/* Name + version/state line */}
-        <div className="flex-1 min-w-0 pr-4">
-          <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="min-w-0 flex-1 pr-4">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span
-              className={`text-xs font-medium truncate ${
+              className={`truncate text-xs font-medium ${
                 installed ? "text-text-primary" : "text-text-secondary"
               }`}
             >
               {entry.name}
             </span>
             {variant === "coming-soon" && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent-amber/15 text-accent-amber font-medium uppercase tracking-wide">
+              <span className="rounded bg-accent-amber/15 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-accent-amber">
                 Coming Soon
               </span>
             )}
           </div>
-          <div className="text-[10px] text-text-muted truncate mt-0.5">
-            {versionText}
-          </div>
+          <div className="mt-0.5 truncate text-[10px] text-text-muted">{versionText}</div>
         </div>
       </div>
 
@@ -339,10 +314,7 @@ export function CliCatalogCard({
           every CLI except PacketCode. */}
       {result?.path && (
         <div className="flex flex-col gap-0.5 text-[10px] leading-tight">
-          <span
-            className="truncate font-mono text-text-faint"
-            title={result.path}
-          >
+          <span className="truncate font-mono text-text-faint" title={result.path}>
             {result.path}
           </span>
           <span
@@ -371,7 +343,7 @@ export function CliCatalogCard({
       {manualPath && (
         <div className="flex items-center gap-1 text-[10px] text-text-faint" onClick={stop}>
           <span
-            className="px-1.5 py-0.5 rounded bg-bg-elevated text-text-muted truncate max-w-[180px]"
+            className="max-w-[180px] truncate rounded bg-bg-elevated px-1.5 py-0.5 text-text-muted"
             title={manualPath}
           >
             Override: {basename(manualPath)}
@@ -382,7 +354,7 @@ export function CliCatalogCard({
               stop(e);
               onClearOverride(entry);
             }}
-            className="p-0.5 rounded hover:bg-bg-hover hover:text-text-secondary transition-colors"
+            className="rounded p-0.5 transition-colors hover:bg-bg-hover hover:text-text-secondary"
             title="Clear manual path override"
           >
             <X size={10} />
@@ -394,12 +366,12 @@ export function CliCatalogCard({
           variants — the installed card relies on its version line and the
           shared Test button in the header. */}
       {!installed && (
-        <div className="flex items-center gap-1.5 flex-wrap" onClick={stop} onKeyDown={stop}>
+        <div className="flex flex-wrap items-center gap-1.5" onClick={stop} onKeyDown={stop}>
           {variant === "browse-only" && (
             <button
               type="button"
               onClick={() => onBrowse(entry)}
-              className="flex items-center gap-1 px-2 py-1 text-[10px] rounded border border-accent-blue/40 text-accent-blue hover:bg-accent-blue/10 transition-colors"
+              className="flex items-center gap-1 rounded border border-accent-blue/40 px-2 py-1 text-[10px] text-accent-blue transition-colors hover:bg-accent-blue/10"
             >
               <FolderOpen size={10} />
               Browse for binary
@@ -412,7 +384,7 @@ export function CliCatalogCard({
                 type="button"
                 onClick={() => onInstall(entry)}
                 disabled={installing}
-                className="flex items-center gap-1 px-2 py-1 text-[10px] rounded border border-accent-green/40 text-accent-green hover:bg-accent-green/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-1 rounded border border-accent-green/40 px-2 py-1 text-[10px] text-accent-green transition-colors hover:bg-accent-green/10 disabled:cursor-not-allowed disabled:opacity-50"
                 title={entry.installCommand}
               >
                 {installing ? (
@@ -425,7 +397,7 @@ export function CliCatalogCard({
               <button
                 type="button"
                 onClick={() => onBrowse(entry)}
-                className="text-[10px] text-text-muted hover:text-accent-blue underline underline-offset-2 transition-colors"
+                className="text-[10px] text-text-muted underline underline-offset-2 transition-colors hover:text-accent-blue"
               >
                 Browse…
               </button>
@@ -450,7 +422,7 @@ export function CliCatalogCard({
               target="_blank"
               rel="noreferrer"
               onClick={stop}
-              className="flex items-center gap-1 text-[10px] text-text-faint hover:text-accent-amber underline underline-offset-2"
+              className="flex items-center gap-1 text-[10px] text-text-faint underline underline-offset-2 hover:text-accent-amber"
             >
               <ExternalLink size={9} />
               Roadmap
@@ -461,7 +433,7 @@ export function CliCatalogCard({
             <button
               type="button"
               onClick={() => onBrowse(entry)}
-              className="flex items-center gap-1 px-2 py-1 text-[10px] rounded border border-bg-border text-text-secondary hover:bg-bg-hover transition-colors"
+              className="flex items-center gap-1 rounded border border-bg-border px-2 py-1 text-[10px] text-text-secondary transition-colors hover:bg-bg-hover"
             >
               <FolderOpen size={10} />
               Browse for binary
@@ -473,7 +445,7 @@ export function CliCatalogCard({
       {/* Installing feedback strip — present while we're spawning the
           install workspace. Clears when the install pane gets a sessionId. */}
       {installing && (
-        <div className="flex items-center gap-1 text-[10px] text-accent-green border-t border-accent-green/20 pt-1.5">
+        <div className="flex items-center gap-1 border-t border-accent-green/20 pt-1.5 text-[10px] text-accent-green">
           <Loader2 size={10} className="animate-spin" />
           <span>Installing in workspace →</span>
         </div>
@@ -491,7 +463,6 @@ interface CliAgentsCardProps {
 export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
   const agents = useAgentStore((s) => s.agents);
   const storeDetecting = useAgentStore((s) => s.detecting);
-  const addAgent = useAgentStore((s) => s.addAgent);
   const updateAgent = useAgentStore((s) => s.updateAgent);
   const removeAgent = useAgentStore((s) => s.removeAgent);
   const detectInstalled = useAgentStore((s) => s.detectInstalled);
@@ -501,9 +472,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
   const overrides = useCliOverrideStore((s) => s.overrides);
   const setManualPath = useCliOverrideStore((s) => s.setManualPath);
   const clearManualPath = useCliOverrideStore((s) => s.clearManualPath);
-  const packetCodeReleaseChannel = usePacketCodeIntegrationStore(
-    (s) => s.releaseChannel,
-  );
+  const packetCodeReleaseChannel = usePacketCodeIntegrationStore((s) => s.releaseChannel);
 
   const [results, setResults] = useState<Record<string, DetectCatalogResult>>({});
   const [scanning, setScanning] = useState(false);
@@ -532,10 +501,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
     useState<PacketCodeInstallReport | null>(null);
 
   useEffect(() => {
-    if (
-      !focusedCliId ||
-      !CLI_CATALOG.some((entry) => entry.id === focusedCliId)
-    ) {
+    if (!focusedCliId || !CLI_CATALOG.some((entry) => entry.id === focusedCliId)) {
       return;
     }
     setSelectedCliId(focusedCliId);
@@ -547,10 +513,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
     return () => cancelAnimationFrame(frame);
   }, [focusedCliId]);
 
-  const customAgents = useMemo(
-    () => agents.filter((a) => !a.isBuiltin),
-    [agents],
-  );
+  const customAgents = useMemo(() => agents.filter((a) => !a.isBuiltin), [agents]);
 
   /** Build the detector payload from the catalog, layering in any saved
    *  manual-path overrides so the backend resolves to the pinned binary
@@ -756,9 +719,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
           multiple: false,
           directory: false,
           title: `Locate ${entry.name} binary`,
-          filters: win
-            ? [{ name: "Executable", extensions: ["exe"] }]
-            : undefined,
+          filters: win ? [{ name: "Executable", extensions: ["exe"] }] : undefined,
         });
         if (!selected || typeof selected !== "string") {
           // Cancelled, or returned an array (we passed multiple: false so
@@ -806,12 +767,9 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
         next.add(entry.id);
         return next;
       });
-      const packetCodeChannel =
-        entry.id === "packetcode" ? packetCodeReleaseChannel : undefined;
+      const packetCodeChannel = entry.id === "packetcode" ? packetCodeReleaseChannel : undefined;
       if (packetCodeChannel) {
-        const before = await refreshPacketCodeInspection(
-          overrides.packetcode?.manualPath ?? null,
-        );
+        const before = await refreshPacketCodeInspection(overrides.packetcode?.manualPath ?? null);
         setPacketCodeInstallReport({
           status: "running",
           channel: packetCodeChannel,
@@ -929,10 +887,6 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
 
   // === Custom CLI drawer handlers (preserved) ===
 
-  function startCreate() {
-    setDraft(emptyDraft());
-    setAdvancedOpen(true);
-  }
   function startEdit(agent: AgentConfig) {
     setDraft(agentToDraft(agent));
     setAdvancedOpen(true);
@@ -950,15 +904,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
       updateAgent(draft.id, {
         command,
         defaultArgs,
-        ...(!draft.isBuiltin
-          ? { name, description: draft.description.trim() }
-          : {}),
-      });
-    } else {
-      const id = makeCustomAgentId(name, command);
-      addAgent({
-        ...createGenericConfig(id, name, command, draft.description.trim()),
-        defaultArgs,
+        ...(!draft.isBuiltin ? { name, description: draft.description.trim() } : {}),
       });
     }
     setDraft(null);
@@ -980,7 +926,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
   }
 
   return (
-    <div className="bg-bg-secondary border border-bg-border rounded-lg p-4">
+    <div className="rounded-lg border border-bg-border bg-bg-secondary p-4">
       <CliCatalogHeader
         installedCount={installedCount}
         selectedEntry={
@@ -998,9 +944,8 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
         onCopyDiagnostics={handleCopyDiagnostics}
       />
 
-
       {/* 2-column responsive grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {CLI_CATALOG.map((entry) => (
           <CliCatalogCard
             key={entry.id}
@@ -1035,60 +980,48 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
         <button
           type="button"
           onClick={() => setAdvancedOpen((v) => !v)}
-          className="flex items-center gap-1.5 text-[10px] text-text-muted hover:text-text-primary transition-colors"
+          className="flex items-center gap-1.5 text-[10px] text-text-muted transition-colors hover:text-text-primary"
         >
-          {advancedOpen ? (
-            <ChevronDown size={10} />
-          ) : (
-            <ChevronRight size={10} />
-          )}
-          Advanced — custom CLI agents
+          {advancedOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+          Advanced — saved CLI settings
           {customAgents.length > 0 && (
-            <span className="text-[10px] text-text-faint">
-              ({customAgents.length})
-            </span>
+            <span className="text-[10px] text-text-faint">({customAgents.length})</span>
           )}
         </button>
 
         {advancedOpen && (
           <div className="mt-3">
-            <div className="flex items-center justify-end gap-1 mb-2">
+            <div className="mb-2 flex items-center justify-end gap-1">
               <button
                 type="button"
                 onClick={() => setPendingResetBuiltins(true)}
-                className="flex items-center gap-1 px-2 py-1 text-[10px] text-text-muted hover:text-text-primary hover:bg-bg-hover rounded transition-colors"
+                className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
                 title="Reset built-in command overrides"
               >
                 <RotateCcw size={10} />
                 Reset built-ins
               </button>
-              <button
-                type="button"
-                onClick={startCreate}
-                className="flex items-center gap-1 px-2 py-1 text-[10px] text-accent-green hover:bg-accent-green/10 rounded transition-colors"
-              >
-                <Plus size={10} />
-                Custom
-              </button>
             </div>
 
+            <p className="mb-2 text-[10px] text-text-muted">
+              Custom CLI launching is not supported. Previously saved entries are retained below for
+              reference and removal.
+            </p>
             {customAgents.length === 0 && !draft ? (
-              <p className="text-[10px] text-text-faint italic">
-                No custom CLI agents yet. Click Custom to add one.
-              </p>
+              <p className="text-[10px] italic text-text-faint">No saved custom CLI entries.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {customAgents.map((agent) => (
                   <div
                     key={agent.id}
-                    className="flex items-start gap-2.5 p-2.5 bg-bg-primary border border-bg-border rounded-md"
+                    className="flex items-start gap-2.5 rounded-md border border-bg-border bg-bg-primary p-2.5"
                   >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[11.5px] font-semibold text-text-primary">
                           {agent.name}
                         </span>
-                        <span className="text-[9px] px-1 py-px rounded bg-bg-elevated text-text-muted">
+                        <span className="rounded bg-bg-elevated px-1 py-px text-[9px] text-text-muted">
                           custom
                         </span>
                         {detecting ? (
@@ -1108,21 +1041,21 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
                           </span>
                         )}
                       </div>
-                      <div className="text-[10px] text-text-muted mt-0.5 line-clamp-1">
+                      <div className="mt-0.5 line-clamp-1 text-[10px] text-text-muted">
                         {agent.description || "No description"}
                       </div>
                       <div
-                        className="text-[10px] text-text-faint mt-1 font-mono truncate"
+                        className="mt-1 truncate font-mono text-[10px] text-text-faint"
                         title={commandSummary(agent) || "No command"}
                       >
                         {commandSummary(agent) || "No command"}
                       </div>
                     </div>
-                    <div className="flex items-center gap-0.5 flex-shrink-0">
+                    <div className="flex flex-shrink-0 items-center gap-0.5">
                       <button
                         type="button"
                         onClick={() => startEdit(agent)}
-                        className="p-1 text-text-faint hover:text-accent-blue rounded"
+                        className="rounded p-1 text-text-faint hover:text-accent-blue"
                         title="Edit command and args"
                       >
                         <Pencil size={11} />
@@ -1130,7 +1063,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
                       <button
                         type="button"
                         onClick={() => requestRemove(agent)}
-                        className="p-1 text-text-faint hover:text-accent-red rounded"
+                        className="rounded p-1 text-text-faint hover:text-accent-red"
                         title={`Delete custom CLI agent “${agent.name}”`}
                         aria-label={`Delete custom CLI agent ${agent.name}`}
                       >
@@ -1143,8 +1076,8 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
             )}
 
             {draft && (
-              <div className="mt-3 p-3 border border-accent-blue/40 rounded-md bg-bg-primary">
-                <div className="flex items-center justify-between mb-2">
+              <div className="mt-3 rounded-md border border-accent-blue/40 bg-bg-primary p-3">
+                <div className="mb-2 flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-text-primary">
                     {draft.id ? `Edit ${draft.name}` : "New custom CLI agent"}
                   </span>
@@ -1152,11 +1085,8 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
                     <button
                       type="button"
                       onClick={save}
-                      disabled={
-                        !draft.command.trim() ||
-                        (!draft.isBuiltin && !draft.name.trim())
-                      }
-                      className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-accent-green/40 text-accent-green hover:bg-accent-green/10 disabled:opacity-40"
+                      disabled={!draft.command.trim() || (!draft.isBuiltin && !draft.name.trim())}
+                      className="flex items-center gap-1 rounded border border-accent-green/40 px-2 py-1 text-[11px] text-accent-green hover:bg-accent-green/10 disabled:opacity-40"
                     >
                       <Check size={11} />
                       Save
@@ -1164,7 +1094,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
                     <button
                       type="button"
                       onClick={cancel}
-                      className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-bg-border text-text-secondary hover:bg-bg-hover"
+                      className="flex items-center gap-1 rounded border border-bg-border px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-hover"
                     >
                       <X size={11} />
                       Cancel
@@ -1172,18 +1102,16 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 mb-2">
+                <div className="mb-2 grid grid-cols-2 gap-2">
                   <label className="flex flex-col gap-1">
                     <span className="text-[10px] text-text-muted">Name</span>
                     <input
                       type="text"
                       value={draft.name}
                       disabled={draft.isBuiltin}
-                      onChange={(e) =>
-                        setDraft({ ...draft, name: e.target.value })
-                      }
+                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                       placeholder="My CLI agent"
-                      className="bg-bg-secondary border border-bg-border rounded px-2 py-1 text-[11px] text-text-primary disabled:text-text-muted disabled:opacity-70 focus:outline-none focus:border-accent-blue/60"
+                      className="rounded border border-bg-border bg-bg-secondary px-2 py-1 text-[11px] text-text-primary focus:border-accent-blue/60 focus:outline-none disabled:text-text-muted disabled:opacity-70"
                     />
                   </label>
                   <label className="flex flex-col gap-1">
@@ -1191,48 +1119,38 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
                     <input
                       type="text"
                       value={draft.command}
-                      onChange={(e) =>
-                        setDraft({ ...draft, command: e.target.value })
-                      }
+                      onChange={(e) => setDraft({ ...draft, command: e.target.value })}
                       placeholder="claude, codex, C:\\tools\\agent.cmd"
-                      className="bg-bg-secondary border border-bg-border rounded px-2 py-1 text-[11px] text-text-primary focus:outline-none focus:border-accent-blue/60 font-mono"
+                      className="rounded border border-bg-border bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-primary focus:border-accent-blue/60 focus:outline-none"
                     />
                   </label>
                 </div>
 
                 {!draft.isBuiltin && (
-                  <label className="flex flex-col gap-1 mb-2">
-                    <span className="text-[10px] text-text-muted">
-                      Description
-                    </span>
+                  <label className="mb-2 flex flex-col gap-1">
+                    <span className="text-[10px] text-text-muted">Description</span>
                     <input
                       type="text"
                       value={draft.description}
-                      onChange={(e) =>
-                        setDraft({ ...draft, description: e.target.value })
-                      }
+                      onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                       placeholder="What this CLI is used for"
-                      className="bg-bg-secondary border border-bg-border rounded px-2 py-1 text-[11px] text-text-primary focus:outline-none focus:border-accent-blue/60"
+                      className="rounded border border-bg-border bg-bg-secondary px-2 py-1 text-[11px] text-text-primary focus:border-accent-blue/60 focus:outline-none"
                     />
                   </label>
                 )}
 
                 <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-text-muted">
-                    Default args, one per line
-                  </span>
+                  <span className="text-[10px] text-text-muted">Default args, one per line</span>
                   <textarea
                     value={draft.defaultArgsText}
-                    onChange={(e) =>
-                      setDraft({ ...draft, defaultArgsText: e.target.value })
-                    }
+                    onChange={(e) => setDraft({ ...draft, defaultArgsText: e.target.value })}
                     rows={4}
                     placeholder={"--model\nsonnet"}
-                    className="bg-bg-secondary border border-bg-border rounded px-2 py-1 text-[11px] text-text-primary focus:outline-none focus:border-accent-blue/60 font-mono resize-y"
+                    className="resize-y rounded border border-bg-border bg-bg-secondary px-2 py-1 font-mono text-[11px] text-text-primary focus:border-accent-blue/60 focus:outline-none"
                   />
                   <span className="text-[9.5px] text-text-faint">
-                    Args are passed before the task prompt. Use a wrapper script
-                    for complex shell quoting.
+                    Args are passed before the task prompt. Use a wrapper script for complex shell
+                    quoting.
                   </span>
                 </label>
               </div>

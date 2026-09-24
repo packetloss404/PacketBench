@@ -329,6 +329,28 @@ impl SidecarManager {
                 );
             }
             "done" => {
+                if let Err(message) = crate::commands::usage::ensure_usage_accounting_healthy() {
+                    let _ = crate::commands::flight_attempts::update_attempt_status_by_session(
+                        &session_id,
+                        crate::core::flight::AttemptStatus::Failed,
+                        Some(message.clone()),
+                    )
+                    .await;
+                    let _ = self.app_handle.emit(
+                        &error_event(&session_id),
+                        ErrorPayload {
+                            message: message.clone(),
+                        },
+                    );
+                    if let Some(mut waiter) = self.oneshot_waiters.lock().await.remove(&session_id)
+                    {
+                        if let Some(sender) = waiter.sender.take() {
+                            let _ = sender.send(Err(message));
+                        }
+                    }
+                    return;
+                }
+
                 let input_tokens = value
                     .get("inputTokens")
                     .and_then(|v| v.as_u64())
@@ -548,17 +570,6 @@ impl SidecarManager {
                     .filter(|s| !s.is_empty())
                     .map(String::from);
                 let address_for_async = address.clone();
-                let _ = self.app_handle.emit(
-                    &turn_summary_event(&session_id),
-                    TurnSummaryPayload {
-                        input_tokens,
-                        output_tokens,
-                        cache_read_input_tokens,
-                        cache_creation_input_tokens,
-                        reasoning_tokens,
-                        address,
-                    },
-                );
 
                 // E8-ACCUM — accumulate this turn's token + cost spend onto
                 // the owning Flight DTO for executor sidecar sessions linked
@@ -588,188 +599,210 @@ impl SidecarManager {
                 // `provider == "openai-codex"`; it is retained so old data
                 // cannot double-count, not because any live session uses it.
                 //
-                // Async-dispatched so we never block the sidecar event loop
-                // on the `with_state_lock` mutex, and short-circuits cleanly
+                // Await accounting before publishing summary or reading the next done
+                // event: queued-turn budget checks must see this spend. This short-circuits
                 // for sessions with neither ledger metadata nor a flight
                 // role.
                 let session_for_async = session_id.clone();
                 let app_for_async = self.app_handle.clone();
                 let snapshots = std::sync::Arc::clone(&self.exec_token_snapshots);
                 let usage_meta = std::sync::Arc::clone(&self.session_usage_meta);
-                // Order guard for the cumulative-delta accounting below: the
-                // rollup runs in an unordered spawned task whose
-                // variable-latency load_state() means a newer/larger codex
-                // snapshot can reach the lock before an older/smaller one —
-                // which would read as a counter reset and re-roll the full
-                // session-cumulative as new spend. Stamp each turn_summary
-                // with a monotonic sequence HERE (events for one session are
-                // dispatched sequentially by their reader loop, so stamps
-                // reflect per-session arrival order) and drop out-of-order
-                // events under the lock; the next in-order event's delta
-                // self-corrects.
+                // Retain sequence protection for historical cumulative snapshots.
+                // This reader now awaits accounting in arrival order before it
+                // publishes the summary or processes the following done event.
                 let seq = self
                     .exec_turn_seq
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                tauri::async_runtime::spawn(async move {
-                    // Two independent consumers of this turn's delta:
-                    //   * the usage ledger (`~/.packetbench/usage.jsonl`) — fed for
-                    //     EVERY sidecar session via the supervisor's start-time
-                    //     provider/model registry, so standalone chats meter too;
-                    //   * the flight cost rollup — only for sessions linked to a
-                    //     flight via attempt/task session_id.
-                    let meta = usage_meta.lock().await.get(&session_for_async).cloned();
-                    let state_snap = crate::core::storage::load_state();
-                    let owner = crate::commands::flight_cost::flight_for_executor_session(
-                        &state_snap,
-                        &session_for_async,
-                    );
-                    if meta.is_none() && owner.is_none() {
-                        return;
-                    }
-                    // Retired-Codex `turn_summary` events carried
-                    // session-cumulative totals — accumulate only the delta
-                    // since the previous snapshot. Every live provider
-                    // (claude-oauth / openai-agents) reports per-turn. The
-                    // discriminator stays the flight linkage's provider field
-                    // (historical codex task sessions are only reachable
-                    // through it); ownerless sessions are always per-turn.
-                    let cumulative = owner.as_ref().is_some_and(|o| o.provider == "openai-codex");
-                    let (d_in, d_out, d_cr, d_cc) = if cumulative {
-                        let key = (
-                            session_for_async.clone(),
-                            address_for_async.unwrap_or_default(),
+                publish_after_accounting(
+                    async move {
+                        // Two independent consumers of this turn's delta:
+                        //   * the usage ledger (`~/.packetbench/usage.jsonl`) — fed for
+                        //     EVERY sidecar session via the supervisor's start-time
+                        //     provider/model registry, so standalone chats meter too;
+                        //   * the flight cost rollup — only for sessions linked to a
+                        //     flight via attempt/task session_id.
+                        let meta = usage_meta.lock().await.get(&session_for_async).cloned();
+                        let state_snap = crate::core::storage::load_state();
+                        let owner = crate::commands::flight_cost::flight_for_executor_session(
+                            &state_snap,
+                            &session_for_async,
                         );
-                        let cur = [
-                            input_tokens,
-                            output_tokens,
-                            cache_read_input_tokens,
-                            cache_creation_input_tokens,
-                        ];
-                        let mut map = snapshots.lock().await;
-                        let prev_entry = map.get(&key).copied();
-                        if let Some((prev_seq, _)) = prev_entry {
-                            if seq < prev_seq {
-                                // Out-of-order arrival: a newer snapshot was
-                                // already processed for this (session,
-                                // address). Drop this event — its spend is
-                                // subsumed by the newer snapshot's delta.
-                                return;
-                            }
+                        if meta.is_none() && owner.is_none() {
+                            return;
                         }
-                        let prev = prev_entry.map(|(_, totals)| totals).unwrap_or([0; 4]);
-                        // Counter reset (new codex process): any component
-                        // shrinking means the cumulative counter restarted —
-                        // re-baseline at zero so the new spend is counted
-                        // once in full.
-                        let base = if (0..4).any(|i| cur[i] < prev[i]) {
-                            [0; 4]
-                        } else {
-                            prev
-                        };
-                        map.insert(key, (seq, cur));
-                        (
-                            cur[0] - base[0],
-                            cur[1] - base[1],
-                            cur[2] - base[2],
-                            cur[3] - base[3],
-                        )
-                    } else {
-                        (
-                            input_tokens,
-                            output_tokens,
-                            cache_read_input_tokens,
-                            cache_creation_input_tokens,
-                        )
-                    };
-                    let exec_total_tokens = d_in
-                        .saturating_add(d_out)
-                        .saturating_add(d_cr)
-                        .saturating_add(d_cc);
-                    if exec_total_tokens == 0 {
-                        // Nothing new to roll up (repeat cumulative snapshot).
-                        return;
-                    }
-                    // Usage ledger first, so a missing/foreign flight can
-                    // never drop the spend from the guardrail input
-                    // (`read_usage_analytics` → costGuardrails). Prefer the
-                    // start-time registry — it tracks `set_model` hot-swaps
-                    // and carries the real sidecar provider id — and fall
-                    // back to the flight linkage's fields for sessions whose
-                    // registry entry is already gone. This is the ONLY
-                    // ledger writer for sidecar sessions (the `done` event
-                    // carries turn totals already summed here), so each
-                    // turn is recorded exactly once.
-                    let ledger = meta
-                        .as_ref()
-                        .map(|m| (m.provider.clone(), m.model.clone()))
-                        .or_else(|| {
-                            owner
-                                .as_ref()
-                                .map(|o| (o.provider.clone(), o.model.clone()))
-                        });
-                    if let Some((provider, model)) = ledger {
-                        // Skip the dev-only echo smoke provider and
-                        // model-less task linkages — a row that can't be
-                        // priced or attributed is noise in analytics.
-                        if provider != "echo" && !model.is_empty() {
-                            let entry = super::sidecar_usage_entry(
-                                &provider,
-                                &model,
-                                &session_for_async,
-                                d_in,
-                                d_out,
-                                d_cr,
-                                d_cc,
+                        // Retired-Codex `turn_summary` events carried
+                        // session-cumulative totals — accumulate only the delta
+                        // since the previous snapshot. Every live provider
+                        // (claude-oauth / openai-agents) reports per-turn. The
+                        // discriminator stays the flight linkage's provider field
+                        // (historical codex task sessions are only reachable
+                        // through it); ownerless sessions are always per-turn.
+                        let cumulative =
+                            owner.as_ref().is_some_and(|o| o.provider == "openai-codex");
+                        let (d_in, d_out, d_cr, d_cc) = if cumulative {
+                            let key = (
+                                session_for_async.clone(),
+                                address_for_async.unwrap_or_default(),
                             );
-                            if let Err(e) = crate::commands::usage::append_usage_entry(&entry) {
-                                warn!(
-                                    session_id = %session_for_async,
-                                    error = %e,
-                                    "Failed to persist sidecar API-agent usage"
+                            let cur = [
+                                input_tokens,
+                                output_tokens,
+                                cache_read_input_tokens,
+                                cache_creation_input_tokens,
+                            ];
+                            let mut map = snapshots.lock().await;
+                            let prev_entry = map.get(&key).copied();
+                            if let Some((prev_seq, _)) = prev_entry {
+                                if seq < prev_seq {
+                                    // Out-of-order arrival: a newer snapshot was
+                                    // already processed for this (session,
+                                    // address). Drop this event — its spend is
+                                    // subsumed by the newer snapshot's delta.
+                                    return;
+                                }
+                            }
+                            let prev = prev_entry.map(|(_, totals)| totals).unwrap_or([0; 4]);
+                            // Counter reset (new codex process): any component
+                            // shrinking means the cumulative counter restarted —
+                            // re-baseline at zero so the new spend is counted
+                            // once in full.
+                            let base = if (0..4).any(|i| cur[i] < prev[i]) {
+                                [0; 4]
+                            } else {
+                                prev
+                            };
+                            map.insert(key, (seq, cur));
+                            (
+                                cur[0] - base[0],
+                                cur[1] - base[1],
+                                cur[2] - base[2],
+                                cur[3] - base[3],
+                            )
+                        } else {
+                            (
+                                input_tokens,
+                                output_tokens,
+                                cache_read_input_tokens,
+                                cache_creation_input_tokens,
+                            )
+                        };
+                        let exec_total_tokens = d_in
+                            .saturating_add(d_out)
+                            .saturating_add(d_cr)
+                            .saturating_add(d_cc);
+                        if exec_total_tokens == 0 {
+                            // Nothing new to roll up (repeat cumulative snapshot).
+                            return;
+                        }
+                        // Usage ledger first, so a missing/foreign flight can
+                        // never drop the spend from the guardrail input
+                        // (`read_usage_analytics` → costGuardrails). Prefer the
+                        // start-time registry — it tracks `set_model` hot-swaps
+                        // and carries the real sidecar provider id — and fall
+                        // back to the flight linkage's fields for sessions whose
+                        // registry entry is already gone. This is the ONLY
+                        // ledger writer for sidecar sessions (the `done` event
+                        // carries turn totals already summed here), so each
+                        // turn is recorded exactly once.
+                        let ledger = meta
+                            .as_ref()
+                            .map(|m| (m.provider.clone(), m.model.clone()))
+                            .or_else(|| {
+                                owner
+                                    .as_ref()
+                                    .map(|o| (o.provider.clone(), o.model.clone()))
+                            });
+                        if let Some((provider, model)) = ledger {
+                            // Skip the dev-only echo smoke provider and
+                            // model-less task linkages — a row that can't be
+                            // priced or attributed is noise in analytics.
+                            if provider != "echo" && !model.is_empty() {
+                                let entry = super::sidecar_usage_entry(
+                                    &provider,
+                                    &model,
+                                    &session_for_async,
+                                    d_in,
+                                    d_out,
+                                    d_cr,
+                                    d_cc,
                                 );
+                                if let Err(e) = crate::commands::usage::append_usage_entry(&entry) {
+                                    warn!(
+                                        session_id = %session_for_async,
+                                        error = %e,
+                                        "Failed to persist sidecar API-agent usage"
+                                    );
+                                }
                             }
                         }
-                    }
-                    let Some(owner) = owner else {
-                        // Standalone chat: metered above, no flight to roll
-                        // up onto.
-                        return;
-                    };
-                    let exec_cost_usd = crate::commands::pricing::calculate_cost(
-                        &owner.model,
-                        d_in,
-                        d_out,
-                        d_cr,
-                        d_cc,
-                    );
-                    if let Err(e) = crate::commands::flight_cost::accumulate_executor_cost(
-                        &owner.flight_id,
-                        exec_total_tokens,
-                        exec_cost_usd,
-                    )
-                    .await
-                    {
-                        warn!(
-                            flight_id = %owner.flight_id,
-                            error = %e,
-                            "E8-ACCUM: failed to accumulate executor cost"
+                        let Some(owner) = owner else {
+                            // Standalone chat: metered above, no flight to roll
+                            // up onto.
+                            return;
+                        };
+                        let exec_cost_usd = crate::commands::pricing::calculate_cost(
+                            &owner.model,
+                            d_in,
+                            d_out,
+                            d_cr,
+                            d_cc,
                         );
-                    } else {
-                        let _ = app_for_async.emit(
-                            "flight:cost-updated",
-                            serde_json::json!({
-                                "flightId": owner.flight_id,
-                                "inputTokens": d_in,
-                                "outputTokens": d_out,
-                                "cacheReadInputTokens": d_cr,
-                                "cacheCreationInputTokens": d_cc,
-                                "totalTokens": exec_total_tokens,
-                                "costUsd": exec_cost_usd,
-                                "source": "executor",
-                            }),
+                        if let Err(e) = crate::commands::flight_cost::accumulate_executor_cost(
+                            &owner.flight_id,
+                            exec_total_tokens,
+                            exec_cost_usd,
+                        )
+                        .await
+                        {
+                            warn!(
+                                flight_id = %owner.flight_id,
+                                error = %e,
+                                "E8-ACCUM: failed to accumulate executor cost"
+                            );
+                        } else {
+                            let _ = app_for_async.emit(
+                                "flight:cost-updated",
+                                serde_json::json!({
+                                    "flightId": owner.flight_id,
+                                    "inputTokens": d_in,
+                                    "outputTokens": d_out,
+                                    "cacheReadInputTokens": d_cr,
+                                    "cacheCreationInputTokens": d_cc,
+                                    "totalTokens": exec_total_tokens,
+                                    "costUsd": exec_cost_usd,
+                                    "source": "executor",
+                                }),
+                            );
+                        }
+                    },
+                    || {
+                        if let Err(message) =
+                            crate::commands::usage::ensure_usage_accounting_healthy()
+                        {
+                            let _ = self
+                                .app_handle
+                                .emit(&error_event(&session_id), ErrorPayload { message });
+                            return;
+                        }
+                        let _ = self.app_handle.emit(
+                            &turn_summary_event(&session_id),
+                            TurnSummaryPayload {
+                                input_tokens,
+                                output_tokens,
+                                cache_read_input_tokens,
+                                cache_creation_input_tokens,
+                                reasoning_tokens,
+                                address,
+                            },
                         );
-                    }
-                });
+                    },
+                )
+                .await;
+                if crate::commands::usage::ensure_usage_accounting_healthy().is_err() {
+                    // Stop further provider rounds after a completed turn could
+                    // not be accounted. Cancellation remains available while unhealthy.
+                    let _ = self.forward_cancel(session_id.clone()).await;
+                }
             }
             "error" => {
                 let message = value
@@ -863,5 +896,44 @@ pub(super) fn truncate(s: &str, max: usize) -> String {
             end -= 1;
         }
         format!("{}…", &s[..end])
+    }
+}
+
+/// The per-session sidecar reader awaits this before it can dispatch done.
+async fn publish_after_accounting(
+    accounting: impl std::future::Future<Output = ()>,
+    publish: impl FnOnce(),
+) {
+    accounting.await;
+    publish();
+}
+
+#[cfg(test)]
+mod accounting_order_tests {
+    #[tokio::test]
+    async fn blocked_usage_write_prevents_summary_and_following_done() {
+        use std::sync::{Arc, Mutex};
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let task_events = Arc::clone(&events);
+        let task = tokio::spawn(async move {
+            super::publish_after_accounting(
+                async {
+                    wait.await.unwrap();
+                    task_events.lock().unwrap().push("usage persisted");
+                },
+                || task_events.lock().unwrap().push("summary"),
+            )
+            .await;
+            task_events.lock().unwrap().push("done");
+        });
+        tokio::task::yield_now().await;
+        assert!(events.lock().unwrap().is_empty());
+        release.send(()).unwrap();
+        task.await.unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec!["usage persisted", "summary", "done"]
+        );
     }
 }

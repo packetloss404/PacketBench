@@ -192,6 +192,12 @@ export function AgentChatPane({
     id: null,
     text: "",
   });
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  function updateSetting(change: Promise<void>) {
+    setSettingsError(null);
+    void change.catch((error) => setSettingsError(`Could not update conversation settings: ${String(error)}`));
+  }
 
   const { messagesContainerRef, messagesContentRef, messagesEndRef, isAtBottom, unreadCount, jumpToBottom } =
     useScrollState(conversationId, conversation?.messages);
@@ -264,13 +270,13 @@ export function AgentChatPane({
     if (!conversation || conversation.mode !== "api") return;
     const flags = flagsForMode(next, conversation.approveWrites ?? false);
     if (flags.planMode !== (conversation.planMode ?? false)) {
-      void actions.setPlanMode(conversationId, flags.planMode);
+      updateSetting(actions.setPlanMode(conversationId, flags.planMode));
     }
     if (flags.permissionMode !== (conversation.permissionMode ?? "ask_for_risky")) {
-      void actions.setPermissionMode(conversationId, flags.permissionMode);
+      updateSetting(actions.setPermissionMode(conversationId, flags.permissionMode));
     }
     if (flags.approveWrites !== (conversation.approveWrites ?? false)) {
-      void actions.setApproveWrites(conversationId, flags.approveWrites);
+      updateSetting(actions.setApproveWrites(conversationId, flags.approveWrites));
     }
   }
 
@@ -479,6 +485,7 @@ export function AgentChatPane({
         />
       )}
 
+      {settingsError && <p role="alert" className="px-3 py-1 text-xs text-accent-red">{settingsError}</p>}
       <Composer
         variant="chat"
         conversationId={conversationId}
@@ -487,8 +494,8 @@ export function AgentChatPane({
         onCancelPending={() => void approvalActions.cancelPendingTools(conversationId)}
         onCycleMode={cycleMode}
         onSelectMode={applyMode}
-        onSetApproveWrites={(on) => void actions.setApproveWrites(conversationId, on)}
-        onChangeModel={(model) => void actions.changeModel(conversationId, model)}
+        onSetApproveWrites={(on) => updateSetting(actions.setApproveWrites(conversationId, on))}
+        onChangeModel={(model) => updateSetting(actions.changeModel(conversationId, model))}
       />
     </div>
   );

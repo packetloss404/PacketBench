@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { API_PROVIDERS } from "@/lib/api-models";
 import { pickFailoverModel } from "@/lib/autoFailover";
-import { aggregateConversationCost, getModelRates } from "@/lib/conversationCost";
+import { estimateTurnCostUsd, getModelRates } from "@/lib/conversationCost";
 import { pricingStatusForModel } from "@/lib/modelPricing";
 import type { AgentConversation } from "@/types/agent-conversation";
 
@@ -42,16 +42,15 @@ describe("model metadata", () => {
     ).toBe("claude-sonnet-9-experimental");
     // And it still declines honestly when the live list offers no lower tier,
     // rather than inventing a bundled id the session cannot reach.
-    expect(pickFailoverModel("claude-opus-9-experimental", ["claude-opus-9-experimental"]))
-      .toBeNull();
+    expect(
+      pickFailoverModel("claude-opus-9-experimental", ["claude-opus-9-experimental"]),
+    ).toBeNull();
   });
 
   it("falls back to the bundled catalog when no live list is available", () => {
     // The pre-seam behaviour, unchanged for every caller that has nothing
     // better to offer.
-    expect(pickFailoverModel("claude-opus-4-7", [])).toBe(
-      pickFailoverModel("claude-opus-4-7"),
-    );
+    expect(pickFailoverModel("claude-opus-4-7", [])).toBe(pickFailoverModel("claude-opus-4-7"));
   });
 
   it("returns only catalog-backed failover models", () => {
@@ -70,13 +69,13 @@ describe("model metadata", () => {
     }
   });
 
-  it("covers fixed-price catalog models used by the cost pill", () => {
-    const fixedPriceModels = [...catalogValues].filter(
-      (model) => model !== "openrouter/auto",
-    );
+  it("can price fixed-price catalog models for usage accounting", () => {
+    const fixedPriceModels = [...catalogValues].filter((model) => model !== "openrouter/auto");
 
     for (const model of fixedPriceModels) {
-      const { estCost } = aggregateConversationCost(conversationWithModel(model));
+      const conversation = conversationWithModel(model);
+      const message = conversation.messages[0];
+      const estCost = estimateTurnCostUsd(model, message, message.timestamp);
       expect(estCost, model).not.toBeNull();
     }
   });

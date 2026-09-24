@@ -38,6 +38,8 @@ pub mod llm_system_prompt;
 pub mod llm_types;
 pub mod mcp_bridge;
 pub mod mcp_client;
+pub mod mcp_network;
+pub mod mcp_session;
 pub mod migration;
 pub mod orchestrator;
 pub mod project_trust;

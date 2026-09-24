@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { storageKey } from "@/lib/brand";
 import { computeCostGuardrailStatus, normalizeCostGuardrailSettings } from "@/lib/costGuardrails";
 import type { AnalyticsData } from "../analyticsStore";
+import type { AgentConversation } from "@/types/agent-conversation";
+
+const sessions = vi.hoisted(() => ({ conversations: [] as AgentConversation[] }));
+const notifyCostThreshold = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/notifications", () => ({ notifyCostThreshold }));
+vi.mock("@/stores/agentTaskStore", () => ({ useAgentTaskStore: { getState: () => sessions } }));
 
 const invokeMock = vi.fn();
 
@@ -35,6 +41,8 @@ describe("cost guardrails", () => {
   beforeEach(() => {
     localStorage.clear();
     invokeMock.mockReset();
+    sessions.conversations = [];
+    notifyCostThreshold.mockReset().mockResolvedValue(true);
   });
 
   it("computes warning and hard-limit states from daily spend", () => {
@@ -115,5 +123,79 @@ describe("cost guardrails", () => {
       dailyLimitUsd: 10,
       warningThresholdPercent: 70,
     });
+  });
+
+  it("monitors each conversation using durable usage, without double-counting it in the daily snapshot", async () => {
+    const { useAnalyticsStore } = await loadStore();
+    sessions.conversations = [
+      {
+        id: "a",
+        mode: "api",
+        model: "new-model",
+        messages: [{ role: "assistant", costUsd: 2 }],
+      } as AgentConversation,
+    ];
+    useAnalyticsStore.getState().updateGuardrailSettings({ sessionLimitUsd: 2.5 });
+    invokeMock.mockResolvedValue(
+      JSON.stringify(analytics({ todayCostUsd: 3, sessionCostsById: { a: 3 } })),
+    );
+    await useAnalyticsStore.getState().load();
+    expect(useAnalyticsStore.getState().guardrailStatus.activeScope).toMatchObject({
+      scope: "session:a",
+      spendUsd: 3,
+      level: "limit",
+    });
+    expect(useAnalyticsStore.getState().guardrailStatus.snapshot.todayUsd).toBe(3);
+    useAnalyticsStore.getState().updateGuardrailSettings({ sessionLimitUsd: 4 });
+    expect(useAnalyticsStore.getState().guardrailStatus.scopes).toContainEqual(
+      expect.objectContaining({ scope: "session:a", spendUsd: 3 }),
+    );
+  });
+
+  it("notifies an already-exceeded budget on first observation only once, then reports escalation", async () => {
+    const { useAnalyticsStore } = await loadStore();
+    useAnalyticsStore.getState().updateGuardrailSettings({ dailyLimitUsd: 10 });
+    invokeMock.mockResolvedValue(JSON.stringify(analytics({ todayCostUsd: 8.5 })));
+    await useAnalyticsStore.getState().load();
+    await vi.waitFor(() =>
+      expect(notifyCostThreshold).toHaveBeenCalledWith("daily", expect.stringContaining("warning")),
+    );
+    await useAnalyticsStore.getState().load();
+    expect(notifyCostThreshold).toHaveBeenCalledTimes(1);
+    invokeMock.mockResolvedValue(JSON.stringify(analytics({ todayCostUsd: 11 })));
+    await useAnalyticsStore.getState().load();
+    await vi.waitFor(() => expect(notifyCostThreshold).toHaveBeenCalledTimes(2));
+    expect(notifyCostThreshold).toHaveBeenLastCalledWith(
+      "daily",
+      expect.stringContaining("$11.00"),
+    );
+  });
+
+  it("retries suppressed first-observation alerts without duplicating an in-flight notification", async () => {
+    const { useAnalyticsStore } = await loadStore();
+    useAnalyticsStore.getState().updateGuardrailSettings({ sessionLimitUsd: 2 });
+    sessions.conversations = [
+      { id: "new", mode: "api", model: "test", messages: [] } as unknown as AgentConversation,
+    ];
+    invokeMock.mockResolvedValue(JSON.stringify(analytics({ sessionCostsById: { new: 3 } })));
+    let complete!: (delivered: boolean) => void;
+    notifyCostThreshold.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        complete = resolve;
+      }),
+    );
+    await useAnalyticsStore.getState().load();
+    await useAnalyticsStore.getState().load();
+    expect(notifyCostThreshold).toHaveBeenCalledTimes(1);
+    complete(false);
+    await Promise.resolve();
+    await useAnalyticsStore.getState().load();
+    await vi.waitFor(() => expect(notifyCostThreshold).toHaveBeenCalledTimes(2));
+    expect(notifyCostThreshold).toHaveBeenLastCalledWith(
+      "session:new",
+      expect.stringContaining("$3.00"),
+    );
+    await useAnalyticsStore.getState().load();
+    expect(notifyCostThreshold).toHaveBeenCalledTimes(2);
   });
 });

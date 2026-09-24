@@ -150,23 +150,28 @@ export function McpHubCard() {
     });
   }
 
-  async function reconnectSelectedConversation() {
+  async function reconnectSelectedConversation(withoutMcp = false) {
     if (!selectedConversationId) return;
     setBusyKey("reconnect");
     setNotice(null);
     try {
-      await prepareMcpReconnect(selectedConversationId);
+      if (withoutMcp) await prepareMcpReconnect(selectedConversationId, []);
+      else await prepareMcpReconnect(selectedConversationId);
       recordAudit({
         conversationId: "mcp-hub",
         toolId: selectedConversationId,
         action: "MCP session reconnect prepared",
         target: selectedConversation?.title ?? selectedConversationId,
         decision: "profile_changed",
-        effectivePolicy: "backend closed; current trust will freeze on the next user turn",
+        effectivePolicy: withoutMcp
+          ? "backend closed; all MCP servers explicitly disabled for this conversation"
+          : "backend closed; current trust will freeze on the next user turn",
         sourceChain: [],
       });
       setNotice(
-        "The selected agent backend was closed safely. Its next user turn will reconnect with the current MCP trust snapshot.",
+        withoutMcp
+          ? "MCP is disabled for the selected conversation. Its backend was closed safely; the next user turn will reconnect without MCP servers."
+          : "The selected agent backend was closed safely. Its next user turn will reconnect with the current MCP trust snapshot.",
       );
     } catch (error) {
       setNotice(String(error));
@@ -186,11 +191,11 @@ export function McpHubCard() {
             </h3>
             <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-text-muted">
               Discover servers, diagnose live capabilities, and freeze read/write/network/root
-              authority into each {APP_NAME}-managed MCP session. Trust edits never broaden a running
-              session.
+              authority into each {APP_NAME}-managed MCP session. Trust edits never broaden a
+              running session.
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               onClick={() => void reconnectSelectedConversation()}
               disabled={
@@ -199,12 +204,24 @@ export function McpHubCard() {
                 busyKey === "reconnect"
               }
               title="Close the selected API-agent backend; its next turn reconnects with current MCP trust"
-              className="border-accent-green/30 bg-accent-green/10 rounded border px-2 py-1 text-[9px] text-accent-green disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded border border-accent-green/30 bg-accent-green/10 px-2 py-1 text-[9px] text-accent-green disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busyKey === "reconnect" ? "Preparing…" : "Reconnect selected"}
             </button>
+            <button
+              onClick={() => void reconnectSelectedConversation(true)}
+              disabled={
+                !selectedConversation ||
+                selectedConversation.mode !== "api" ||
+                busyKey === "reconnect"
+              }
+              title="Disable all MCP servers for the selected API conversation and close its backend; its next turn reconnects without MCP, including on SSH"
+              className="rounded border border-bg-border px-2 py-1 text-[9px] text-text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Reconnect without MCP
+            </button>
             <span className="rounded bg-bg-elevated px-2 py-1 text-[9px] text-text-muted">
-              protocol v11
+              Session trust
             </span>
           </div>
         </div>
@@ -261,7 +278,7 @@ export function McpHubCard() {
                     ) : (
                       <button
                         onClick={() => setReview(manifest)}
-                        className="border-accent-blue/30 bg-accent-blue/10 hover:bg-accent-blue/15 shrink-0 rounded border px-2 py-1 text-[10px] text-accent-blue"
+                        className="shrink-0 rounded border border-accent-blue/30 bg-accent-blue/10 px-2 py-1 text-[10px] text-accent-blue hover:bg-accent-blue/15"
                       >
                         Review
                       </button>
@@ -342,7 +359,7 @@ export function McpHubCard() {
                       <button
                         onClick={() => void runDiagnostic(server)}
                         disabled={busyKey === id}
-                        className="hover:bg-accent-blue/10 flex shrink-0 items-center gap-1 rounded px-2 py-1 text-[10px] text-accent-blue disabled:opacity-50"
+                        className="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-[10px] text-accent-blue hover:bg-accent-blue/10 disabled:opacity-50"
                       >
                         <RefreshCw size={10} className={busyKey === id ? "animate-spin" : ""} />
                         Diagnose

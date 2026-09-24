@@ -4,6 +4,7 @@ const listenMock = vi.fn();
 const invokeMock = vi.fn();
 const loadConversationsMock = vi.fn();
 const saveConversationMock = vi.fn();
+const closeApiAgentSessionMock = vi.fn();
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listenMock(...args),
@@ -42,7 +43,7 @@ vi.mock("@/lib/tauri", () => ({
   sendApiAgentMessage: vi.fn(),
   cancelApiAgentSession: vi.fn(),
   cancelPendingTools: vi.fn(),
-  closeApiAgentSession: vi.fn(),
+  closeApiAgentSession: (...args: unknown[]) => closeApiAgentSessionMock(...args),
   saveConversation: (...args: unknown[]) => saveConversationMock(...args),
   loadConversations: (...args: unknown[]) => loadConversationsMock(...args),
   deleteConversationFile: vi.fn(),
@@ -94,6 +95,51 @@ describe("agentTaskStore — renameConversation", () => {
     invokeMock.mockResolvedValue(undefined);
     loadConversationsMock.mockResolvedValue([]);
     saveConversationMock.mockResolvedValue(undefined);
+    closeApiAgentSessionMock.mockResolvedValue(undefined);
+  });
+
+  it("persists an explicit empty MCP selection when reconnecting a restored conversation", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    useAgentTaskStore.setState({
+      conversations: [
+        seedConversation({ enabledMcpServerIds: undefined, mcpTrustSnapshot: [{ stale: true }] }),
+      ],
+    } as never);
+    await useAgentTaskStore.getState().prepareMcpReconnect(CONV_ID, []);
+    expect(closeApiAgentSessionMock).toHaveBeenCalledWith(CONV_ID);
+    expect(useAgentTaskStore.getState().conversations[0].enabledMcpServerIds).toEqual([]);
+    expect(useAgentTaskStore.getState().conversations[0].mcpTrustSnapshot).toBeUndefined();
+    await vi.waitFor(
+      () => {
+        expect(saveConversationMock).toHaveBeenCalled();
+        const [, json] =
+          saveConversationMock.mock.calls[saveConversationMock.mock.calls.length - 1];
+        expect(JSON.parse(json as string).enabledMcpServerIds).toEqual([]);
+      },
+      { timeout: 4000 },
+    );
+  }, 20000);
+
+  it("preserves selected MCP servers unless the reconnect explicitly changes them", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    useAgentTaskStore.setState({
+      conversations: [seedConversation({ enabledMcpServerIds: ["kept"] })],
+    } as never);
+    await useAgentTaskStore.getState().prepareMcpReconnect(CONV_ID);
+    expect(useAgentTaskStore.getState().conversations[0].enabledMcpServerIds).toEqual(["kept"]);
+  });
+
+  it("does not change MCP selection if closing the backend fails", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    useAgentTaskStore.setState({
+      conversations: [seedConversation({ enabledMcpServerIds: ["kept"] })],
+    } as never);
+    closeApiAgentSessionMock.mockRejectedValueOnce(new Error("close failed"));
+    await expect(useAgentTaskStore.getState().prepareMcpReconnect(CONV_ID, [])).rejects.toThrow(
+      "close failed",
+    );
+    expect(useAgentTaskStore.getState().conversations[0].enabledMcpServerIds).toEqual(["kept"]);
+    expect(saveConversationMock).not.toHaveBeenCalled();
   });
 
   // First test pays the cold dynamic-import cost of the full agentTaskStore
@@ -110,7 +156,8 @@ describe("agentTaskStore — renameConversation", () => {
     await vi.waitFor(
       () => {
         expect(saveConversationMock).toHaveBeenCalled();
-        const [id, json] = saveConversationMock.mock.calls[saveConversationMock.mock.calls.length - 1];
+        const [id, json] =
+          saveConversationMock.mock.calls[saveConversationMock.mock.calls.length - 1];
         expect(id).toBe(CONV_ID);
         expect(JSON.parse(json as string).title).toBe("Renamed session");
       },

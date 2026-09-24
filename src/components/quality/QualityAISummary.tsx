@@ -14,7 +14,7 @@ import {
  *
  * Streams a high-level Markdown summary of every failing check in a run
  * (lint / typecheck / tests / build). Same one-shot `claude-oauth`
- * sidecar pattern as `QualityAIExplanation`. The final markdown is
+ * scoped API-agent event pattern. The final markdown is
  * cached in a module-level Map keyed on `runHash` so re-opening the
  * modal with the same run doesn't re-stream.
  *
@@ -93,28 +93,22 @@ export function QualityAISummary({ runHash, projectName, checks, hidden }: Props
       const sessionId = `quality-ai-summary-${crypto.randomUUID()}`;
       sessionIdRef.current = sessionId;
 
-      const unlistenChunk = await listen<string>(
-        `api-agent:chunk:${sessionId}`,
-        (event) => {
-          if (!mountedRef.current) return;
-          if (sessionIdRef.current !== sessionId) return;
-          accumulatedRef.current += event.payload;
-          setStatus({ kind: "streaming", partial: accumulatedRef.current });
-        },
-      );
+      const unlistenChunk = await listen<string>(`api-agent:chunk:${sessionId}`, (event) => {
+        if (!mountedRef.current) return;
+        if (sessionIdRef.current !== sessionId) return;
+        accumulatedRef.current += event.payload;
+        setStatus({ kind: "streaming", partial: accumulatedRef.current });
+      });
       unlistenChunkRef.current = unlistenChunk;
 
-      const unlistenDone = await listen(
-        `api-agent:done:${sessionId}`,
-        () => {
-          if (!mountedRef.current) return;
-          if (sessionIdRef.current !== sessionId) return;
-          const final = accumulatedRef.current.trim();
-          tearDown();
-          setQualityAISummaryCache(runHash, final);
-          setStatus({ kind: "done" });
-        },
-      );
+      const unlistenDone = await listen(`api-agent:done:${sessionId}`, () => {
+        if (!mountedRef.current) return;
+        if (sessionIdRef.current !== sessionId) return;
+        const final = accumulatedRef.current.trim();
+        tearDown();
+        setQualityAISummaryCache(runHash, final);
+        setStatus({ kind: "done" });
+      });
       unlistenDoneRef.current = unlistenDone;
 
       const unlistenError = await listen<{ message: string }>(
@@ -138,13 +132,7 @@ export function QualityAISummary({ runHash, projectName, checks, hidden }: Props
         checkExitCodes[c.name] = c.exitCode;
       }
 
-      await codeQualityAiSummarize(
-        runHash,
-        projectName,
-        checkOutputs,
-        checkExitCodes,
-        sessionId,
-      );
+      await codeQualityAiSummarize(runHash, projectName, checkOutputs, checkExitCodes, sessionId);
     } catch (e) {
       tearDown();
       setStatus({
@@ -162,22 +150,20 @@ export function QualityAISummary({ runHash, projectName, checks, hidden }: Props
   // Empty state — kickoff button only.
   if (!isStreaming && !cached && status.kind !== "error") {
     return (
-      <div className="flex flex-col gap-2 p-3 border-t border-bg-border bg-bg-secondary">
+      <div className="flex flex-col gap-2 border-t border-bg-border bg-bg-secondary p-3">
         <div className="flex items-center gap-2">
           <Sparkles size={12} className="text-accent-purple" />
-          <span className="text-[11px] font-semibold text-text-primary">
-            AI summary
-          </span>
+          <span className="text-[11px] font-semibold text-text-primary">AI summary</span>
         </div>
-        <p className="text-[10px] text-text-muted leading-relaxed">
-          Get a structured Markdown summary of every failing check — what's
-          failing, root-cause hypotheses, and the order to fix them.
+        <p className="text-[10px] leading-relaxed text-text-muted">
+          Get a structured Markdown summary of every failing check — what's failing, root-cause
+          hypotheses, and the order to fix them.
         </p>
         <button
           type="button"
           onClick={runSummary}
           disabled={checks.length === 0}
-          className="self-start inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] bg-accent-purple/15 text-accent-purple border border-accent-purple/30 rounded font-medium hover:bg-accent-purple/25 transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 self-start rounded border border-accent-purple/30 bg-accent-purple/15 px-2.5 py-1 text-[11px] font-medium text-accent-purple transition-colors hover:bg-accent-purple/25 disabled:opacity-50"
         >
           <Sparkles size={11} />
           Get AI summary
@@ -187,12 +173,10 @@ export function QualityAISummary({ runHash, projectName, checks, hidden }: Props
   }
 
   return (
-    <div className="flex flex-col gap-2 p-3 border-t border-bg-border bg-bg-secondary">
+    <div className="flex flex-col gap-2 border-t border-bg-border bg-bg-secondary p-3">
       <div className="flex items-center gap-2">
         <Sparkles size={12} className="text-accent-purple" />
-        <span className="text-[11px] font-semibold text-text-primary">
-          AI summary
-        </span>
+        <span className="text-[11px] font-semibold text-text-primary">AI summary</span>
         {isStreaming && (
           <span className="inline-flex items-center gap-1 text-[10px] text-text-muted">
             <Loader2 size={10} className="animate-spin" />
@@ -202,21 +186,21 @@ export function QualityAISummary({ runHash, projectName, checks, hidden }: Props
       </div>
 
       {isStreaming && (
-        <div className="max-h-72 overflow-y-auto bg-bg-primary border border-bg-border rounded px-2 py-1.5 text-[10px] text-text-secondary font-mono whitespace-pre-wrap leading-relaxed">
+        <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded border border-bg-border bg-bg-primary px-2 py-1.5 font-mono text-[10px] leading-relaxed text-text-secondary">
           {status.partial || (
-            <span className="text-text-muted italic">Waiting for first chunk…</span>
+            <span className="italic text-text-muted">Waiting for first chunk…</span>
           )}
         </div>
       )}
 
       {hasResult && cached && (
-        <div className="max-h-96 overflow-y-auto bg-bg-primary border border-bg-border rounded p-3 text-xs text-text-primary">
+        <div className="max-h-96 overflow-y-auto rounded border border-bg-border bg-bg-primary p-3 text-xs text-text-primary">
           <MarkdownRenderer content={cached} />
         </div>
       )}
 
       {status.kind === "error" && (
-        <div className="bg-accent-red/10 border border-accent-red/30 rounded px-3 py-2 text-[11px] text-accent-red">
+        <div className="rounded border border-accent-red/30 bg-accent-red/10 px-3 py-2 text-[11px] text-accent-red">
           {status.message}
         </div>
       )}
@@ -226,7 +210,7 @@ export function QualityAISummary({ runHash, projectName, checks, hidden }: Props
           type="button"
           onClick={runSummary}
           disabled={checks.length === 0}
-          className="self-start inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent-purple transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-1 self-start text-[10px] text-text-muted transition-colors hover:text-accent-purple disabled:opacity-50"
         >
           <RefreshCw size={10} />
           Re-run
@@ -235,4 +219,3 @@ export function QualityAISummary({ runHash, projectName, checks, hidden }: Props
     </div>
   );
 }
-

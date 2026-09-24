@@ -95,9 +95,7 @@ function formatDate(timestamp: number): string {
  * (read-only here; CTA lives on the card), assignee editing, and the new
  * inline comment thread.
  *
- * This component replaces the older `IssueDetailView` as the IssueBoard's
- * detail panel mount, but `IssueDetailView` is still exported for any
- * surface that imports it directly.
+ * Mounted by IssueBoard as its issue detail panel.
  */
 export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
   const issues = useIssueStore((s) => s.issues);
@@ -288,7 +286,7 @@ export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
           );
         })}
         {issue.epic && (
-          <span className="bg-accent-purple/15 rounded px-1.5 py-0.5 text-[9px] font-medium text-accent-purple">
+          <span className="rounded bg-accent-purple/15 px-1.5 py-0.5 text-[9px] font-medium text-accent-purple">
             {issue.epic}
           </span>
         )}
@@ -311,7 +309,7 @@ export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
             type="button"
             onClick={() => setConfirmingDelete(true)}
             title={`Delete ${issue.ticketId}`}
-            className="hover:bg-accent-red/10 inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] text-text-muted transition-colors hover:text-accent-red"
+            className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] text-text-muted transition-colors hover:bg-accent-red/10 hover:text-accent-red"
           >
             <Trash2 size={11} />
             Delete issue
@@ -365,7 +363,7 @@ export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
             <button
               type="button"
               onClick={jumpToLinkedWorkspace}
-              className="hover:border-accent-green/40 group inline-flex items-center gap-2 rounded border border-bg-border bg-bg-primary px-2.5 py-1.5 transition-colors"
+              className="group inline-flex items-center gap-2 rounded border border-bg-border bg-bg-primary px-2.5 py-1.5 transition-colors hover:border-accent-green/40"
             >
               <LayoutGrid size={12} className="flex-shrink-0 text-accent-green" />
               <span className="truncate text-[11px] text-text-primary">{linkedWorkspace.name}</span>
@@ -382,7 +380,7 @@ export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
           (!showWorkspacePicker ? (
             <button
               onClick={() => setShowWorkspacePicker(true)}
-              className="bg-accent-green/15 border-accent-green/30 hover:bg-accent-green/25 flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-medium text-accent-green transition-colors"
+              className="flex items-center justify-center gap-2 rounded-lg border border-accent-green/30 bg-accent-green/15 py-2.5 text-xs font-medium text-accent-green transition-colors hover:bg-accent-green/25"
             >
               <Play size={14} />
               Work on this issue
@@ -422,7 +420,7 @@ export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
               <button
                 type="button"
                 onClick={commitAssignee}
-                className="hover:text-accent-green/80 p-1 text-accent-green transition-colors"
+                className="p-1 text-accent-green transition-colors hover:text-accent-green/80"
                 title="Save"
               >
                 <Check size={12} />
@@ -440,7 +438,7 @@ export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
             <button
               type="button"
               onClick={startEditingAssignee}
-              className="hover:border-accent-green/40 inline-flex items-center gap-1.5 rounded border border-bg-border bg-bg-primary px-2.5 py-1 text-[11px] text-text-primary transition-colors"
+              className="inline-flex items-center gap-1.5 rounded border border-bg-border bg-bg-primary px-2.5 py-1 text-[11px] text-text-primary transition-colors hover:border-accent-green/40"
             >
               <UserPlus size={11} className="text-accent-green" />
               {issue.assignee}
@@ -667,7 +665,7 @@ function WorkspacePicker({
           <button
             key={ws.id}
             onClick={() => onSelect(ws.id)}
-            className="hover:border-accent-green/30 flex w-full items-center gap-2 rounded-lg border border-bg-border bg-bg-secondary px-3 py-2 text-left transition-colors hover:bg-bg-hover"
+            className="flex w-full items-center gap-2 rounded-lg border border-bg-border bg-bg-secondary px-3 py-2 text-left transition-colors hover:border-accent-green/30 hover:bg-bg-hover"
           >
             <LayoutGrid size={12} className="flex-shrink-0 text-text-muted" />
             <span className="truncate text-[11px] font-medium text-text-primary">{ws.name}</span>
@@ -678,7 +676,7 @@ function WorkspacePicker({
         ))}
         <button
           onClick={onCreate}
-          className="bg-accent-green/5 border-accent-green/20 hover:bg-accent-green/10 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors"
+          className="flex w-full items-center gap-2 rounded-lg border border-accent-green/20 bg-accent-green/5 px-3 py-2 text-left transition-colors hover:bg-accent-green/10"
         >
           <Plus size={12} className="flex-shrink-0 text-accent-green" />
           <span className="truncate text-[11px] font-medium text-accent-green">

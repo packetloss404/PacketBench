@@ -1,13 +1,35 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { usePromptStore } from "../promptStore";
+import { useLayoutStore } from "../layoutStore";
+import { writePty } from "@/lib/tauri";
+
+vi.mock("@/lib/tauri", async (original) => ({
+  ...(await original<typeof import("@/lib/tauri")>()),
+  writePty: vi.fn(),
+}));
 
 const STORAGE_KEY = "packetbench:prompt-templates";
 const store = () => usePromptStore.getState();
 
 describe("promptStore", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     localStorage.clear();
     usePromptStore.setState({ templates: [] });
+  });
+
+  it("reports a missing terminal and rejected writes while preserving the template", async () => {
+    store().addTemplate("Retry me", "intended content", "general");
+    const template = store().templates[0];
+    const pane = vi.spyOn(useLayoutStore.getState(), "getActivePane").mockReturnValue(undefined);
+    await expect(store().sendToTerminal(template.id)).rejects.toThrow("Select a running terminal");
+    pane.mockReturnValue({ sessionId: "dead-session" } as ReturnType<typeof useLayoutStore.getState>["panes"][number]);
+    vi.mocked(writePty).mockRejectedValueOnce(new Error("PTY no longer exists"));
+    await expect(store().sendToTerminal(template.id)).rejects.toThrow("PTY no longer exists");
+    expect(store().templates[0]).toEqual(template);
+    vi.mocked(writePty).mockResolvedValueOnce(undefined);
+    await store().sendToTerminal(template.id);
+    expect(writePty).toHaveBeenLastCalledWith("dead-session", "intended content\r");
   });
 
   describe("addTemplate", () => {

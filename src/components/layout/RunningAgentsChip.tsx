@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Loader2, Square } from "lucide-react";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
 import { openConversationInAgents } from "@/stores/sessionGlue";
-import { aggregateConversationCost } from "@/lib/conversationCost";
+import { aggregateConversationTokens } from "@/lib/conversationTokens";
 import { useConversationAttention } from "@/lib/sessionStatus";
 
 function fmtTokens(n: number): string {
@@ -54,7 +54,7 @@ export function RunningAgentsChip() {
     <div className="relative" ref={wrapperRef}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="bg-accent-green/15 hover:bg-accent-green/25 flex items-center gap-1.5 rounded px-2 py-0.5 text-xs text-accent-green transition-colors"
+        className="flex items-center gap-1.5 rounded bg-accent-green/15 px-2 py-0.5 text-xs text-accent-green transition-colors hover:bg-accent-green/25"
         title={`${running.length} agent${running.length === 1 ? "" : "s"} running — click to inspect`}
       >
         <Loader2 size={11} className="animate-spin" />
@@ -67,7 +67,7 @@ export function RunningAgentsChip() {
             Running agents
           </div>
           {running.map((conv) => {
-            const { totalTokens } = aggregateConversationCost(conv);
+            const totalTokens = aggregateConversationTokens(conv);
             const stopping = cancellingConversationIds?.has(conv.id) ?? false;
             return (
               <div

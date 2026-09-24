@@ -1,9 +1,20 @@
 # PacketBench Development Plans
 
-Last reconciled: 2026-09-12
+Last reconciled: 2026-09-24
 
 This directory contains active implementation plans, proof runbooks, research,
 and historical evidence. It is not a second backlog.
+
+Current work is existing-code stabilization with no feature expansion. The
+September 24 audit is in
+[`code-completeness-audit-2026-09-24.md`](../docs/reports/code-completeness-audit-2026-09-24.md);
+`backlog.md` tracks its fixes. Older build evidence remains specific to its
+recorded source and installer.
+The completed source fixes and local gate results are in
+[`existing-code-stabilization-2026-09-24.md`](./existing-code-stabilization-2026-09-24.md).
+Its follow-up covers usage recovery, alerts, remaining obsolete APIs and native
+local MCP transports. All eleven gate categories passed; the final frontend
+rerun includes 2,869 tests and 14 browser cases. Package acceptance remains separate.
 
 The consolidation installer and live OpenSSH workflow is documented in
 [`installer-ssh-acceptance.md`](./installer-ssh-acceptance.md). It produces

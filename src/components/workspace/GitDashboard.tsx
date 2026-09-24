@@ -193,7 +193,16 @@ function StageCheckbox({
   );
 }
 
-export function GitDashboard({
+/** Isolate all async results and editor state by repository and execution host. */
+export function GitDashboard(props: GitDashboardProps) {
+  const server = useServerStore((state) =>
+    state.servers.find((item) => item.id === props.serverId),
+  );
+  const scope = JSON.stringify([props.projectPath, props.workspaceId, props.serverId, server]);
+  return <ScopedGitDashboard key={scope} {...props} />;
+}
+
+function ScopedGitDashboard({
   projectPath,
   workspaceId,
   serverId,
@@ -293,7 +302,9 @@ export function GitDashboard({
   // Monotonic token so a stale diff fetch can't clobber a newer selection.
   const diffReqRef = useRef(0);
 
+  const refreshGeneration = useRef(0);
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     if (!projectPath) return;
     setLoading(true);
     setLoadError(null);
@@ -313,26 +324,33 @@ export function GitDashboard({
           getGitBranchRemote(serverConfig, projectPath),
           getGitStatusRemote(serverConfig, projectPath),
         ]);
+        if (generation !== refreshGeneration.current) return;
         setBranch(b.trim());
         setFiles(parseGitStatus(s));
       } else {
         const [b, s] = await Promise.all([getGitBranch(projectPath), getGitStatus(projectPath)]);
+        if (generation !== refreshGeneration.current) return;
         setBranch(b.trim());
         setFiles(parseGitStatus(s));
       }
     } catch (e: unknown) {
+      if (generation !== refreshGeneration.current) return;
       const classified = classifyError(e);
       setLoadError(classified);
       setBranch("");
       setFiles([]);
     } finally {
-      setLoading(false);
+      if (generation === refreshGeneration.current) setLoading(false);
     }
   }, [projectPath, isRemote, server, serverId]);
 
+  const invalidateRefresh = useCallback(() => {
+    refreshGeneration.current++;
+  }, []);
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    void refresh();
+    return invalidateRefresh;
+  }, [refresh, invalidateRefresh]);
 
   // Auto-clear feedback after 4s
   useEffect(() => {
@@ -596,7 +614,7 @@ export function GitDashboard({
           </span>
           {isRemote && (
             <span
-              className="bg-accent-blue/10 shrink-0 rounded-full px-1.5 py-0.5 font-mono text-meta text-accent-blue"
+              className="shrink-0 rounded-full bg-accent-blue/10 px-1.5 py-0.5 font-mono text-meta text-accent-blue"
               title={server ? `${server.username}@${server.host}` : "remote"}
             >
               remote
@@ -657,13 +675,13 @@ export function GitDashboard({
             onChange={(e) => setNewBranch(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCreateBranch()}
             placeholder="new-branch-name"
-            className="focus:border-accent-green/50 flex-1 rounded border border-bg-border bg-bg-primary px-2 py-0.5 text-ui text-text-primary placeholder:text-text-muted focus:outline-none"
+            className="flex-1 rounded border border-bg-border bg-bg-primary px-2 py-0.5 text-ui text-text-primary placeholder:text-text-muted focus:border-accent-green/50 focus:outline-none"
             autoFocus
           />
           <button
             onClick={handleCreateBranch}
             disabled={!newBranch.trim() || !!actionLoading}
-            className="bg-accent-green/20 hover:bg-accent-green/30 rounded px-1.5 py-0.5 text-ui text-accent-green transition-colors disabled:opacity-40"
+            className="rounded bg-accent-green/20 px-1.5 py-0.5 text-ui text-accent-green transition-colors hover:bg-accent-green/30 disabled:opacity-40"
           >
             {actionLoading === "branch" ? <Loader2 size={10} className="animate-spin" /> : "Create"}
           </button>
@@ -696,7 +714,7 @@ export function GitDashboard({
       )}
 
       {!loadError && reviewContext.linkedFileCount > 0 && (
-        <div className="border-accent-amber/30 bg-accent-amber/5 mx-2 mt-2 shrink-0 rounded border px-2 py-1.5">
+        <div className="mx-2 mt-2 shrink-0 rounded border border-accent-amber/30 bg-accent-amber/5 px-2 py-1.5">
           <div className="flex items-center gap-1.5">
             <ShieldCheck size={11} className="shrink-0 text-accent-amber" />
             <span className="text-ui font-semibold text-text-primary">Flight review context</span>
@@ -704,7 +722,7 @@ export function GitDashboard({
             <button
               type="button"
               onClick={() => allReviewRefs.length > 0 && setPacketRefs(allReviewRefs)}
-              className="hover:text-accent-amber/80 text-ui text-accent-amber transition-colors"
+              className="text-ui text-accent-amber transition-colors hover:text-accent-amber/80"
             >
               Review
             </button>
@@ -851,7 +869,7 @@ export function GitDashboard({
                     title={reviewTitle(match.refs)}
                     className={`ml-auto inline-flex min-w-0 max-w-[112px] shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-meta transition-colors ${
                       match.refs.some((r) => r.taskStatus === "approval_needed")
-                        ? "border-accent-amber/40 bg-accent-amber/15 hover:bg-accent-amber/25 text-accent-amber"
+                        ? "border-accent-amber/40 bg-accent-amber/15 text-accent-amber hover:bg-accent-amber/25"
                         : "border-bg-border bg-bg-secondary text-text-muted hover:bg-bg-hover hover:text-text-secondary"
                     }`}
                   >
@@ -880,7 +898,7 @@ export function GitDashboard({
               className="flex items-center gap-1.5 text-meta text-text-muted"
               title={`This commit will auto-close ${linkedIssue.issue.ticketId} when it lands.`}
             >
-              <Link2 size={10} className="text-accent-blue/70 shrink-0" />
+              <Link2 size={10} className="shrink-0 text-accent-blue/70" />
               <span className="truncate">
                 Linked to Issue #{linkedIssue.num}:{" "}
                 <span className="text-text-secondary">{linkedIssue.issue.title}</span>
@@ -907,7 +925,7 @@ export function GitDashboard({
             onChange={(e) => setCommitMsg(e.target.value)}
             placeholder="Commit message..."
             rows={2}
-            className="focus:border-accent-green/50 w-full resize-none rounded border border-bg-border bg-bg-primary px-2 py-1 text-ui text-text-primary placeholder:text-text-muted focus:outline-none"
+            className="w-full resize-none rounded border border-bg-border bg-bg-primary px-2 py-1 text-ui text-text-primary placeholder:text-text-muted focus:border-accent-green/50 focus:outline-none"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
@@ -918,7 +936,7 @@ export function GitDashboard({
           <button
             onClick={handleCommit}
             disabled={!commitMsg.trim() || stagedCount === 0 || !!actionLoading}
-            className="bg-accent-green/20 hover:bg-accent-green/30 flex w-full items-center justify-center gap-1.5 rounded py-1 text-ui font-medium text-accent-green transition-colors disabled:cursor-not-allowed disabled:opacity-30"
+            className="flex w-full items-center justify-center gap-1.5 rounded bg-accent-green/20 py-1 text-ui font-medium text-accent-green transition-colors hover:bg-accent-green/30 disabled:cursor-not-allowed disabled:opacity-30"
           >
             {actionLoading === "commit" ? (
               <Loader2 size={11} className="animate-spin" />

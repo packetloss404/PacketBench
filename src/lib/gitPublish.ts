@@ -12,7 +12,14 @@
  * persistence. Keeping those in the caller preserves each owner's existing UX
  * contract and byte-identical error surfaces.
  */
-import { gitPushBranch, githubCreatePr } from "@/lib/tauri";
+import {
+  gitPushBranch,
+  githubCreatePr,
+  gitGetOriginUrl,
+  gitHostListConnections,
+} from "@/lib/tauri";
+
+import { resolveConnectionForRemote } from "@/lib/gitHostResolve";
 
 export interface PublishBranchAsPrInput {
   /** Absolute path to push from (the worktree checkout). */
@@ -25,6 +32,8 @@ export interface PublishBranchAsPrInput {
   owner: string;
   /** GitHub repo name. */
   repo: string;
+  /** Pin API authority instead of following the globally selected host. */
+  connectionId?: string;
   /** Pre-composed PR title (already length-capped by the caller). */
   title: string;
   /** Pre-composed PR body (already length-capped by the caller). */
@@ -92,6 +101,7 @@ export async function publishBranchAsPr(
       input.branch,
       input.baseBranch,
       input.draft ?? true,
+      ...(input.connectionId ? [input.connectionId] : []),
     );
     const pr = JSON.parse(json) as { number?: number };
     if (typeof pr.number === "number") prNumber = pr.number;
@@ -100,4 +110,50 @@ export async function publishBranchAsPr(
   }
 
   return { ok: true, prNumber };
+}
+
+/** Resolve the worktree's actual origin before any publication side effect. */
+export async function resolveWorktreePrTarget(worktreePath: string): Promise<{
+  owner: string;
+  repo: string;
+  connectionId: string;
+}> {
+  const origin = (await gitGetOriginUrl(worktreePath))?.trim() ?? "";
+  const connections = await gitHostListConnections();
+  const resolved = resolveConnectionForRemote(origin, connections);
+  if (!resolved.connectionId || resolved.ambiguous) {
+    throw new Error(
+      "The worktree origin must match exactly one configured Git host. Check Git host connections before publishing.",
+    );
+  }
+  const connection = connections.find((item) => item.id === resolved.connectionId)!;
+  let path: string;
+  if (origin.includes("://")) {
+    const url = new URL(origin);
+    if (!["https:", "http:", "ssh:", "git:"].includes(url.protocol) || url.search || url.hash)
+      throw new Error("Unsupported worktree origin URL.");
+    path = url.pathname;
+  } else {
+    const match = origin.match(/^(?:[^@/]+@)?[^:/@]+:(.+)$/);
+    if (!match) throw new Error("Unsupported worktree origin URL.");
+    path = match[1];
+  }
+  const segments = path
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.git$/, "")
+    .split("/");
+  if (
+    segments.length < 2 ||
+    (connection.kind !== "gitlab" && segments.length !== 2) ||
+    segments.some(
+      (segment) => !/^[a-zA-Z0-9_.-]+$/.test(segment) || segment === "." || segment === "..",
+    )
+  ) {
+    throw new Error("Cannot identify a repository from the worktree origin URL.");
+  }
+  return {
+    owner: segments.slice(0, -1).join("/"),
+    repo: segments[segments.length - 1],
+    connectionId: resolved.connectionId,
+  };
 }

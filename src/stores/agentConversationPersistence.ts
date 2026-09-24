@@ -172,11 +172,11 @@ async function loadConversationSnapshot(options: {
       /* eslint-enable @typescript-eslint/no-unused-vars */
       conv.agent = canonicalizeAgentCli(conv.agent);
       const interrupted = options.markInterrupted && conv.status === "active";
-      conv.status = "idle";
+      if (options.markInterrupted) conv.status = "idle";
       conv.messages = (conv.messages ?? []).map((message) =>
-        normalizeMessageProvenance({ ...message, isStreaming: false }),
+        normalizeMessageProvenance(options.markInterrupted ? { ...message, isStreaming: false } : message),
       );
-      conv.queuedMessages = [];
+      if (options.markInterrupted) conv.queuedMessages = [];
       if (interrupted) {
         conv.messages.push({
           id: `${conv.id}:interrupted:${conv.updatedAt}`,

@@ -3,6 +3,8 @@ import { storageKey } from "@/lib/brand";
 import { readUsageAnalytics } from "@/lib/tauri";
 import { useFlightStore } from "@/stores/flightStore";
 import type { AnalyticsData } from "@/stores/analyticsStore";
+import type { AgentConversation } from "@/types/agent-conversation";
+import { sessionCostUsd } from "@/lib/sessionCost";
 import {
   DEFAULT_COST_GUARDRAIL_SETTINGS,
   costGuardrailKey,
@@ -164,7 +166,11 @@ export const useCostGuardrailStore = create<CostGuardrailStore>((set, get) => {
 export async function assertCostGuardrailsAllowLaunch(
   provider: string,
   flightId?: string | null,
+  conversation?: AgentConversation,
 ): Promise<void> {
+  flightId ??= conversation && useFlightStore.getState().flights.find((flight) =>
+    flight.attempts?.some((attempt) => attempt.sessionId === conversation.id),
+  )?.id;
   useCostGuardrailStore.getState().hydrateFromStorage();
   const state = useCostGuardrailStore.getState();
   const providerSource = providerSourceForAgentProvider(provider);
@@ -182,7 +188,7 @@ export async function assertCostGuardrailsAllowLaunch(
     evaluateCostGuardrail({
       key: costGuardrailKey.session,
       label: "Current session spend",
-      currentUsd: 0,
+      currentUsd: conversation ? sessionCostUsd(conversation, data.sessionCostsById) : 0,
       limitUsd: state.sessionLimitUsd,
       warningRatio: state.warningThresholdPercent / 100,
       hardStopRatio: state.hardStopThresholdPercent / 100,

@@ -3,17 +3,12 @@
 //! Exposes `task_create`, `task_update`, and `task_list` so the agent can track
 //! its own multi-step work and surface a checklist back to the user.
 //!
-//! # State scope (v1 caveat)
-//!
-//! Tasks live in a single process-wide `Mutex<Vec<Task>>` shared across every
-//! API conversation. This is acceptable for v1 because tasks are usually
-//! scoped to one active conversation at a time. A follow-up should key tasks
-//! by `session_id` once `tool_runtime::execute_tool` threads that context
-//! through.
+//! Tasks belong to one backend conversation, survive its turns, and are
+//! discarded when that conversation closes. They are intentionally ephemeral.
 
 use crate::core::llm_types::ToolDefinition;
 use serde::{Deserialize, Serialize};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use tracing::info;
 use uuid::Uuid;
 
@@ -54,11 +49,13 @@ pub struct Task {
     pub status: TaskStatus,
 }
 
-/// Process-wide task list. See module docs for the v1 scope caveat.
-static TASKS: OnceLock<Mutex<Vec<Task>>> = OnceLock::new();
+#[derive(Debug, Default)]
+pub struct SessionTasks(Mutex<Vec<Task>>);
 
-fn tasks() -> &'static Mutex<Vec<Task>> {
-    TASKS.get_or_init(|| Mutex::new(Vec::new()))
+impl SessionTasks {
+    pub fn clear(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
 }
 
 /// Tool definitions advertised to the LLM provider.
@@ -117,7 +114,10 @@ pub fn task_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-pub fn execute_task_create(args: &serde_json::Value) -> Result<String, String> {
+pub fn execute_task_create(
+    tasks: &SessionTasks,
+    args: &serde_json::Value,
+) -> Result<String, String> {
     let title = args
         .get("title")
         .and_then(|t| t.as_str())
@@ -143,14 +143,18 @@ pub fn execute_task_create(args: &serde_json::Value) -> Result<String, String> {
 
     info!(task_id = %id, title = %title, "Tool: task_create");
 
-    let mut tasks = tasks()
+    let mut tasks = tasks
+        .0
         .lock()
         .map_err(|e| format!("Task store poisoned: {}", e))?;
     tasks.push(task);
     Ok(id)
 }
 
-pub fn execute_task_update(args: &serde_json::Value) -> Result<String, String> {
+pub fn execute_task_update(
+    tasks: &SessionTasks,
+    args: &serde_json::Value,
+) -> Result<String, String> {
     let task_id = args
         .get("task_id")
         .and_then(|t| t.as_str())
@@ -170,7 +174,8 @@ pub fn execute_task_update(args: &serde_json::Value) -> Result<String, String> {
         return Err("Provide at least one of 'status' or 'title' to update".to_string());
     }
 
-    let mut tasks = tasks()
+    let mut tasks = tasks
+        .0
         .lock()
         .map_err(|e| format!("Task store poisoned: {}", e))?;
 
@@ -190,8 +195,12 @@ pub fn execute_task_update(args: &serde_json::Value) -> Result<String, String> {
     Ok("updated".to_string())
 }
 
-pub fn execute_task_list(_args: &serde_json::Value) -> Result<String, String> {
-    let tasks = tasks()
+pub fn execute_task_list(
+    tasks: &SessionTasks,
+    _args: &serde_json::Value,
+) -> Result<String, String> {
+    let tasks = tasks
+        .0
         .lock()
         .map_err(|e| format!("Task store poisoned: {}", e))?;
 
@@ -210,69 +219,40 @@ pub fn execute_task_list(_args: &serde_json::Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Test-only serialization. The global TASKS state means parallel test
-    /// execution leaks between cases; each test acquires this lock so the
-    /// suite is deterministic without needing an external `serial_test` dep.
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn reset() {
-        tasks().lock().unwrap().clear();
-    }
+    use serde_json::json;
 
     #[test]
     fn create_update_list_roundtrip() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset();
-        let id = execute_task_create(&serde_json::json!({ "title": "alpha" })).unwrap();
-        let _ = execute_task_create(&serde_json::json!({
-            "title": "beta",
-            "status": "in_progress"
-        }))
-        .unwrap();
+        let tasks = SessionTasks::default();
+        let id = execute_task_create(&tasks, &json!({"title":"alpha"})).unwrap();
+        execute_task_create(&tasks, &json!({"title":"beta", "status":"in_progress"})).unwrap();
+        execute_task_update(&tasks, &json!({"task_id":id,"status":"completed"})).unwrap();
+        let list = execute_task_list(&tasks, &json!({})).unwrap();
+        assert!(list.contains("- [x] alpha"));
+        assert!(list.contains("- [~] beta"));
+    }
 
-        execute_task_update(&serde_json::json!({
-            "task_id": id,
-            "status": "completed"
-        }))
-        .unwrap();
-
-        let md = execute_task_list(&serde_json::json!({})).unwrap();
-        assert!(md.contains("- [x] alpha"));
-        assert!(md.contains("- [~] beta"));
+    #[test]
+    fn sessions_cannot_list_or_update_each_others_tasks_and_close_clears() {
+        let a = SessionTasks::default();
+        let b = SessionTasks::default();
+        let id = execute_task_create(&a, &json!({"title":"private-a"})).unwrap();
+        assert_eq!(execute_task_list(&b, &json!({})).unwrap(), "(no tasks yet)");
+        assert!(execute_task_update(&b, &json!({"task_id":id,"status":"completed"})).is_err());
+        assert!(execute_task_list(&a, &json!({}))
+            .unwrap()
+            .contains("private-a"));
+        a.clear();
+        assert_eq!(execute_task_list(&a, &json!({})).unwrap(), "(no tasks yet)");
     }
 
     #[test]
     fn rejects_unknown_status() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset();
-        let err = execute_task_create(&serde_json::json!({
-            "title": "x",
-            "status": "bogus"
-        }))
-        .unwrap_err();
-        assert!(err.contains("Unknown status"));
-    }
-
-    /// v1 caveat captured: all tasks live in one process-wide list, so two
-    /// "sessions" creating their own tasks see each other's work. When
-    /// session-keyed storage lands, this test flips to asserting isolation.
-    #[test]
-    fn global_state_leaks_across_sessions_v1_caveat() {
-        let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset();
-        // "Session A" creates a task.
-        let _ = execute_task_create(&serde_json::json!({
-            "title": "session-a-task"
-        }))
-        .unwrap();
-
-        // "Session B" lists and sees session A's work. In a per-session
-        // world this should be empty; today it's not. Document the leak.
-        let md = execute_task_list(&serde_json::json!({})).unwrap();
-        assert!(
-            md.contains("session-a-task"),
-            "v1 task list is globally shared; update this test when storage becomes session-keyed"
-        );
+        assert!(execute_task_create(
+            &SessionTasks::default(),
+            &json!({"title":"x","status":"bogus"})
+        )
+        .unwrap_err()
+        .contains("Unknown status"));
     }
 }

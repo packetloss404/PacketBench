@@ -58,6 +58,7 @@ import {
   failoverGuard,
   failTurn,
   releaseApiConversationListeners,
+  runBudgetedApiTurn,
 } from "@/stores/agentTaskStore";
 import type {
   AgentConversation,
@@ -186,7 +187,11 @@ function sendPromotedQueuedMessage(
   }));
   if (updated) requestConversationSave(conversationId);
 
-  void sendApiAgentMessage(conversationId, content, undefined).catch((err) => {
+  const conversation = getState().conversations.find((c) => c.id === conversationId);
+  if (!conversation) return;
+  void runBudgetedApiTurn(conversation, (dispatch) => dispatch(() =>
+    sendApiAgentMessage(conversationId, content, undefined),
+  )).catch((err) => {
     // failTurn also clears the streaming placeholder we just inserted —
     // previously this only flipped status to "failed", leaving the assistant
     // bubble spinning forever.
@@ -679,7 +684,7 @@ export async function installApiAgentListeners(conversationId: string): Promise<
   // MultiAgentV2 sub-agent), accumulate into a per-address bucket on
   // the conversation INSTEAD of mutating the streaming message — the
   // root thread's tokens belong to the user-visible turn; sub-agent
-  // tokens are an additive cost we surface only via aggregateConversationCost.
+  // tokens are included in the token readout via aggregateConversationTokens.
   const turnSummaryUnlisten = await listen<{
     input_tokens: number;
     output_tokens: number;

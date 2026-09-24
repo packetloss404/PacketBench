@@ -473,7 +473,9 @@ describe("agent/workspace store decoupling", () => {
       payload: { message: "429 rate limit exceeded" },
     });
 
-    expect(retryLastTurnMock).toHaveBeenCalledWith("conv-failover", "o4-mini");
+    await vi.waitFor(() =>
+      expect(retryLastTurnMock).toHaveBeenCalledWith("conv-failover", "o4-mini"),
+    );
   });
 
   it("archives and deletes workspaces without calling agent conversation detach", async () => {

@@ -336,7 +336,6 @@ pub fn run() {
             commands::code_quality_autofix::code_quality_run_fix,
             commands::code_quality_autofix::cancel_quality_fix,
             // v0.8.8 quality ai
-            commands::code_quality::code_quality_ai_explain,
             commands::code_quality::code_quality_ai_summarize,
             // WI-1 — auxiliary AI routing settings
             commands::aux_routing::set_aux_routing_overrides,

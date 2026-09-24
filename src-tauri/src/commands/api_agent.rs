@@ -145,6 +145,9 @@ struct SessionConfig {
     /// Frozen MCP authority captured when the conversation session starts.
     /// Settings edits cannot broaden this vector until an explicit reconnect.
     mcp_trust_snapshot: Option<Vec<crate::core::mcp_bridge::McpTrustSnapshot>>,
+    native_mcp_session: Arc<crate::core::mcp_session::NativeMcpSession>,
+    custom_agents: Arc<Vec<crate::commands::custom_agents::CustomAgentDef>>,
+    tasks: Arc<crate::core::tool_tasks::SessionTasks>,
 }
 
 impl ApiAgentState {
@@ -486,9 +489,124 @@ fn build_assistant_history_message(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn premature_provider_eof_is_incomplete_and_cannot_dispatch_tools_or_success() {
+        assert!(super::require_provider_completion(false, Ok(()))
+            .unwrap_err()
+            .contains("incomplete"));
+        assert!(super::require_provider_completion(true, Ok(())).is_ok());
+        assert_eq!(
+            super::require_provider_completion(true, Err("provider failed after done".into()))
+                .unwrap_err(),
+            "provider failed after done"
+        );
+    }
+
+    #[test]
+    fn completed_root_request_is_accounted_before_a_later_streamed_or_provider_error() {
+        for streamed_error in [true, false] {
+            let mut recorded = Vec::new();
+            let done = StreamChunk::Done {
+                input_tokens: 100,
+                output_tokens: 25,
+                cache_read_input_tokens: 20,
+                cache_creation_input_tokens: 0,
+            };
+            super::account_native_request_chunk("parent", "openai", "gpt-5.5", &done, |entry| {
+                recorded.push(entry.clone());
+                Ok(())
+            })
+            .unwrap();
+            if streamed_error {
+                super::account_native_request_chunk(
+                    "parent",
+                    "openai",
+                    "gpt-5.5",
+                    &StreamChunk::Error {
+                        message: "next request failed".into(),
+                    },
+                    |_| panic!("error is not new usage"),
+                )
+                .unwrap();
+            } else {
+                // A provider may return Err without emitting any stream chunk.
+                let result: Result<(), String> = Err("next request failed".into());
+                assert!(result.is_err());
+            }
+            assert_eq!(recorded.len(), 1);
+            assert_eq!(recorded[0].input_tokens, 100);
+            assert_eq!(recorded[0].session_id, "parent");
+            assert_eq!(recorded[0].agent_id, None);
+        }
+    }
+
+    #[test]
+    fn native_request_accounting_failure_propagates_before_success_and_each_request_is_one_row() {
+        let done = StreamChunk::Done {
+            input_tokens: 10,
+            output_tokens: 2,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        };
+        assert_eq!(
+            super::account_native_request_chunk("parent", "openai", "gpt-5.5", &done, |_| Err(
+                "disk full".into()
+            ))
+            .unwrap_err(),
+            "disk full"
+        );
+        let mut recorded = Vec::new();
+        for _ in 0..2 {
+            super::account_native_request_chunk("parent", "openai", "gpt-5.5", &done, |entry| {
+                recorded.push(entry.clone());
+                Ok(())
+            })
+            .unwrap();
+        }
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(
+            recorded.iter().map(|entry| entry.input_tokens).sum::<u64>(),
+            20
+        );
+    }
+
     use super::*;
     use crate::commands::mcp::{McpServerConfig, McpServerEntry};
     use std::collections::HashMap;
+
+    #[test]
+    fn returned_known_tool_must_be_in_the_effective_session_allowlist() {
+        let tools = vec![ToolDefinition {
+            name: "grep".into(),
+            description: String::new(),
+            parameters: serde_json::json!({}),
+        }];
+        assert!(tool_is_advertised("grep", &tools));
+        assert!(!tool_is_advertised("read_file", &tools));
+        assert!(!tool_is_advertised("bash", &[]));
+    }
+
+    #[test]
+    fn child_usage_keeps_actual_model_and_parent_session_attribution() {
+        let entry = child_usage_entry(
+            "parent-session",
+            crate::core::tool_subagent::ChildUsage {
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+                input_tokens: 100,
+                output_tokens: 25,
+                cache_read: 20,
+                cache_write: 30,
+            },
+        );
+        assert_eq!(entry.session_id, "parent-session");
+        assert_eq!(entry.model, "claude-haiku-4-5");
+        assert_eq!(entry.agent_id.as_deref(), Some("subagent"));
+        assert_eq!(
+            entry.cost_usd,
+            crate::commands::pricing::calculate_cost("claude-haiku-4-5", 100, 25, 20, 30)
+        );
+    }
 
     #[test]
     fn create_pull_request_is_a_risky_tool() {
@@ -741,8 +859,11 @@ mod tests {
             disabled: true,
         };
 
-        let merged =
-            merge_mcp_entries_for_sidecar(vec![global.clone(), project_disabled.clone()], None, true);
+        let merged = merge_mcp_entries_for_sidecar(
+            vec![global.clone(), project_disabled.clone()],
+            None,
+            true,
+        );
 
         assert!(!merged.contains_key("danger"));
 
@@ -968,7 +1089,11 @@ async fn build_mcp_config_for_sidecar(
     // `.mcp.json` is repo-supplied: a stdio entry is a command the sidecar
     // will spawn. Only a trusted project may contribute (or shadow) entries.
     let project_trusted = crate::core::project_trust::is_project_trusted(project_path);
-    Value::Object(merge_mcp_entries_for_sidecar(entries, filter, project_trusted))
+    Value::Object(merge_mcp_entries_for_sidecar(
+        entries,
+        filter,
+        project_trusted,
+    ))
 }
 
 fn merge_mcp_entries_for_sidecar(
@@ -1278,6 +1403,28 @@ pub async fn start_api_agent_session(
     };
 
     let messages = build_start_history(resume_messages, &initial_message);
+    let custom_agent_project = match &execution {
+        ExecutionTarget::Local { project_path } => project_path.as_str(),
+        ExecutionTarget::Ssh { .. } => "",
+    };
+    let custom_agents = Arc::new(crate::commands::custom_agents::discover_custom_agents(
+        custom_agent_project,
+    ));
+    let native_mcp_session = Arc::new(match &execution {
+        ExecutionTarget::Local { project_path } => {
+            let entries = crate::commands::mcp::read_mcp_servers(project_path.clone()).await?;
+            crate::core::mcp_session::NativeMcpSession::resolve(
+                entries,
+                project_path,
+                crate::core::project_trust::is_project_trusted(project_path),
+                enabled_mcp_server_ids.as_deref(),
+                mcp_trust_snapshot.as_deref(),
+            )?
+        }
+        ExecutionTarget::Ssh { .. } => {
+            crate::core::mcp_session::NativeMcpSession::for_ssh(enabled_mcp_server_ids.as_deref())?
+        }
+    });
 
     // Claim the session before mutating its config/history. A duplicate start
     // cannot overwrite a live turn and inherit the old task's eventual cleanup.
@@ -1302,6 +1449,9 @@ pub async fn start_api_agent_session(
                 allowed_tools,
                 enabled_mcp_server_ids,
                 mcp_trust_snapshot,
+                native_mcp_session,
+                custom_agents,
+                tasks: Arc::new(crate::core::tool_tasks::SessionTasks::default()),
             },
         );
 
@@ -1736,7 +1886,9 @@ pub async fn close_api_agent_session(
     }
     {
         let mut configs = state.configs.lock().await;
-        configs.remove(&session_id);
+        if let Some(config) = configs.remove(&session_id) {
+            config.tasks.clear();
+        }
     }
     let permission_senders = {
         let mut pending = state.pending_permissions.lock().await;
@@ -1764,10 +1916,9 @@ pub async fn close_api_agent_session(
 /// / api-openrouter / api-ollama). No-op when the session isn't linked
 /// to any flight (the common standalone-chat case).
 ///
-/// Called from every `run_agent_loop` exit point that finalizes the
-/// session-cumulative token totals (cancel-early, mid-stream-cancel,
-/// done-no-tool-calls, hit-max-iterations) right after the matching
-/// `UsageEntry` write so the cost numbers line up with the usage log.
+/// Called once after each committed root/child `UsageEntry`, so later provider
+/// errors or cancellation cannot lose earlier request spend. Terminal events
+/// report turn totals but do not repeat this rollup.
 fn spawn_executor_cost_rollup(
     app_handle: &tauri::AppHandle,
     session_id: &str,
@@ -1826,14 +1977,112 @@ fn spawn_executor_cost_rollup(
     });
 }
 
+fn child_usage_entry(
+    session_id: &str,
+    usage: crate::core::tool_subagent::ChildUsage,
+) -> crate::commands::usage::UsageEntry {
+    let cost = crate::commands::pricing::calculate_cost(
+        &usage.model,
+        crate::commands::pricing::billable_input_tokens(
+            &usage.model,
+            usage.input_tokens,
+            usage.cache_read,
+        ),
+        usage.output_tokens,
+        usage.cache_read,
+        usage.cache_write,
+    );
+    crate::commands::usage::UsageEntry {
+        ts: crate::commands::usage::current_timestamp_iso(),
+        source: provider_to_source(&usage.provider).to_string(),
+        model: usage.model,
+        provider: Some(usage.provider),
+        agent_id: Some("subagent".to_string()),
+        session_id: session_id.to_string(),
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cache_read: usage.cache_read,
+        cache_write: usage.cache_write,
+        cost_usd: cost,
+    }
+}
+
+fn record_child_usage(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    usage: crate::core::tool_subagent::ChildUsage,
+) -> Result<(), String> {
+    record_completed_usage(app, &child_usage_entry(session_id, usage))
+}
+
+fn record_completed_usage(
+    app: &tauri::AppHandle,
+    entry: &crate::commands::usage::UsageEntry,
+) -> Result<(), String> {
+    crate::commands::usage::append_usage_entry(entry)?;
+    spawn_executor_cost_rollup(
+        app,
+        &entry.session_id,
+        &entry.model,
+        entry.input_tokens,
+        entry.output_tokens,
+        entry.cache_read,
+        entry.cache_write,
+        entry.cost_usd,
+    );
+    Ok(())
+}
+
+/// Account each completed provider request before its tools or the next request
+/// can run. Terminal events do not write aggregate rows, preventing duplicates.
+fn require_provider_completion(completed: bool, result: Result<(), String>) -> Result<(), String> {
+    result?;
+    if !completed {
+        return Err("Provider stream ended before its completion and usage marker; this request is incomplete".into());
+    }
+    Ok(())
+}
+
+fn account_native_request_chunk(
+    session_id: &str,
+    provider: &str,
+    model: &str,
+    chunk: &StreamChunk,
+    record: impl FnOnce(&crate::commands::usage::UsageEntry) -> Result<(), String>,
+) -> Result<(), String> {
+    if let StreamChunk::Done {
+        input_tokens,
+        output_tokens,
+        cache_read_input_tokens,
+        cache_creation_input_tokens,
+    } = chunk
+    {
+        let mut entry = child_usage_entry(
+            session_id,
+            crate::core::tool_subagent::ChildUsage {
+                provider: provider.into(),
+                model: model.into(),
+                input_tokens: *input_tokens,
+                output_tokens: *output_tokens,
+                cache_read: *cache_read_input_tokens,
+                cache_write: *cache_creation_input_tokens,
+            },
+        );
+        entry.agent_id = None;
+        record(&entry)?;
+    }
+    Ok(())
+}
+
+fn tool_is_advertised(name: &str, tools: &[ToolDefinition]) -> bool {
+    tools.iter().any(|tool| tool.name == name)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn finish_cancelled_agent_turn(
     app_handle: &tauri::AppHandle,
     state: &Arc<ApiAgentState>,
     session_id: &str,
-    model: &str,
-    provider: &str,
-    source: &str,
     input_tokens: u64,
     output_tokens: u64,
     cache_read: u64,
@@ -1855,6 +2104,12 @@ async fn finish_cancelled_agent_turn(
         let _ = sender.send(EditDecision::Reject);
     }
 
+    if let Err(error) = crate::commands::usage::ensure_usage_accounting_healthy() {
+        mark_attempt_failed_for_session(session_id, error.clone()).await;
+        let _ = app_handle.emit(&error_event(session_id), ErrorPayload { message: error });
+        fire_session_end_hooks(hooks_list, session_id).await;
+        return;
+    }
     let _ = app_handle.emit(
         &done_event(session_id),
         DonePayload {
@@ -1865,39 +2120,7 @@ async fn finish_cancelled_agent_turn(
             cancelled: true,
         },
     );
-    let cost = crate::commands::pricing::calculate_cost(
-        model,
-        crate::commands::pricing::billable_input_tokens(model, input_tokens, cache_read),
-        output_tokens,
-        cache_read,
-        cache_write,
-    );
-    let entry = crate::commands::usage::UsageEntry {
-        ts: crate::commands::usage::current_timestamp_iso(),
-        source: source.to_string(),
-        model: model.to_string(),
-        provider: Some(provider.to_string()),
-        agent_id: None,
-        session_id: session_id.to_string(),
-        input_tokens,
-        output_tokens,
-        cache_read,
-        cache_write,
-        cost_usd: cost,
-    };
-    if let Err(error) = crate::commands::usage::append_usage_entry(&entry) {
-        warn!(session_id = %session_id, error = %error, "Failed to persist cancelled API-agent usage");
-    }
-    spawn_executor_cost_rollup(
-        app_handle,
-        session_id,
-        model,
-        input_tokens,
-        output_tokens,
-        cache_read,
-        cache_write,
-        cost,
-    );
+
     fire_session_end_hooks(hooks_list, session_id).await;
 }
 
@@ -1928,6 +2151,9 @@ async fn run_agent_loop(
         allowed_tools,
         enabled_mcp_server_ids,
         mcp_trust_snapshot,
+        custom_agents,
+        native_mcp_session,
+        tasks,
     ) = {
         let configs = state.configs.lock().await;
         let config = configs
@@ -1942,17 +2168,33 @@ async fn run_agent_loop(
             config.allowed_tools.clone(),
             config.enabled_mcp_server_ids.clone(),
             config.mcp_trust_snapshot.clone(),
+            Arc::clone(&config.custom_agents),
+            Arc::clone(&config.native_mcp_session),
+            Arc::clone(&config.tasks),
         )
     };
 
     let _ = get_provider(&provider_name)?;
     let api_key = api_keys::load_api_key(&provider_name)?;
     let tools = {
-        let all = tool_runtime::tool_definitions_with_mcp_trust(
+        let mut all = tool_runtime::tool_definitions_for_session(
             enabled_mcp_server_ids.as_deref(),
             mcp_trust_snapshot.as_deref(),
+            &custom_agents,
         )
         .await;
+        let mcp_tools = tokio::select! {
+            // A cached discovery has no startup work to cancel. Preserve its
+            // connections; the turn cancellation check below handles Stop.
+            biased;
+            result = native_mcp_session.tool_definitions() => result?,
+            _ = &mut cancel_rx => {
+                native_mcp_session.close().await;
+                finish_cancelled_agent_turn(app_handle, state, session_id, 0, 0, 0, 0, &[]).await;
+                return Ok(());
+            }
+        };
+        all.extend(mcp_tools);
         match allowed_tools.as_ref() {
             Some(allow) => all
                 .into_iter()
@@ -1961,12 +2203,11 @@ async fn run_agent_loop(
             None => all,
         }
     };
+    let frozen_tools = Arc::new(tools.clone());
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
     let mut total_cache_read: u64 = 0;
     let mut total_cache_write: u64 = 0;
-
-    let source = provider_to_source(&provider_name);
 
     // Load hooks once per loop (covers global + this session's project).
     let project_path_for_hooks = match &execution {
@@ -1997,9 +2238,6 @@ async fn run_agent_loop(
                 app_handle,
                 state,
                 session_id,
-                &model,
-                &provider_name,
-                source,
                 total_input_tokens,
                 total_output_tokens,
                 total_cache_read,
@@ -2043,6 +2281,7 @@ async fn run_agent_loop(
             cache_key: Some(session_id.to_string()),
         };
 
+        crate::commands::usage::ensure_usage_accounting_healthy()?;
         // Stream the response
         let (tx, mut rx) = mpsc::channel::<StreamChunk>(64);
         let provider_ref = get_provider(&provider_name)?;
@@ -2061,6 +2300,7 @@ async fn run_agent_loop(
         let mut current_tool_name = String::new();
         let mut current_tool_args = String::new();
         let mut got_error = false;
+        let mut request_completed = false;
         // Provider-owned reasoning payload for this assistant turn (MiniMax M3
         // `reasoning_details`). Stored verbatim on the history message so the
         // next iteration replays it and the interleaved-thinking chain holds.
@@ -2078,9 +2318,6 @@ async fn run_agent_loop(
                         app_handle,
                         state,
                         session_id,
-                        &model,
-                        &provider_name,
-                        source,
                         total_input_tokens,
                         total_output_tokens,
                         total_cache_read,
@@ -2091,6 +2328,13 @@ async fn run_agent_loop(
                     return Ok(());
                 }
                 chunk = rx.recv() => {
+                    if let Some(chunk) = &chunk {
+                        if let Err(error) = account_native_request_chunk(session_id, &provider_name, &model, chunk,
+                            |entry| record_completed_usage(app_handle, entry)) {
+                            stream_handle.abort();
+                            return Err(error);
+                        }
+                    }
                     match chunk {
                         None => break, // Channel closed
                         Some(StreamChunk::TextDelta { text }) => {
@@ -2121,6 +2365,7 @@ async fn run_agent_loop(
                             cache_read_input_tokens,
                             cache_creation_input_tokens,
                         }) => {
+                            request_completed = true;
                             total_input_tokens += input_tokens;
                             total_output_tokens += output_tokens;
                             total_cache_read += cache_read_input_tokens;
@@ -2179,7 +2424,7 @@ async fn run_agent_loop(
             // The detailed StreamChunk::Error was already emitted above.
             return Ok(());
         }
-        stream_result?;
+        require_provider_completion(request_completed, stream_result)?;
 
         if let Some(assistant_msg) =
             build_assistant_history_message(&text_content, &tool_calls, provider_reasoning)
@@ -2193,6 +2438,7 @@ async fn run_agent_loop(
         // If no tool calls, we're done
         if tool_calls.is_empty() {
             mark_attempt_reviewing_for_session(session_id).await;
+
             let _ = app_handle.emit(
                 &done_event(session_id),
                 DonePayload {
@@ -2203,43 +2449,7 @@ async fn run_agent_loop(
                     cancelled: false,
                 },
             );
-            let cost = crate::commands::pricing::calculate_cost(
-                &model,
-                crate::commands::pricing::billable_input_tokens(
-                    &model,
-                    total_input_tokens,
-                    total_cache_read,
-                ),
-                total_output_tokens,
-                total_cache_read,
-                total_cache_write,
-            );
-            let entry = crate::commands::usage::UsageEntry {
-                ts: crate::commands::usage::current_timestamp_iso(),
-                source: source.to_string(),
-                model: model.clone(),
-                provider: Some(provider_name.clone()),
-                agent_id: None,
-                session_id: session_id.to_string(),
-                input_tokens: total_input_tokens,
-                output_tokens: total_output_tokens,
-                cache_read: total_cache_read,
-                cache_write: total_cache_write,
-                cost_usd: cost,
-            };
-            if let Err(error) = crate::commands::usage::append_usage_entry(&entry) {
-                warn!(session_id = %session_id, error = %error, "Failed to persist API-agent usage");
-            }
-            spawn_executor_cost_rollup(
-                app_handle,
-                session_id,
-                &model,
-                total_input_tokens,
-                total_output_tokens,
-                total_cache_read,
-                total_cache_write,
-                cost,
-            );
+
             fire_session_end_hooks(&all_hooks, session_id).await;
             return Ok(());
         }
@@ -2274,8 +2484,31 @@ async fn run_agent_loop(
                 let parent_llm = crate::core::tool_subagent::ParentLlm {
                     provider: provider_name.clone(),
                     model: model.clone(),
+                    tools: Arc::clone(&frozen_tools),
+                    custom_agents: Arc::clone(&custom_agents),
+                    enabled_mcp_server_ids: enabled_mcp_server_ids.clone(),
+                    mcp_trust_snapshot: mcp_trust_snapshot.clone(),
+                    native_mcp_session: Arc::clone(&native_mcp_session),
+                    tasks: Arc::clone(&tasks),
+                    record_usage: {
+                        let app = app_handle.clone();
+                        let session = session_id.clone();
+                        Arc::new(move |usage| record_child_usage(&app, &session, usage))
+                    },
                 };
                 async move {
+                    if !tool_is_advertised(&tc.name, &parent_llm.tools) {
+                        let result = ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!("Tool '{}' is outside this session's allowed tool set.", tc.name),
+                            is_error: true,
+                        };
+                        let _ = app_handle.emit(&tool_result_event(&session_id), ToolResultPayload {
+                            id: tc.id.clone(), name: tc.name.clone(), content: result.content.clone(),
+                            is_error: true, input: serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                        });
+                        return (tc.id.clone(), result);
+                    }
                     // Plan mode gate
                     if plan_mode_active && !PLAN_MODE_ALLOWED.contains(&tc.name.as_str()) {
                         let err = ToolResult {
@@ -2794,9 +3027,6 @@ async fn run_agent_loop(
                     app_handle,
                     state,
                     session_id,
-                    &model,
-                    &provider_name,
-                    source,
                     total_input_tokens,
                     total_output_tokens,
                     total_cache_read,
@@ -2844,6 +3074,7 @@ async fn run_agent_loop(
     // Hit max iterations
     warn!(session_id = %session_id, "Agent loop hit max iterations ({})", MAX_TOOL_ITERATIONS);
     mark_attempt_reviewing_for_session(session_id).await;
+
     let _ = app_handle.emit(
         &done_event(session_id),
         DonePayload {
@@ -2854,43 +3085,7 @@ async fn run_agent_loop(
             cancelled: false,
         },
     );
-    let cost = crate::commands::pricing::calculate_cost(
-        &model,
-        crate::commands::pricing::billable_input_tokens(
-            &model,
-            total_input_tokens,
-            total_cache_read,
-        ),
-        total_output_tokens,
-        total_cache_read,
-        total_cache_write,
-    );
-    let entry = crate::commands::usage::UsageEntry {
-        ts: crate::commands::usage::current_timestamp_iso(),
-        source: source.to_string(),
-        model: model.clone(),
-        provider: Some(provider_name.clone()),
-        agent_id: None,
-        session_id: session_id.to_string(),
-        input_tokens: total_input_tokens,
-        output_tokens: total_output_tokens,
-        cache_read: total_cache_read,
-        cache_write: total_cache_write,
-        cost_usd: cost,
-    };
-    if let Err(error) = crate::commands::usage::append_usage_entry(&entry) {
-        warn!(session_id = %session_id, error = %error, "Failed to persist API-agent usage");
-    }
-    spawn_executor_cost_rollup(
-        app_handle,
-        session_id,
-        &model,
-        total_input_tokens,
-        total_output_tokens,
-        total_cache_read,
-        total_cache_write,
-        cost,
-    );
+
     fire_session_end_hooks(&all_hooks, session_id).await;
     Ok(())
 }
