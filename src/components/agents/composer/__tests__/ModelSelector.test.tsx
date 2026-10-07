@@ -48,6 +48,17 @@ const catalogFor = (agent: string): ApiModel[] =>
   API_PROVIDERS.find((p) => p.agentCli === agent)?.models ?? [];
 
 describe("ModelSelector — authoritative models vs the seeded catalog", () => {
+  it("does not pretend the first live model is selected", () => {
+    renderSelector({ selectedAgent: "api-google", models: [{ label: "Latest Gemini", value: "gemini-latest" }], modelsAreAuthoritative: true });
+    expect(screen.getByText("Select model")).toBeTruthy();
+    expect(screen.queryByText("Latest Gemini")).toBeNull();
+  });
+
+  it("keeps a pinned model visible after it disappears from discovery", () => {
+    renderSelector({ selectedAgent: "api-sugar", selectedModel: "sugar/pinned", models: [{ label: "Conduit", value: "sugar/conduit" }], modelsAreAuthoritative: true });
+    expect(screen.getByText("sugar/pinned")).toBeTruthy();
+  });
+
   it("offers the authoritative list, not the catalog seed, when caps supplies one", () => {
     const liveRows: ApiModel[] = [
       { label: "glm-4.7", value: "glm-4.7" },

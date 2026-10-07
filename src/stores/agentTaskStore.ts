@@ -146,6 +146,12 @@ export type ApiAgentCli =
   | "api-minimax"
   | "api-openrouter"
   | "api-ollama"
+  | "api-sugar"
+  | "api-cline-pass"
+  | "api-opencode-go"
+  | "api-ollama-cloud"
+  | "api-google"
+  | "api-xai"
   | "api-custom";
 
 export type AgentCli =
@@ -160,6 +166,12 @@ export type AgentCli =
   | "api-minimax"
   | "api-openrouter"
   | "api-ollama"
+  | "api-sugar"
+  | "api-cline-pass"
+  | "api-opencode-go"
+  | "api-ollama-cloud"
+  | "api-google"
+  | "api-xai"
   | "api-custom"
   | (string & {});
 
@@ -255,6 +267,13 @@ export function apiAgentProvider(agent: AgentCli): string {
     "api-ollama": "ollama",
     // LM2 — user-supplied OpenAI-compatible endpoint. Key optional.
     "api-custom": "custom",
+    "api-sugar": "sugar",
+    "api-cline-pass": "cline-pass",
+    "api-opencode-go": "opencode-go",
+    "api-ollama-cloud": "ollama-cloud",
+    "api-google": "google",
+    "api-xai": "xai",
+
   };
   // Canonicalise first so a legacy id hydrated from disk (`api-minimax-api`)
   // resolves through its alias instead of tripping the unknown-agent fallback.

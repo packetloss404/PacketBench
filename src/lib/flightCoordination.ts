@@ -37,7 +37,8 @@ function agentLabel(agentId: string): string {
  */
 export function suggestReassignmentAgent(
   triedAgentIds: string[],
-  catalog: string[] = API_PROVIDERS.map((p) => p.agentCli),
+  // One-click suggestions have no model picker; require a concrete default.
+  catalog: string[] = API_PROVIDERS.filter((p) => p.models.length > 0).map((p) => p.agentCli),
 ): string | undefined {
   const tried = new Set(triedAgentIds);
   return catalog.find((id) => !tried.has(id));

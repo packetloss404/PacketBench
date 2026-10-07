@@ -38,9 +38,7 @@ import type { TaskType } from "@/types/flight";
  * rejects it for having no `API_PROVIDERS` row, and this makes the intent
  * explicit rather than incidental.
  */
-export const SUBSCRIPTION_OAUTH_AGENTS: ReadonlySet<string> = new Set([
-  "api-openai-codex",
-]);
+export const SUBSCRIPTION_OAUTH_AGENTS: ReadonlySet<string> = new Set(["api-openai-codex"]);
 
 /**
  * Fallback executor for an automatic launch. Matches `MultiTargetPicker`'s
@@ -87,10 +85,10 @@ export function attemptProviderFor(agentConfigId: string): string {
  * than obeyed — silently launching on the wrong credentials is the failure
  * mode this whole change exists to remove.
  */
-export function resolveAttemptExecutor(route: {
-  agentConfigId: string;
-  model?: string;
-}): { agentConfigId: AgentCli; model: string } {
+export function resolveAttemptExecutor(route: { agentConfigId: string; model?: string }): {
+  agentConfigId: AgentCli;
+  model: string;
+} {
   const agentConfigId = isUsableAttemptAgent(route.agentConfigId)
     ? (route.agentConfigId as AgentCli)
     : DEFAULT_ATTEMPT_AGENT;
@@ -100,10 +98,13 @@ export function resolveAttemptExecutor(route: {
   const pinnedModel =
     agentConfigId === route.agentConfigId && route.model?.trim() ? route.model.trim() : "";
 
-  return {
-    agentConfigId,
-    model: pinnedModel || getDefaultModel(agentConfigId),
-  };
+  const model = pinnedModel || getDefaultModel(agentConfigId);
+  if (!model) {
+    throw new Error(
+      "Choose a model for this workflow role in Settings → AI Provider Routing before launching a Flight.",
+    );
+  }
+  return { agentConfigId, model };
 }
 
 /** Build a local worktree attempt target for an automatic launch. */

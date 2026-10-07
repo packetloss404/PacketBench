@@ -544,6 +544,8 @@ pub fn run() {
             commands::ollama::set_ollama_runtime_options,
             // Live per-provider model catalogs
             commands::provider_models::list_provider_models,
+            commands::provider_endpoints::get_provider_base_url,
+            commands::provider_endpoints::set_provider_base_url,
             // LM2 — custom OpenAI-compatible endpoint
             commands::custom_compat::get_custom_compat_base_url,
             commands::custom_compat::set_custom_compat_base_url,

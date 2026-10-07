@@ -197,7 +197,8 @@ pub struct AuxProviderCandidate {
     /// `get_provider` / `api-key-<provider>` id.
     pub provider: &'static str,
     /// Cheap-tier model used when the user has not pinned one. Also the model
-    /// priced when ranking this candidate.
+    /// priced when ranking this candidate. Empty means explicit model selection
+    /// is required and the provider is excluded from automatic ranking.
     pub default_model: &'static str,
     /// False only for Ollama, which authenticates with nothing. Candidates
     /// with `needs_api_key == false` are excluded from automatic selection.
@@ -207,6 +208,36 @@ pub struct AuxProviderCandidate {
 /// Auxiliary provider candidates. Order here is only the tie-break for equal
 /// cost — the real ordering comes from the shared pricing table.
 pub const AUX_PROVIDERS: &[AuxProviderCandidate] = &[
+    AuxProviderCandidate {
+        provider: "sugar",
+        default_model: "",
+        needs_api_key: true,
+    },
+    AuxProviderCandidate {
+        provider: "cline-pass",
+        default_model: "",
+        needs_api_key: true,
+    },
+    AuxProviderCandidate {
+        provider: "opencode-go",
+        default_model: "",
+        needs_api_key: true,
+    },
+    AuxProviderCandidate {
+        provider: "ollama-cloud",
+        default_model: "",
+        needs_api_key: true,
+    },
+    AuxProviderCandidate {
+        provider: "google",
+        default_model: "",
+        needs_api_key: true,
+    },
+    AuxProviderCandidate {
+        provider: "xai",
+        default_model: "",
+        needs_api_key: true,
+    },
     AuxProviderCandidate {
         provider: "anthropic",
         default_model: "claude-haiku-4-5",
@@ -258,8 +289,10 @@ pub fn cheap_tier_model(provider: &str, parent_model: &str) -> String {
         "minimax-api" => "MiniMax-M2".to_string(),
         "openai-agents" => "o4-mini".to_string(),
         other => match aux_candidate(other) {
-            Some(candidate) => candidate.default_model.to_string(),
-            None => parent_model.to_string(),
+            Some(candidate) if !candidate.default_model.is_empty() => {
+                candidate.default_model.to_string()
+            }
+            _ => parent_model.to_string(),
         },
     }
 }
@@ -369,6 +402,9 @@ pub fn resolve_aux_route(
                         task.label()
                     ));
                 }
+                None if candidate.default_model.is_empty() => {
+                    return Err(format!("{} is routed to {} without a model. Choose a current model in Settings → AI Provider Routing.", task.label(), provider));
+                }
                 None => candidate.default_model.to_string(),
             };
             return Ok(AuxRoute {
@@ -382,7 +418,11 @@ pub fn resolve_aux_route(
     let mut ranked: Vec<(f64, usize, &AuxProviderCandidate)> = AUX_PROVIDERS
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.needs_api_key && configured.iter().any(|k| k == c.provider))
+        .filter(|(_, c)| {
+            c.needs_api_key
+                && !c.default_model.is_empty()
+                && configured.iter().any(|k| k == c.provider)
+        })
         .map(|(index, c)| (aux_rank_cost(c.default_model).unwrap_or(f64::MAX), index, c))
         .collect();
 
@@ -398,6 +438,8 @@ pub fn resolve_aux_route(
             model: candidate.default_model.to_string(),
             explicit: false,
         }),
+        None if configured.iter().any(|id| crate::core::provider_endpoints::NAMED_PROVIDERS.contains(&id.as_str())) =>
+            Err(format!("{} needs a model selection. Choose a configured provider and current model in Settings → AI Provider Routing.", task.label())),
         None => Err(no_provider_error(task)),
     }
 }
@@ -1179,6 +1221,35 @@ mod tests {
     }
 
     #[test]
+    fn named_provider_routes_require_an_explicit_model_and_never_auto_select_one() {
+        for provider in crate::core::provider_endpoints::NAMED_PROVIDERS {
+            let mut overrides = AuxOverrides::new();
+            overrides.insert(
+                AuxTaskClass::PrReview,
+                AuxRouteOverride {
+                    provider: Some(provider.to_string()),
+                    model: None,
+                },
+            );
+            let configured = vec![provider.to_string()];
+            assert!(resolve_aux_route(AuxTaskClass::PrReview, &overrides, &configured).is_err());
+            overrides.get_mut(&AuxTaskClass::PrReview).unwrap().model =
+                Some("selected-model".to_string());
+            let route = resolve_aux_route(AuxTaskClass::PrReview, &overrides, &configured).unwrap();
+            assert_eq!(route.provider, *provider);
+            assert_eq!(route.model, "selected-model");
+            assert_eq!(
+                cheap_tier_model(provider, "selected-model"),
+                "selected-model"
+            );
+            assert!(
+                resolve_aux_route(AuxTaskClass::PrReview, &AuxOverrides::new(), &configured)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn no_subscription_oauth_provider_is_an_aux_candidate() {
         // The compliance invariant. If this ever fails, WI-1 has regressed.
         for candidate in AUX_PROVIDERS {
@@ -1202,7 +1273,10 @@ mod tests {
     fn every_aux_default_model_is_priced_by_the_shared_table() {
         // Ollama is free-by-design (local), so it is allowed to price at zero;
         // the metered candidates must all be rankable.
-        for candidate in AUX_PROVIDERS.iter().filter(|c| c.needs_api_key) {
+        for candidate in AUX_PROVIDERS
+            .iter()
+            .filter(|c| c.needs_api_key && !c.default_model.is_empty())
+        {
             let cost = aux_rank_cost(candidate.default_model);
             assert!(
                 cost.is_some_and(|c| c > 0.0),

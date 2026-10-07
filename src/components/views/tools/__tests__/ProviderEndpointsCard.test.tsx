@@ -25,6 +25,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(invoke).mockImplementation(async (command: string, args?: unknown) => {
     switch (command) {
+      case "get_provider_base_url":
+        return "https://fixture.example/v1";
       case "get_ollama_base_url":
         return "http://localhost:11434";
       case "get_minimax_base_url":

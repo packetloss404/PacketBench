@@ -31,10 +31,11 @@ export function useLiveModels(agent: AgentCli): UseLiveModelsResult {
   const ensureFresh = useLiveModelStore((s) => s.ensureFresh);
   const ensureListener = useLiveModelStore((s) => s.ensureListener);
 
+  const needsFetch = answer === undefined;
   useEffect(() => {
     ensureListener();
     ensureFresh(agent);
-  }, [agent, ensureFresh, ensureListener]);
+  }, [agent, ensureFresh, ensureListener, needsFetch]);
 
   const refresh = useCallback(() => {
     ensureFresh(agent, { force: true });

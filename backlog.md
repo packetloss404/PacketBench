@@ -1,5 +1,17 @@
 # PacketBench Backlog
 
+## Provider acceptance — October 6
+
+- [ ] Configure real account keys and run a short tool call plus follow-up turn
+  through Sugar, ClinePass, OpenCode Go (each protocol family), Ollama Cloud,
+  Google and xAI. Source support and fixture coverage are described in
+  [the integration report](dev/provider-integrations-2026-10-06.md).
+- [ ] Refresh authenticated Anthropic/OpenAI/Google/xAI catalogs in the native
+  app and verify the chosen account's model access. Public plan inventory does
+  not prove subscription entitlement. Paid Claude testing remains deferred by
+  the owner because of subscription cost.
+
+
 Last reconciled: 2026-10-06 (0.14.8 pre-tag review; dogfooding incomplete)
 
 This is the single task register for work that has not shipped or has not yet

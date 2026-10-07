@@ -198,3 +198,14 @@ describe("liveModels — error classification", () => {
     );
   });
 });
+
+
+it("surfaces discovery failures for a provider with no bundled fallback", () => {
+  const resolved = resolveModelRows({ agent: "api-sugar", live: { status: "no-key", error: "Add your Sugar key in Settings" } });
+  expect(resolved.rows).toEqual([]);
+  expect(resolved.notice).toBe("Add your Sugar key in Settings");
+});
+
+it("does not label cloud-hosted local model names as free", () => {
+  expect(liveModelRow({ id: "qwen3:32b" }, "ollama-cloud").pricing).toBeUndefined();
+});

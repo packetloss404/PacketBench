@@ -1,10 +1,4 @@
-import {
-  Bot,
-  MessageCircle,
-  Hand,
-  Layers,
-  type LucideIcon,
-} from "lucide-react";
+import { Bot, MessageCircle, Hand, Layers, type LucideIcon } from "lucide-react";
 import type { AgentCli } from "@/stores/agentTaskStore";
 import type { ImageAttachment } from "@/lib/tauri";
 
@@ -62,6 +56,12 @@ export const MODE_ORDER: AgentMode[] = ["agent", "ask", "manual", "plan"];
 export const PROVIDER_GROUPS: { label: string; agents: AgentCli[] }[] = [
   { label: "Anthropic", agents: ["api-claude-oauth" as AgentCli, "api-claude"] },
   { label: "OpenAI", agents: ["api-openai", "api-openai-agents"] },
+  { label: "Google", agents: ["api-google"] },
+  { label: "xAI", agents: ["api-xai"] },
+  {
+    label: "Gateways and plans",
+    agents: ["api-sugar", "api-cline-pass", "api-opencode-go", "api-ollama-cloud"],
+  },
   {
     label: "Other",
     agents: ["api-openrouter", "api-minimax", "api-ollama", "api-custom"],
@@ -129,10 +129,7 @@ export const COMPOSER_HELP_TEXT =
  * the prompt degrades rather than advertising a dead key. Driven by
  * `SessionCapabilities.slashCommands` / `.fileMentions`.
  */
-export function composerPlaceholder(
-  hasCommands: boolean,
-  hasFiles: boolean,
-): string {
+export function composerPlaceholder(hasCommands: boolean, hasFiles: boolean): string {
   if (hasCommands && hasFiles) return "Do anything — / for commands, @ for files";
   if (hasCommands) return "Do anything — / for commands";
   if (hasFiles) return "Do anything — @ for files";

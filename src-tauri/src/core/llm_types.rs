@@ -71,12 +71,9 @@ pub enum ContentBlock {
     /// Opaque provider-owned reasoning payload that must be replayed verbatim
     /// on the next request to keep an interleaved-thinking chain intact.
     ///
-    /// Currently produced only by MiniMax M3's OpenAI-compatible endpoint
-    /// (`reasoning_details`), whose docs require the *entire* assistant message
-    /// — reasoning included — to be appended to history between tool rounds.
-    /// The block is deliberately opaque: it round-trips byte-for-byte for the
-    /// provider that emitted it and is silently dropped by every other message
-    /// builder, so it is inert for Anthropic/OpenAI/Ollama/OpenRouter.
+    /// Stores provider-scoped replay data: MiniMax reasoning, Gemini tool
+    /// signatures, Messages content blocks, or Responses output items. Each
+    /// transport reads only its own envelope; none of this is rendered as text.
     #[serde(rename = "provider_reasoning")]
     ProviderReasoning { details: serde_json::Value },
 }
@@ -143,8 +140,8 @@ pub enum StreamChunk {
     ThinkingDelta { text: String },
     /// The provider's own structured reasoning payload for this assistant turn,
     /// already accumulated across the stream. Emitted once, just before `Done`,
-    /// by providers that require it to be replayed in history (MiniMax M3's
-    /// `reasoning_details`). Consumers store it verbatim; they never inspect it.
+    /// by transports that require signed reasoning/tool metadata on subsequent
+    /// turns. Consumers store it verbatim; they never inspect it.
     ReasoningDetails { details: serde_json::Value },
     /// The current extended-thinking block is complete.
     ThinkingStop,

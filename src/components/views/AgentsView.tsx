@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, X } from "lucide-react";
-import {
-  authProbeProvider,
-  useAgentTaskStore,
-  type AgentCli,
-} from "@/stores/agentTaskStore";
+import { authProbeProvider, useAgentTaskStore, type AgentCli } from "@/stores/agentTaskStore";
 import { useAgentSettingsStore } from "@/stores/agentSettingsStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { launchConversation } from "@/lib/launchConversation";
@@ -32,6 +28,18 @@ const AUTO_PICK_ORDER: AgentCli[] = [
   "api-openrouter",
   "api-ollama",
   "api-minimax",
+  ...API_PROVIDERS.map((p) => p.agentCli).filter(
+    (id) =>
+      ![
+        "api-claude-oauth",
+        "api-claude",
+        "api-openai",
+        "api-openai-agents",
+        "api-openrouter",
+        "api-ollama",
+        "api-minimax",
+      ].includes(id),
+  ),
 ];
 
 const DEFAULT_AGENT: AgentCli = "api-minimax";
@@ -208,7 +216,7 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
       )}
 
       {launchError && (
-        <div className="border-accent-red/30 absolute bottom-4 left-1/2 z-40 flex max-w-[480px] -translate-x-1/2 items-center gap-2 rounded border bg-bg-elevated px-3 py-2 text-[11px] text-accent-red shadow-lg">
+        <div className="absolute bottom-4 left-1/2 z-40 flex max-w-[480px] -translate-x-1/2 items-center gap-2 rounded border border-accent-red/30 bg-bg-elevated px-3 py-2 text-[11px] text-accent-red shadow-lg">
           <span className="flex-1">{launchError}</span>
           <button
             type="button"

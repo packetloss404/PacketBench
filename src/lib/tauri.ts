@@ -4141,3 +4141,11 @@ export async function saveWebviewStorageMirror(
 ): Promise<void> {
   return invoke<void>("save_webview_storage_mirror", { entries });
 }
+
+/** Effective named-provider endpoint, including its API path prefix. */
+export async function getProviderBaseUrl(provider: string): Promise<string> {
+  return invoke("get_provider_base_url", { provider });
+}
+export async function setProviderBaseUrl(provider: string, baseUrl: string | null): Promise<string> {
+  return invoke("set_provider_base_url", { provider, baseUrl });
+}

@@ -7,6 +7,20 @@ For current direction, use [`ROADMAP.md`](./ROADMAP.md). For planning briefs and
 runbooks, use [`dev/README.md`](./dev/README.md). This file is history, not a
 task list.
 
+## [0.14.9] - 2026-10-06
+
+- Added configurable Sugar, ClinePass, OpenCode Go, Ollama Cloud, Google Gemini
+  and xAI API providers, with separate credential-store keys and live catalogs.
+- Added shared current-model refresh controls for direct Anthropic/OpenAI and
+  the new providers; key and endpoint changes invalidate stale catalog results.
+- Routed OpenCode Go requests through the model's documented protocol and
+  retained signed tool and reasoning metadata across root and delegated turns.
+- Requested usage from named chat providers and kept unknown pricing visible.
+- Made workflow roles use live/manual model selection, rejected model-less
+  automatic launches and preserved the selected model for same-provider retries.
+- Peer review, validation scope and artifact identity:
+  [0.14.9 release record](./dev/provider-release-0.14.9.md).
+
 ## [0.14.8] - 2026-09-24 (local build)
 
 - Scoped Workspace approval shortcuts to the selected visible terminal, rejected

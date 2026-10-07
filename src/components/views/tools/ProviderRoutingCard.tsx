@@ -18,13 +18,16 @@ import {
   type OllamaModel,
 } from "@/lib/tauri";
 import { logSwallowed } from "@/lib/logSwallowed";
-import { getModelsForAgent, type ModelOption } from "@/lib/models";
+import { getModelsForAgent } from "@/lib/models";
 import { API_PROVIDERS } from "@/lib/api-models";
 import { liveModelSource, resolveModelRows } from "@/lib/liveModels";
 import { useLiveModelStore } from "@/stores/liveModelStore";
 import { SUBSCRIPTION_OAUTH_AGENTS } from "@/lib/attemptRouting";
 import type { TaskType } from "@/types/flight";
 import { APP_NAME } from "@/lib/brand";
+import type { AgentCli } from "@/stores/agentTaskStore";
+import { ModelSelector } from "@/components/agents/composer/ModelSelector";
+import { useOllamaModels } from "@/components/agents/hooks/useOllamaModels";
 
 /**
  * API executors selectable as a workflow-role default.
@@ -37,13 +40,27 @@ const ROUTABLE_API_PROVIDERS = API_PROVIDERS.filter(
   (p) => !SUBSCRIPTION_OAUTH_AGENTS.has(p.agentCli),
 );
 
-/** Model choices for a role's selected agent, PTY or API. */
-function modelOptionsForAgent(agentConfigId: string): ModelOption[] {
-  const apiProvider = ROUTABLE_API_PROVIDERS.find((p) => p.agentCli === agentConfigId);
-  if (apiProvider) {
-    return apiProvider.models.map((m) => ({ label: m.label, value: m.value }));
-  }
-  return getModelsForAgent(agentConfigId);
+/** Reuse conversation discovery, refresh and manual-ID entry for API roles. */
+function WorkflowApiModelPicker({
+  agent,
+  model,
+  onChange,
+}: {
+  agent: AgentCli;
+  model: string;
+  onChange: (model: string) => void;
+}) {
+  const { ollamaModels, refresh } = useOllamaModels(agent);
+  return (
+    <ModelSelector
+      selectedAgent={agent}
+      selectedModel={model}
+      onModelChange={onChange}
+      ollamaModels={ollamaModels}
+      refreshOllamaModels={refresh}
+      requiresTools
+    />
+  );
 }
 
 export function ProviderRoutingCard() {
@@ -104,13 +121,16 @@ export function ProviderRoutingCard() {
           const mapping = mappings.find((m) => m.taskType === taskType);
           const agentId = mapping?.agentConfigId ?? "claude-code";
           const modelValue = mapping?.model ?? null;
-          const models = modelOptionsForAgent(agentId);
+          const apiProvider = ROUTABLE_API_PROVIDERS.find((p) => p.agentCli === agentId);
+          const models = getModelsForAgent(agentId);
           const meta = TASK_TYPE_LABELS[taskType];
           const agent = agents.find((a) => a.id === agentId);
 
           return (
             <div
               key={taskType}
+              role="group"
+              aria-label={`${meta.label} routing`}
               className="grid grid-cols-[1fr_1fr_1fr] items-center gap-2 rounded border border-bg-border bg-bg-primary px-3 py-2"
             >
               {/* Role label */}
@@ -121,6 +141,7 @@ export function ProviderRoutingCard() {
 
               {/* Agent selector */}
               <select
+                aria-label={`${meta.label} agent`}
                 value={agentId}
                 onChange={(e) => handleAgentChange(taskType, e.target.value)}
                 className="truncate rounded border border-bg-border bg-bg-elevated px-2 py-1 text-[11px] text-text-primary focus:border-accent-green focus:outline-none"
@@ -142,20 +163,28 @@ export function ProviderRoutingCard() {
                 </optgroup>
               </select>
 
-              {/* Model selector */}
-              <select
-                value={modelValue ?? ""}
-                onChange={(e) => handleModelChange(taskType, e.target.value || null)}
-                className={`truncate rounded border border-bg-border bg-bg-elevated px-2 py-1 text-[11px] focus:border-accent-green focus:outline-none ${
-                  agent && !agent.installed ? "text-text-muted" : "text-text-primary"
-                }`}
-              >
-                {models.map((m) => (
-                  <option key={m.value ?? "__default"} value={m.value ?? ""}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
+              {/* API roles share live discovery and manual entry with conversations. */}
+              {apiProvider ? (
+                <WorkflowApiModelPicker
+                  agent={apiProvider.agentCli}
+                  model={modelValue ?? ""}
+                  onChange={(model) => handleModelChange(taskType, model)}
+                />
+              ) : (
+                <select
+                  value={modelValue ?? ""}
+                  onChange={(e) => handleModelChange(taskType, e.target.value || null)}
+                  className={`truncate rounded border border-bg-border bg-bg-elevated px-2 py-1 text-[11px] focus:border-accent-green focus:outline-none ${
+                    agent && !agent.installed ? "text-text-muted" : "text-text-primary"
+                  }`}
+                >
+                  {models.map((m) => (
+                    <option key={m.value ?? "__default"} value={m.value ?? ""}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           );
         })}
@@ -217,6 +246,10 @@ function AuxRoutingSection() {
   const ensureFreshModels = useLiveModelStore((s) => s.ensureFresh);
   const ensureModelListener = useLiveModelStore((s) => s.ensureListener);
   const pinnedProviders = auxMappings.map((m) => m.provider ?? "").join(",");
+  const missingPinnedProviders = pinnedProviders
+    .split(",")
+    .filter((provider) => provider && !liveEntries[provider])
+    .join(",");
   useEffect(() => {
     ensureModelListener();
     for (const provider of pinnedProviders.split(",")) {
@@ -224,7 +257,7 @@ function AuxRoutingSection() {
       const agent = API_PROVIDERS.find((p) => p.id === provider)?.agentCli;
       if (agent) ensureFreshModels(agent);
     }
-  }, [pinnedProviders, ensureFreshModels, ensureModelListener]);
+  }, [pinnedProviders, missingPinnedProviders, ensureFreshModels, ensureModelListener]);
 
   // Re-read after every settings change so the resolved route stays honest —
   // the backend, not this component, decides what "Auto" means.
@@ -341,7 +374,9 @@ function AuxRoutingSection() {
               const caveat = AUX_TASK_CLASS_CAVEATS[taskClass];
               const pinnedProvider = mapping?.provider ?? null;
               const models = pinnedProvider ? modelOptionsFor(pinnedProvider) : [];
-              const isOllamaPin = pinnedProvider === "ollama";
+              const requiresModel =
+                pinnedProvider === "ollama" ||
+                providers.some((p) => p.provider === pinnedProvider && !p.defaultModel);
 
               return (
                 <div
@@ -383,13 +418,13 @@ function AuxRoutingSection() {
                     onChange={(e) => handleModelChange(taskClass, e.target.value)}
                     disabled={!pinnedProvider}
                     className={`truncate rounded border bg-bg-elevated px-2 py-1 text-[11px] focus:border-accent-green focus:outline-none disabled:opacity-40 ${
-                      isOllamaPin && !mapping?.model
+                      requiresModel && !mapping?.model
                         ? "border-accent-red/60 text-accent-red"
                         : "border-bg-border text-text-primary"
                     }`}
                   >
                     <option value="">
-                      {!pinnedProvider ? "—" : isOllamaPin ? "Pick a model…" : "Provider default"}
+                      {!pinnedProvider ? "—" : requiresModel ? "Pick a model…" : "Provider default"}
                     </option>
                     {models.map((m) => (
                       <option key={m.value} value={m.value}>

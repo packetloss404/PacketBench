@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { Key, Check, X, Eye, EyeOff, Trash2 } from "lucide-react";
 import { setApiKey, getApiKeyExists, deleteApiKey } from "@/lib/tauri";
+import { NAMED_PROVIDERS } from "@/lib/named-providers";
+import { useLiveModelStore } from "@/stores/liveModelStore";
+import { emit } from "@tauri-apps/api/event";
 import { CardHeader } from "./CardHeader";
 import { ConfirmDeleteModal } from "@/components/ui/ConfirmDeleteModal";
 
@@ -15,9 +18,15 @@ interface ProviderEntry {
 }
 
 const PROVIDERS: ProviderEntry[] = [
+  ...NAMED_PROVIDERS.map((p) => ({ ...p, needsKey: true })),
   { id: "anthropic", name: "Anthropic", description: "Claude Opus, Sonnet, Haiku", needsKey: true },
   { id: "openai", name: "OpenAI", description: "GPT-5.5, GPT-4o, o3", needsKey: true },
-  { id: "minimax", name: "MiniMax (Token Plan)", description: "Coding/Token Plan key · M3, M2.5, M2", needsKey: true },
+  {
+    id: "minimax",
+    name: "MiniMax (Token Plan)",
+    description: "Coding/Token Plan key · M3, M2.5, M2",
+    needsKey: true,
+  },
   { id: "openrouter", name: "OpenRouter", description: "100+ models, one key", needsKey: true },
   { id: "ollama", name: "Ollama", description: "Local models, no key needed", needsKey: false },
   {
@@ -35,6 +44,7 @@ export function ApiKeysCard() {
   const [inputValue, setInputValue] = useState("");
   const [showValue, setShowValue] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ProviderEntry | null>(null);
 
   useEffect(() => {
@@ -57,12 +67,15 @@ export function ApiKeysCard() {
     if (!inputValue.trim()) return;
     setSaving(true);
     try {
+      setError(null);
       await setApiKey(providerId, inputValue.trim());
+      useLiveModelStore.getState().invalidate(providerId);
+      void emit("provider-auth:changed", { provider: providerId }).catch(() => {});
       setKeyStatus((s) => ({ ...s, [providerId]: true }));
       setEditing(null);
       setInputValue("");
     } catch (err) {
-      console.error("Failed to save API key:", err);
+      setError(String(err));
     } finally {
       setSaving(false);
     }
@@ -70,41 +83,49 @@ export function ApiKeysCard() {
 
   async function handleDelete(providerId: string) {
     try {
+      setError(null);
       await deleteApiKey(providerId);
+      useLiveModelStore.getState().invalidate(providerId);
+      void emit("provider-auth:changed", { provider: providerId }).catch(() => {});
       setKeyStatus((s) => ({ ...s, [providerId]: false }));
     } catch (err) {
-      console.error("Failed to delete API key:", err);
+      setError(String(err));
     }
   }
 
   return (
-    <div className="bg-bg-secondary border border-bg-border rounded-lg p-4">
+    <div className="rounded-lg border border-bg-border bg-bg-secondary p-4">
       <CardHeader
         icon={Key}
         iconColor="text-accent-amber"
         title="API Keys"
-        className="flex items-center gap-2 mb-4"
+        className="mb-4 flex items-center gap-2"
       />
 
-      <p className="text-[10px] text-text-muted mb-4">
+      <p className="mb-4 text-[10px] text-text-muted">
         Configure API keys for each provider. Keys are stored securely in your OS credential store.
       </p>
 
+      {error && (
+        <p role="alert" className="mb-2 text-xs text-accent-red">
+          {error}
+        </p>
+      )}
       <div className="flex flex-col gap-2">
         {PROVIDERS.map((provider) => (
           <div
             key={provider.id}
-            className="flex items-center gap-3 bg-bg-primary border border-bg-border rounded-lg px-3 py-2.5"
+            className="flex items-center gap-3 rounded-lg border border-bg-border bg-bg-primary px-3 py-2.5"
           >
             {/* Status dot */}
             <div
-              className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              className={`h-2 w-2 flex-shrink-0 rounded-full ${
                 keyStatus[provider.id] ? "bg-accent-green" : "bg-text-muted/30"
               }`}
             />
 
             {/* Provider info */}
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-[11px] font-medium text-text-primary">{provider.name}</div>
               <div className="text-[10px] text-text-muted">{provider.description}</div>
             </div>
@@ -118,7 +139,7 @@ export function ApiKeysCard() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     placeholder="sk-..."
-                    className="bg-bg-secondary border border-bg-border rounded px-2 py-1 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-green w-48 pr-7"
+                    className="w-48 rounded border border-bg-border bg-bg-secondary px-2 py-1 pr-7 text-[11px] text-text-primary placeholder:text-text-muted focus:border-accent-green focus:outline-none"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void handleSave(provider.id);
                       if (e.key === "Escape") {
@@ -138,7 +159,7 @@ export function ApiKeysCard() {
                 <button
                   onClick={() => void handleSave(provider.id)}
                   disabled={saving || !inputValue.trim()}
-                  className="p-1 text-accent-green hover:bg-accent-green/10 rounded disabled:opacity-50"
+                  className="rounded p-1 text-accent-green hover:bg-accent-green/10 disabled:opacity-50"
                 >
                   <Check size={11} />
                 </button>
@@ -160,14 +181,14 @@ export function ApiKeysCard() {
                     setInputValue("");
                     setShowValue(false);
                   }}
-                  className="px-2 py-1 text-[10px] text-accent-green hover:bg-accent-green/10 rounded transition-colors"
+                  className="rounded px-2 py-1 text-[10px] text-accent-green transition-colors hover:bg-accent-green/10"
                 >
                   {keyStatus[provider.id] ? "Update" : "Set Key"}
                 </button>
                 {keyStatus[provider.id] && (
                   <button
                     onClick={() => setPendingDelete(provider)}
-                    className="p-1 text-text-muted hover:text-accent-red transition-colors"
+                    className="p-1 text-text-muted transition-colors hover:text-accent-red"
                     title={`Delete ${provider.name} API key`}
                     aria-label={`Delete ${provider.name} API key`}
                   >

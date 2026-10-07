@@ -267,7 +267,8 @@ export function buildReassignSpec(
   // Canonical `get_provider` id via the shared map — never a prefix-strip;
   // `api-claude` is `anthropic`, not `claude` (see `attemptProviderFor`).
   const provider = attemptProviderFor(newAgentConfigId);
-  const model = getDefaultModel(newAgentConfigId as AgentCli);
+  const model = (failed.agentConfigId === newAgentConfigId ? failed.model?.trim() : "") || getDefaultModel(newAgentConfigId as AgentCli);
+  if (!model) throw new Error("Select this provider and a model in the Flight launch dialog before retrying.");
   if (failed.target.kind === "local") {
     return {
       kind: "local",

@@ -29,11 +29,13 @@ pub mod issue_ai_prompts;
 pub mod llm_anthropic;
 pub mod llm_custom_compat;
 pub mod llm_minimax;
+pub mod llm_named;
 pub mod llm_ollama;
 pub mod llm_openai;
 pub mod llm_openai_compat;
 pub mod llm_openrouter;
 pub mod llm_provider;
+pub mod llm_responses;
 pub mod llm_system_prompt;
 pub mod llm_types;
 pub mod mcp_bridge;
@@ -44,6 +46,7 @@ pub mod migration;
 pub mod orchestrator;
 pub mod project_trust;
 pub mod provenance;
+pub mod provider_endpoints;
 pub mod pty;
 pub(crate) mod pty_output;
 // One-time reprice of historical cost figures written with the pre-CE2 rates.
@@ -67,3 +70,6 @@ pub use agent_config::AgentConfig;
 pub use flight::{Flight, FlightStatus, Milestone, Task, TaskStatus};
 pub use pty::PtyTranscript;
 pub use shared::{hide_window, home_dir, lock_mutex, SKIP_DIRS};
+
+#[cfg(test)]
+pub(crate) mod test_http;

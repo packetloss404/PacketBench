@@ -18,6 +18,13 @@ const VALID_PROVIDERS: &[&str] = &[
     "minimax-api",
     "openrouter",
     "ollama",
+    "custom",
+    "sugar",
+    "cline-pass",
+    "opencode-go",
+    "ollama-cloud",
+    "google",
+    "xai",
 ];
 
 fn validate_provider(provider: &str) -> Result<(), String> {

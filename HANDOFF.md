@@ -1,6 +1,6 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-10-06 (pre-tag check; owner dogfooding incomplete)
+Last reconciled: 2026-10-06 (0.14.9 release preparation)
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
@@ -9,28 +9,21 @@ the current contracts below supersede their older protocol and queue details.
 
 ## Checkout and artifacts
 
-- **Resume here:** the owner has pinned 0.14.8 to the desktop and confirmed on
-  October 6 that they have not dogfooded enough yet. Keep Workspaces the
-  priority and fix reported defects in existing functionality; no feature
-  expansion. The final pre-tag pass corrected false artifact acceptance in the
-  release checker and reverified both installers plus all 8,683 installed
-  files. See the October 6 section of `dev/existing-code-stabilization-2026-09-24.md`
-  for validation results. No new installer, tag, publication or deployment was
-  produced. Existing installers still belong to source `9367b7a1`; tag/source
-  guidance is in `dev/beta-distribution-trust-runbook.md`.
-- **Current work is source stabilization, with no feature expansion.** The
-  three-team September 24 audit and its fix ledger are linked from `backlog.md`.
-  Workspaces remain the primary focus. **0.14.8 is built and pushed to main**
-  from clean commit `9367b7a1`; both Windows installer hashes were verified.
-  The NSIS upgrade from 0.14.6 to **0.14.8 is installed**: exit 0, all 8,683
-  payload hashes matched, and bundled Node 24.15.0/protocol-v12 sidecar passed
-  two isolated echo turns. Normal launch opened a responding PacketBench
-  window. These checks do not establish full interactive acceptance.
-  All eleven local gate categories passed after the follow-up fixes and frozen
-  frontend rerun: 2,869 frontend tests and 14 browser cases passed. The follow-up
-  closes usage-write failures, first-observation alerts, hidden cost/Quality
-  leftovers and native local MCP project/network support. Exact scope and remaining
-  limits: `dev/existing-code-stabilization-2026-09-24.md`.
+- **Resume here:** the owner explicitly requested provider expansion on October 6:
+  Sugar (`D:\projects\sugar`), ClinePass, OpenCode Go, Ollama Cloud, direct
+  Google Gemini and xAI, plus current Anthropic/OpenAI model discovery.
+  Implementation and acceptance notes are in
+  `dev/provider-integrations-2026-10-06.md`. This supersedes the previous
+  no-feature-expansion direction for that named scope. Workspaces remain the
+  primary product focus.
+- The installed **0.14.8** still belongs to source `9367b7a1`. The owner has not
+  dogfooded enough to establish release acceptance. The earlier October 6
+  pre-tag checks verified its installers and all 8,683 installed files;
+  provider source changes require a new build before local acceptance.
+  The owner subsequently requested peer review, a new release tag, commit/push,
+  and a desktop build/update. Version 0.14.9 is being prepared; build/install
+  evidence will be recorded in `dev/provider-release-0.14.9.md`.
+  Earlier release evidence remains in `dev/existing-code-stabilization-2026-09-24.md`.
 - Working directory: `D:\projects\PacketBench`.
 - Remote: `git@github.com:packetloss404/PacketBench.git`.
 - **0.14.7 is built and pushed to main** (2026-09-12), from clean code commit
@@ -89,7 +82,7 @@ the current contracts below supersede their older protocol and queue details.
   Agents owns first-class API conversations. PacketCode's ACP transport is
   removed. `api-packetcode` and `api-openai-codex` conversations remain
   readable but cannot start turns; never silently remap them.
-- Eight API rows remain. `api-claude-oauth` is a historical identifier for
+- Fourteen API rows are implemented. `api-claude-oauth` is a historical identifier for
   the Anthropic API-key Agent SDK provider, not subscription OAuth.
   PTY CLI sessions retain their normal subscription logins.
 - Sidecar protocol and minimum are **v12**. Local and remote sidecars must

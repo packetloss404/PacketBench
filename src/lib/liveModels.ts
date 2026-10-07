@@ -48,31 +48,9 @@ import { listProviderModels, type LiveModel } from "@/lib/tauri";
 // From the pure module, NOT from `lib/tauri` — see that file's header. A
 // test that stubs the IPC surface must still get real classification.
 import { parseLiveModelError } from "@/lib/liveModelErrors";
-import {
-  buildApiModel,
-  getProviderForAgent,
-  type ApiModel,
-} from "@/lib/api-models";
+import { buildApiModel, getProviderForAgent, type ApiModel } from "@/lib/api-models";
 
-/**
- * One model as a provider enumerates it.
- *
- * MIRRORS the `LiveModel` DTO that `listProviderModels` returns from
- * `src/lib/tauri.ts`. It is re-declared (not imported) on purpose: the Rust
- * command and its binding land separately from this seam, and a hard import of
- * a symbol that does not exist yet would fail the build for everyone. See
- * {@link fetchLiveModels} for the one-line integration point.
- */
-/**
- * Re-exported from the IPC layer rather than re-declared.
- *
- * This module originally carried its own copy of the shape, because the
- * backend command did not exist yet. Keeping the copy after it landed cost a
- * compile error immediately: Rust's `Option<T>` serialises to `null`, not
- * `undefined`, so the hand-written twin said `displayName?: string` where the
- * wire says `string | null`. The wire format is authoritative — every optional
- * field here can be `null`, and the row builder below is written for that.
- */
+/** The IPC DTO is authoritative; absent metadata is nullable on the wire. */
 export type { LiveModel } from "@/lib/tauri";
 
 /**
@@ -102,15 +80,14 @@ export interface LiveModelSource {
    */
   ttlMs: number;
   /**
-   * Does PacketBench hold this provider's credential? Keyed providers with no
-   * key must still show the bundled catalog (never an empty picker), and
-   * "no key" is a different state from "key rejected".
+   * Whether discovery requires a saved API key. Providers without bundled
+   * models show setup guidance until discovery succeeds.
    */
   needsKey: boolean;
 }
 
-/** Twelve hours — cloud catalogs change on the order of weeks. */
-export const CLOUD_MODEL_TTL_MS = 12 * 60 * 60 * 1000;
+/** Refresh on use after one hour; explicit Refresh always bypasses this TTL. */
+export const CLOUD_MODEL_TTL_MS = 60 * 60 * 1000;
 /** Thirty seconds — a local `ollama pull` should show up almost immediately. */
 export const LOCAL_MODEL_TTL_MS = 30 * 1000;
 
@@ -123,6 +100,28 @@ export const LOCAL_MODEL_TTL_MS = 30 * 1000;
  * branch. Adding a provider here is now the whole change.
  */
 export const LIVE_MODEL_PROVIDERS: Partial<Record<AgentCli, LiveModelSource>> = {
+  "api-sugar": { provider: "sugar", producer: "ipc", ttlMs: CLOUD_MODEL_TTL_MS, needsKey: true },
+  "api-cline-pass": {
+    provider: "cline-pass",
+    producer: "ipc",
+    ttlMs: CLOUD_MODEL_TTL_MS,
+    needsKey: true,
+  },
+  "api-opencode-go": {
+    provider: "opencode-go",
+    producer: "ipc",
+    ttlMs: CLOUD_MODEL_TTL_MS,
+    needsKey: true,
+  },
+  "api-ollama-cloud": {
+    provider: "ollama-cloud",
+    producer: "ipc",
+    ttlMs: CLOUD_MODEL_TTL_MS,
+    needsKey: true,
+  },
+  "api-google": { provider: "google", producer: "ipc", ttlMs: CLOUD_MODEL_TTL_MS, needsKey: true },
+  "api-xai": { provider: "xai", producer: "ipc", ttlMs: CLOUD_MODEL_TTL_MS, needsKey: true },
+
   "api-claude-oauth": {
     provider: "anthropic",
     producer: "ipc",
@@ -212,12 +211,12 @@ export function liveModelSource(agent: AgentCli): LiveModelSource | undefined {
  * it did not report still falls through to the shared helpers, so a live row is
  * never less informative than a catalog row.
  */
-export function liveModelRow(model: LiveModel): ApiModel {
+export function liveModelRow(model: LiveModel, provider?: string): ApiModel {
   const reported =
     typeof model.inputPerMTok === "number" && typeof model.outputPerMTok === "number"
       ? { input: model.inputPerMTok, output: model.outputPerMTok }
       : undefined;
-  return buildApiModel({
+  const row = buildApiModel({
     value: model.id,
     label: model.displayName || model.id,
     // `null` is the wire's "provider did not say" — OpenAI, MiniMax and
@@ -226,6 +225,16 @@ export function liveModelRow(model: LiveModel): ApiModel {
     contextWindow: model.contextWindow ?? undefined,
     pricing: reported,
   });
+  // A local model name served by a cloud gateway is not evidence of free usage.
+  if (
+    provider &&
+    provider !== "ollama" &&
+    !reported &&
+    row.pricing?.input === 0 &&
+    row.pricing.output === 0
+  )
+    delete row.pricing;
+  return row;
 }
 
 /** How the last enumeration for a provider resolved. */
@@ -355,17 +364,26 @@ export function resolveModelRows(input: ResolveModelRowsInput): ModelRowResoluti
       rows: live.models,
       stale: true,
       source: "live",
-      notice: live.status === "failed" ? `Showing the last known list — ${live.error ?? "refresh failed"}` : null,
+      notice:
+        live.status === "failed"
+          ? `Showing the last known list — ${live.error ?? "refresh failed"}`
+          : null,
     };
   }
 
-  // 4. The bundle. Never an empty picker for a keyed provider that simply has
-  //    no key yet, and always badged so it is not mistaken for the real thing.
+  // 4. Use a bundled fallback when one exists; otherwise retain setup/error
+  //    guidance so a live-only provider does not present a silent empty menu.
   return {
     ...base,
     rows: bundled,
     source: bundled.length > 0 ? "bundled" : "none",
-    notice: bundled.length > 0 ? bundledNotice(live?.status, live?.error) : null,
+    notice:
+      bundled.length > 0
+        ? bundledNotice(live?.status, live?.error)
+        : enumeratesLive
+          ? (live?.error ??
+            (live?.status === "loading" ? "Loading models…" : "Refresh, or type a model id."))
+          : null,
   };
 }
 
@@ -402,9 +420,7 @@ function bundledNotice(status: LiveModelStatus | undefined, error?: string): str
  * Now a direct call to `listProviderModels`; nothing else in the
  * seam changes.
  */
-export async function fetchLiveModels(
-  provider: string,
-): Promise<LiveModel[] | "unsupported"> {
+export async function fetchLiveModels(provider: string): Promise<LiveModel[] | "unsupported"> {
   const result = await listProviderModels(provider);
   return Array.isArray(result) ? result : [];
 }
@@ -417,10 +433,7 @@ export async function fetchLiveModels(
  * — and collapsing them produces the least actionable message in either case.
  */
 export function classifyLiveModelError(error: unknown): {
-  status: Extract<
-    LiveModelStatus,
-    "failed" | "unauthorized" | "no-key" | "unsupported"
-  >;
+  status: Extract<LiveModelStatus, "failed" | "unauthorized" | "no-key" | "unsupported">;
   message: string;
 } {
   // The backend tags every rejection (`"<kind>: <message>"`), so classify on
@@ -453,4 +466,3 @@ export function classifyLiveModelError(error: unknown): {
       return { status: "failed", message: parsed.message };
   }
 }
-

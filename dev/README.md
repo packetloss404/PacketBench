@@ -1,6 +1,6 @@
 # PacketBench Development Plans
 
-Last reconciled: 2026-10-06 (0.14.8 pre-tag review)
+Last reconciled: 2026-10-06 (provider integrations)
 
 This directory contains active implementation plans, proof runbooks, research,
 and historical evidence. It is not a second backlog.
@@ -13,7 +13,7 @@ is not yet sufficient. No tag, publication or deployment was performed.
 Use the [tag/source guidance](./beta-distribution-trust-runbook.md#existing-local-artifacts-and-tags)
 before reusing the existing 0.14.8 installers.
 
-Current work is existing-code stabilization with no feature expansion. The
+Current work includes the explicitly requested [provider integrations](./provider-integrations-2026-10-06.md): Sugar, ClinePass, OpenCode Go, Ollama Cloud, Google and xAI, with current model discovery. The previous no-feature-expansion direction is superseded for this scope. The
 September 24 audit is in
 [`code-completeness-audit-2026-09-24.md`](../docs/reports/code-completeness-audit-2026-09-24.md);
 `backlog.md` tracks its fixes. Older build evidence remains specific to its

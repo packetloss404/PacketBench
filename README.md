@@ -65,7 +65,7 @@ before any external beta.
 
 ## What It Does
 
-- Create and supervise structured conversations with eight API-agent provider rows
+- Create and supervise structured conversations with fourteen API-agent provider rows
   in the first-class **Agents** surface — Claude Agent SDK/API, OpenAI
   API/Agents SDK, MiniMax, OpenRouter, local Ollama,
   and a configured OpenAI-compatible endpoint all normalize into one
@@ -135,6 +135,19 @@ endings:
 | OpenRouter              | `api-openrouter`    | API key in OS keyring                    |
 | Ollama (Local)          | `api-ollama`        | none — local daemon at `localhost:11434` |
 | Custom endpoint        | `api-custom`        | optional API key; configured OpenAI-compatible URL |
+| Sugar | `api-sugar` | Sugar API key in OS keyring |
+| ClinePass | `api-cline-pass` | Cline API key with Pass subscription |
+| OpenCode Go | `api-opencode-go` | Go subscription API key |
+| Ollama Cloud | `api-ollama-cloud` | Ollama account API key |
+| Google Gemini | `api-google` | Google AI Studio API key |
+| xAI | `api-xai` | xAI API key |
+
+These six providers have configurable API endpoints and live model discovery.
+Direct Anthropic and OpenAI also fetch current models. Use **Refresh models**
+in Providers & Models or the conversation model picker; existing conversation
+selections are retained. See [provider setup and validation](dev/provider-integrations-2026-10-06.md)
+for local Sugar configuration, plan entitlement limits and runtime details.
+
 
 **Hosted provider rows use API keys.** Ollama is keyless, and Custom endpoints
 can be configured without a key. PacketBench does not offer

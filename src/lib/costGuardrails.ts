@@ -196,10 +196,7 @@ export function computeCostGuardrailStatus(
 
   const now = options.now ?? new Date();
   const dailySpend = costForDay(data, now);
-  const snapshot = deriveCostGuardrailSnapshot(
-    dailySpend,
-    normalized,
-  );
+  const snapshot = deriveCostGuardrailSnapshot(dailySpend, normalized);
   const providerCosts = options.providerCostsBySource ?? providerCostsFromData(data);
   const providerScopes = Object.entries(normalized.providerLimitsUsd)
     .map(([source, limit]) =>
@@ -220,14 +217,18 @@ export function computeCostGuardrailStatus(
   const scopes = [
     scopeStatus("daily", dailySpend, normalized.dailyLimitUsd, normalized),
     scopeStatus("monthly", costForMonth(data, now), normalized.monthlyLimitUsd, normalized),
-    ...(options.sessionCostsById ? Object.entries(options.sessionCostsById).map(([id, cost]) =>
-      scopeStatus(`session:${id}`, cost, normalized.sessionLimitUsd, normalized),
-    ) : [scopeStatus(
-      "session",
-      options.currentSessionCostUsd ?? 0,
-      normalized.sessionLimitUsd,
-      normalized,
-    )]),
+    ...(options.sessionCostsById
+      ? Object.entries(options.sessionCostsById).map(([id, cost]) =>
+          scopeStatus(`session:${id}`, cost, normalized.sessionLimitUsd, normalized),
+        )
+      : [
+          scopeStatus(
+            "session",
+            options.currentSessionCostUsd ?? 0,
+            normalized.sessionLimitUsd,
+            normalized,
+          ),
+        ]),
     ...providerScopes,
     ...flightScopes,
   ].filter((scope): scope is CostGuardrailScopeStatus => Boolean(scope));
@@ -385,6 +386,21 @@ export function providerSourceForAgentProvider(provider: string): string {
     "minimax-api": "api-minimax",
     "api-openrouter": "api-openrouter",
     openrouter: "api-openrouter",
+    sugar: "api-sugar",
+    "api-sugar": "api-sugar",
+    "cline-pass": "api-cline-pass",
+    "api-cline-pass": "api-cline-pass",
+    "opencode-go": "api-opencode-go",
+    "api-opencode-go": "api-opencode-go",
+    "ollama-cloud": "api-ollama-cloud",
+    "api-ollama-cloud": "api-ollama-cloud",
+    google: "api-google",
+    "api-google": "api-google",
+    xai: "api-xai",
+    "api-xai": "api-xai",
+    custom: "api-custom",
+    "api-custom": "api-custom",
+
     "api-ollama": "api-ollama",
     ollama: "api-ollama",
     // PacketCode over ACP — a RETIRED transport. Both keys stay registered so
@@ -400,6 +416,20 @@ export function providerSourceForAgentProvider(provider: string): string {
 }
 
 export function isUnknownPricedUsage(usage: CostUsageLike): boolean {
+  const sourceId = providerSourceForAgentProvider(usage.source);
+  if (
+    [
+      "api-sugar",
+      "api-cline-pass",
+      "api-opencode-go",
+      "api-ollama-cloud",
+      "api-google",
+      "api-xai",
+    ].includes(sourceId) &&
+    usage.costUsd <= 0 &&
+    usage.inputTokens + usage.outputTokens > 0
+  )
+    return true;
   if (usage.pricingStatus) return usage.pricingStatus === "unknown";
 
   const totalTokens = Math.max(0, usage.inputTokens) + Math.max(0, usage.outputTokens);
@@ -407,7 +437,7 @@ export function isUnknownPricedUsage(usage: CostUsageLike): boolean {
 
   const source = usage.source.toLowerCase();
   const model = usage.model.trim().toLowerCase();
-  if (source.includes("ollama")) return false;
+  if (source === "ollama" || source === "api-ollama") return false;
 
   const bareModel = model.replace(/^ollama[/:]/, "").replace(/^local\//, "");
   return !isLocalFreeModel(bareModel);

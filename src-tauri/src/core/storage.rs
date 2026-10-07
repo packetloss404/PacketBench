@@ -146,6 +146,8 @@ struct ProviderRuntimeSettings {
     /// maintains the list in Settings.
     #[serde(default)]
     custom_compat_models: Option<Vec<String>>,
+    #[serde(default)]
+    named_provider_base_urls: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
@@ -943,6 +945,9 @@ pub fn normalize_custom_compat_base_url(raw: &str) -> Result<String, String> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("Endpoint URL must start with http:// or https://.".to_string());
     }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("Store credentials in API Keys, not in the endpoint URL.".to_string());
+    }
     // The optional custom-endpoint API key rides in `Authorization`; a public
     // plaintext endpoint would leak it. Local/LAN servers may stay http.
     crate::core::shared::require_https_unless_local(&parsed, "Custom endpoint URL")?;
@@ -951,6 +956,26 @@ pub fn normalize_custom_compat_base_url(raw: &str) -> Result<String, String> {
     }
 
     Ok(parsed.as_str().trim_end_matches('/').to_string())
+}
+
+pub fn load_named_provider_base_url(provider: &str) -> Option<String> {
+    load_provider_runtime_settings()
+        .named_provider_base_urls
+        .get(provider)
+        .and_then(|url| normalize_custom_compat_base_url(url).ok())
+}
+
+pub fn save_named_provider_base_url(provider: &str, url: Option<String>) -> Result<(), String> {
+    let _lock = lock_provider_settings_mutex();
+    let mut settings = load_provider_runtime_settings();
+    if let Some(url) = url {
+        settings
+            .named_provider_base_urls
+            .insert(provider.to_string(), url);
+    } else {
+        settings.named_provider_base_urls.remove(provider);
+    }
+    save_provider_runtime_settings(&settings)
 }
 
 pub fn load_saved_custom_compat_base_url() -> Option<String> {

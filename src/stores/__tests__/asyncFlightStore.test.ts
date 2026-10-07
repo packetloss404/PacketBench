@@ -869,6 +869,12 @@ describe("buildReassignSpec (E4)", () => {
   };
   const noServer = () => undefined;
 
+  it("retains a named provider's selected model when retrying the same agent", () => {
+    const failed = {...failedLocal, agentConfigId:"api-sugar", provider:"sugar", model:"sugar/chosen"};
+    expect(buildReassignSpec(failed, "api-sugar", noServer)?.model).toBe("sugar/chosen");
+    expect(() => buildReassignSpec(failedLocal, "api-sugar", noServer)).toThrow("Select this provider and a model");
+  });
+
   it("rebuilds a local target with the new agent + its default model", () => {
     const spec = buildReassignSpec(failedLocal, "api-openai", noServer);
     expect(spec?.kind).toBe("local");

@@ -462,7 +462,8 @@ pub async fn sign_out_provider(provider: String) -> Result<u32, String> {
 #[tauri::command]
 pub async fn get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, String> {
     match provider.as_str() {
-        "anthropic" | "openai" | "openai-agents" | "minimax" | "minimax-api" | "openrouter" => {
+        "anthropic" | "openai" | "openai-agents" | "minimax" | "minimax-api" | "openrouter"
+        | "sugar" | "cline-pass" | "opencode-go" | "ollama-cloud" | "google" | "xai" => {
             let key_provider = if provider == "openai-agents" {
                 "openai".to_string()
             } else {
@@ -509,31 +510,29 @@ pub async fn get_provider_auth_status(provider: String) -> Result<ProviderAuthSt
         }
         // LM2 — custom OpenAI-compatible endpoint. "Configured" means a base
         // URL exists; the API key is optional and only upgrades the hint.
-        "custom" => {
-            match crate::core::storage::resolve_custom_compat_base_url() {
-                None => Ok(ProviderAuthStatus {
-                    status: "missing_key".to_string(),
-                    hint: format!(
-                        "{}.",
-                        crate::core::llm_custom_compat::CUSTOM_ENDPOINT_UNSET_HINT
-                    ),
-                }),
-                Some(base_url) => {
-                    let has_key = get_api_key_exists("custom".to_string())
-                        .await
-                        .unwrap_or(false);
-                    let hint = if has_key {
-                        format!("{} — sending the saved API key", base_url)
-                    } else {
-                        format!("{} — key optional, sent if configured", base_url)
-                    };
-                    Ok(ProviderAuthStatus {
-                        status: "ready".to_string(),
-                        hint,
-                    })
-                }
+        "custom" => match crate::core::storage::resolve_custom_compat_base_url() {
+            None => Ok(ProviderAuthStatus {
+                status: "missing_key".to_string(),
+                hint: format!(
+                    "{}.",
+                    crate::core::llm_custom_compat::CUSTOM_ENDPOINT_UNSET_HINT
+                ),
+            }),
+            Some(base_url) => {
+                let has_key = get_api_key_exists("custom".to_string())
+                    .await
+                    .unwrap_or(false);
+                let hint = if has_key {
+                    format!("{} — sending the saved API key", base_url)
+                } else {
+                    format!("{} — key optional, sent if configured", base_url)
+                };
+                Ok(ProviderAuthStatus {
+                    status: "ready".to_string(),
+                    hint,
+                })
             }
-        }
+        },
         "claude-oauth" => Ok(probe_claude_oauth()),
         "openai-codex" => Ok(probe_codex_oauth()),
         other => Err(format!("Unknown provider '{}'", other)),

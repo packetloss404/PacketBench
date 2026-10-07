@@ -155,3 +155,8 @@ describe("cost guardrails", () => {
     });
   });
 });
+
+
+it("does not treat a cloud-hosted local model as free usage", () => {
+  expect(isUnknownPricedUsage({ source: "api-ollama-cloud", model: "qwen3:32b", inputTokens: 10, outputTokens: 4, costUsd: 0, pricingStatus: "free" })).toBe(true);
+});

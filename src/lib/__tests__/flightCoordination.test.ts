@@ -145,6 +145,10 @@ describe("isAttemptStalled / shouldEscalateStalled (E2)", () => {
 });
 
 describe("suggestReassignmentAgent (E3)", () => {
+  it("does not suggest an unconfigured model-less provider for one-click reassignment", () => {
+    const suggestion = suggestReassignmentAgent([]);
+    expect(["api-sugar", "api-cline-pass", "api-opencode-go", "api-ollama-cloud", "api-google", "api-xai"]).not.toContain(suggestion);
+  });
   const catalog = ["api-claude", "api-openai", "api-openai-codex"];
 
   it("suggests the first catalog agent not yet tried", () => {

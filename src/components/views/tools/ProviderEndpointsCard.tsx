@@ -1,6 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useMemo, type ReactNode } from "react";
 import { Check, RotateCcw, Server } from "lucide-react";
 import {
+  getProviderBaseUrl,
+  setProviderBaseUrl,
   getCustomCompatBaseUrl,
   getCustomCompatModels,
   getMinimaxBaseUrl,
@@ -13,6 +15,10 @@ import {
   setOllamaRuntimeOptions,
   type OllamaRuntimeOptions,
 } from "@/lib/tauri";
+
+import { NAMED_PROVIDERS } from "@/lib/named-providers";
+import { useLiveModelStore } from "@/stores/liveModelStore";
+import { ProviderModelsCard } from "./ProviderModelsCard";
 
 type EndpointRowProps = {
   id: string;
@@ -73,7 +79,7 @@ function EndpointRow({ id, label, fallback, load, save, describe }: EndpointRowP
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-1 flex items-center justify-between">
         <label htmlFor={id} className="text-[11px] text-text-secondary">
           {label}
         </label>
@@ -90,13 +96,13 @@ function EndpointRow({ id, label, fallback, load, save, describe }: EndpointRowP
             setError(null);
           }}
           placeholder={fallback}
-          className="flex-1 min-w-0 bg-bg-primary border border-bg-border rounded px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-green"
+          className="min-w-0 flex-1 rounded border border-bg-border bg-bg-primary px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:border-accent-green focus:outline-none"
         />
         <button
           type="button"
           onClick={() => void apply(draft.trim())}
           disabled={!hasChanges || status === "saving" || !draft.trim()}
-          className="p-1.5 text-accent-green hover:bg-accent-green/10 rounded disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          className="rounded p-1.5 text-accent-green transition-colors hover:bg-accent-green/10 disabled:opacity-40 disabled:hover:bg-transparent"
           title={`Save ${label}`}
         >
           <Check size={12} />
@@ -105,13 +111,13 @@ function EndpointRow({ id, label, fallback, load, save, describe }: EndpointRowP
           type="button"
           onClick={() => void apply(null)}
           disabled={status === "saving"}
-          className="p-1.5 text-text-muted hover:text-text-primary hover:bg-bg-hover rounded disabled:opacity-40 transition-colors"
+          className="rounded p-1.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
           title={`Reset ${label}`}
         >
           <RotateCcw size={12} />
         </button>
       </div>
-      <div className="mt-1.5 text-[10px] text-text-muted bg-bg-primary border border-bg-border rounded px-3 py-2">
+      <div className="mt-1.5 rounded border border-bg-border bg-bg-primary px-3 py-2 text-[10px] text-text-muted">
         {describe(effective)}
       </div>
       {status === "saved" && <div className="mt-1 text-[10px] text-accent-green">Saved.</div>}
@@ -172,12 +178,11 @@ function OllamaRuntimeRow() {
   const capValid = Number.isFinite(parsedCap) && parsedCap > 0;
   const hasChanges =
     options !== null &&
-    (String(options.numCtxCap) !== capDraft.trim() ||
-      options.keepAlive !== keepAliveDraft.trim());
+    (String(options.numCtxCap) !== capDraft.trim() || options.keepAlive !== keepAliveDraft.trim());
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-1 flex items-center justify-between">
         <span className="text-[11px] text-text-secondary">Ollama local runtime</span>
         <span className="text-[10px] text-text-muted">
           Defaults: {options?.defaultNumCtxCap ?? 16384} tokens,{" "}
@@ -200,7 +205,7 @@ function OllamaRuntimeRow() {
             setError(null);
           }}
           placeholder="16384"
-          className="flex-1 min-w-0 bg-bg-primary border border-bg-border rounded px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-green"
+          className="min-w-0 flex-1 rounded border border-bg-border bg-bg-primary px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:border-accent-green focus:outline-none"
         />
         <label htmlFor="ollama-keep-alive" className="sr-only">
           Ollama keep-alive
@@ -215,13 +220,13 @@ function OllamaRuntimeRow() {
             setError(null);
           }}
           placeholder="30m"
-          className="w-20 shrink-0 bg-bg-primary border border-bg-border rounded px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-green"
+          className="w-20 shrink-0 rounded border border-bg-border bg-bg-primary px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:border-accent-green focus:outline-none"
         />
         <button
           type="button"
           onClick={() => void apply(parsedCap, keepAliveDraft.trim())}
           disabled={!hasChanges || !capValid || status === "saving" || !keepAliveDraft.trim()}
-          className="p-1.5 text-accent-green hover:bg-accent-green/10 rounded disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          className="rounded p-1.5 text-accent-green transition-colors hover:bg-accent-green/10 disabled:opacity-40 disabled:hover:bg-transparent"
           title="Save Ollama runtime options"
         >
           <Check size={12} />
@@ -230,13 +235,13 @@ function OllamaRuntimeRow() {
           type="button"
           onClick={() => void apply(null, null)}
           disabled={status === "saving"}
-          className="p-1.5 text-text-muted hover:text-text-primary hover:bg-bg-hover rounded disabled:opacity-40 transition-colors"
+          className="rounded p-1.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
           title="Reset Ollama runtime options"
         >
           <RotateCcw size={12} />
         </button>
       </div>
-      <div className="mt-1.5 text-[10px] text-text-muted bg-bg-primary border border-bg-border rounded px-3 py-2">
+      <div className="mt-1.5 rounded border border-bg-border bg-bg-primary px-3 py-2 text-[10px] text-text-muted">
         Context cap (tokens) and keep-alive, sent as{" "}
         <span className="text-text-secondary">options.num_ctx</span> and{" "}
         <span className="text-text-secondary">keep_alive</span> on every request. The cap is a
@@ -310,12 +315,11 @@ function CustomCompatRow() {
     .map((m) => m.trim())
     .filter(Boolean);
   const hasChanges =
-    urlDraft.trim() !== (effectiveUrl ?? "") ||
-    draftModels.join("\n") !== savedModels.join("\n");
+    urlDraft.trim() !== (effectiveUrl ?? "") || draftModels.join("\n") !== savedModels.join("\n");
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-1 flex items-center justify-between">
         <label htmlFor="custom-compat-base-url" className="text-[11px] text-text-secondary">
           Custom OpenAI-compatible
         </label>
@@ -332,13 +336,13 @@ function CustomCompatRow() {
             setError(null);
           }}
           placeholder="http://localhost:8000/v1"
-          className="flex-1 min-w-0 bg-bg-primary border border-bg-border rounded px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-green"
+          className="min-w-0 flex-1 rounded border border-bg-border bg-bg-primary px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:border-accent-green focus:outline-none"
         />
         <button
           type="button"
           onClick={() => void apply(urlDraft.trim() || null, draftModels)}
           disabled={!hasChanges || status === "saving"}
-          className="p-1.5 text-accent-green hover:bg-accent-green/10 rounded disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+          className="rounded p-1.5 text-accent-green transition-colors hover:bg-accent-green/10 disabled:opacity-40 disabled:hover:bg-transparent"
           title="Save custom endpoint"
         >
           <Check size={12} />
@@ -347,7 +351,7 @@ function CustomCompatRow() {
           type="button"
           onClick={() => void apply(null, [])}
           disabled={status === "saving"}
-          className="p-1.5 text-text-muted hover:text-text-primary hover:bg-bg-hover rounded disabled:opacity-40 transition-colors"
+          className="rounded p-1.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:opacity-40"
           title="Clear custom endpoint and model list"
         >
           <RotateCcw size={12} />
@@ -366,19 +370,16 @@ function CustomCompatRow() {
         }}
         rows={3}
         placeholder={"Model ids — one per line\nqwen2.5-72b-instruct"}
-        className="mt-1.5 w-full resize-none bg-bg-primary border border-bg-border rounded px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-green"
+        className="mt-1.5 w-full resize-none rounded border border-bg-border bg-bg-primary px-2 py-1.5 text-[11px] text-text-primary placeholder:text-text-muted focus:border-accent-green focus:outline-none"
       />
-      <div className="mt-1.5 text-[10px] text-text-muted bg-bg-primary border border-bg-border rounded px-3 py-2">
+      <div className="mt-1.5 rounded border border-bg-border bg-bg-primary px-3 py-2 text-[10px] text-text-muted">
         Any server speaking the OpenAI chat-completions protocol: vLLM, LM Studio, LiteLLM,
         Together, … The URL is used verbatim as{" "}
-        <span className="text-text-secondary">
-          {effectiveUrl ?? "{base}"}/chat/completions
-        </span>
-        , so include the <span className="text-text-secondary">/v1</span> prefix if your server
-        uses one. API key is optional — save one under{" "}
-        <span className="text-text-secondary">custom</span> in API Keys and it is sent as a
-        Bearer token; without one, no Authorization header is sent. Models are listed manually
-        (one id per line) — the picker offers exactly these.
+        <span className="text-text-secondary">{effectiveUrl ?? "{base}"}/chat/completions</span>, so
+        include the <span className="text-text-secondary">/v1</span> prefix if your server uses one.
+        API key is optional — save one under <span className="text-text-secondary">custom</span> in
+        API Keys and it is sent as a Bearer token; without one, no Authorization header is sent.
+        Models are listed manually (one id per line) — the picker offers exactly these.
       </div>
       {status === "saved" && <div className="mt-1 text-[10px] text-accent-green">Saved.</div>}
       {error && <div className="mt-1 text-[10px] text-accent-red">{error}</div>}
@@ -386,10 +387,33 @@ function CustomCompatRow() {
   );
 }
 
+function NamedEndpointRow({ provider }: { provider: (typeof NAMED_PROVIDERS)[number] }) {
+  const callbacks = useMemo(
+    () => ({
+      load: () => getProviderBaseUrl(provider.id),
+      save: async (url: string | null) => {
+        const saved = await setProviderBaseUrl(provider.id, url);
+        useLiveModelStore.getState().invalidate(provider.id);
+        return saved;
+      },
+    }),
+    [provider.id],
+  );
+  return (
+    <EndpointRow
+      id={`${provider.id}-base-url`}
+      label={provider.name}
+      fallback={provider.baseUrl}
+      {...callbacks}
+      describe={() => provider.description}
+    />
+  );
+}
+
 export function ProviderEndpointsCard() {
   return (
-    <div className="bg-bg-secondary border border-bg-border rounded-lg p-4">
-      <h3 className="text-xs font-semibold text-text-primary mb-3 flex items-center gap-2">
+    <div className="rounded-lg border border-bg-border bg-bg-secondary p-4">
+      <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold text-text-primary">
         <Server size={12} className="text-accent-blue" />
         Provider Endpoints
       </h3>
@@ -407,8 +431,8 @@ export function ProviderEndpointsCard() {
               (the only route that accepts num_ctx / keep_alive); model discovery uses{" "}
               <span className="text-text-secondary">{url}/api/tags</span>. Endpoints without{" "}
               <span className="text-text-secondary">/api/chat</span> fall back to{" "}
-              <span className="text-text-secondary">{url}/v1</span>, where the context window
-              cannot be set.
+              <span className="text-text-secondary">{url}/v1</span>, where the context window cannot
+              be set.
             </>
           )}
         />
@@ -431,7 +455,11 @@ export function ProviderEndpointsCard() {
           )}
         />
 
+        {NAMED_PROVIDERS.map((provider) => (
+          <NamedEndpointRow key={provider.id} provider={provider} />
+        ))}
         <CustomCompatRow />
+        <ProviderModelsCard />
       </div>
     </div>
   );

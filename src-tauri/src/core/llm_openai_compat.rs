@@ -73,6 +73,7 @@ fn build_openai_messages(
     messages: &[ChatMessage],
     system_prompt: Option<&str>,
     attachments: &[ImageAttachment],
+    provider: &str,
 ) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
 
@@ -159,7 +160,24 @@ fn build_openai_messages(
                     // tool rounds and the model degrades at agent work.
                     // Providers that never emit one never get the field.
                     if let Some(details) = reasoning {
-                        entry["reasoning_details"] = details;
+                        if details["compat_provider"] == provider {
+                            if let Some(value) = details.get("reasoning_content") {
+                                entry["reasoning_content"] = value.clone();
+                            }
+                            if let Some(value) = details.get("reasoning_details") {
+                                entry["reasoning_details"] = value.clone();
+                            }
+                            if let Some(calls) = entry["tool_calls"].as_array_mut() {
+                                for call in calls {
+                                    let id = call["id"].as_str().unwrap_or("").to_string();
+                                    if let Some(extra) = details["tool_metadata"].get(&id) {
+                                        call["extra_content"] = extra.clone();
+                                    }
+                                }
+                            }
+                        } else if details.is_array() {
+                            entry["reasoning_details"] = details;
+                        }
                     }
                     out.push(entry);
                 } else {
@@ -417,18 +435,26 @@ async fn finish_compat_turn(
     input_tokens: u64,
     output_tokens: u64,
     cached_tokens: u64,
+    replay: &mut CompatReplay,
 ) {
     flush_tool_calls(tx, tool_calls).await;
     if *thinking_open {
         *thinking_open = false;
         let _ = tx.send(StreamChunk::ThinkingStop).await;
     }
-    if !reasoning.is_empty() {
-        let _ = tx
-            .send(StreamChunk::ReasoningDetails {
-                details: reasoning.finish(),
-            })
-            .await;
+    let details = if replay.has_data() {
+        let mut details = replay.finish();
+        if !reasoning.is_empty() {
+            details["reasoning_details"] = reasoning.finish();
+        }
+        Some(details)
+    } else if !reasoning.is_empty() {
+        Some(reasoning.finish())
+    } else {
+        None
+    };
+    if let Some(details) = details {
+        let _ = tx.send(StreamChunk::ReasoningDetails { details }).await;
     }
     let _ = tx
         .send(StreamChunk::Done {
@@ -440,6 +466,65 @@ async fn finish_compat_turn(
         .await;
 }
 
+/// Preserve signed tool metadata (Gemini) and reasoning content (coding gateways).
+#[derive(Default)]
+struct CompatReplay {
+    provider: String,
+    reasoning: String,
+    calls: std::collections::BTreeMap<i64, (String, Option<serde_json::Value>)>,
+    completed: std::collections::HashMap<String, serde_json::Value>,
+}
+impl CompatReplay {
+    fn new(provider: &str) -> Self {
+        Self {
+            provider: provider.into(),
+            ..Self::default()
+        }
+    }
+    fn absorb(&mut self, delta: &serde_json::Value) {
+        if let Some(text) = delta["reasoning_content"].as_str() {
+            self.reasoning.push_str(text);
+        }
+        if let Some(calls) = delta["tool_calls"].as_array() {
+            for call in calls {
+                let index = call["index"].as_i64().unwrap_or(0);
+                let entry = self.calls.entry(index).or_default();
+                if let Some(id) = call["id"].as_str() {
+                    if !entry.0.is_empty() && entry.0 != id {
+                        if let Some(extra) = entry.1.take() {
+                            self.completed.insert(entry.0.clone(), extra);
+                        }
+                    }
+                    entry.0 = id.to_string();
+                }
+                if let Some(extra) = call.get("extra_content") {
+                    entry.1 = Some(extra.clone());
+                }
+            }
+        }
+    }
+    fn has_data(&self) -> bool {
+        !self.reasoning.is_empty()
+            || !self.completed.is_empty()
+            || self.calls.values().any(|(_, extra)| extra.is_some())
+    }
+    fn finish(&self) -> serde_json::Value {
+        let mut details = serde_json::json!({"compat_provider":self.provider, "tool_metadata":{}});
+        if !self.reasoning.is_empty() {
+            details["reasoning_content"] = serde_json::json!(self.reasoning);
+        }
+        for (id, extra) in &self.completed {
+            details["tool_metadata"][id] = extra.clone();
+        }
+        for (id, extra) in self.calls.values() {
+            if let Some(extra) = extra {
+                details["tool_metadata"][id] = extra.clone();
+            }
+        }
+        details
+    }
+}
+
 /// Stream a chat completion from an OpenAI-compatible endpoint.
 pub async fn stream_chat_compat(
     config: &OpenAiCompatConfig,
@@ -447,13 +532,17 @@ pub async fn stream_chat_compat(
     request: LlmRequest,
     tx: mpsc::Sender<StreamChunk>,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())?;
     let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
 
     let messages = build_openai_messages(
         &request.messages,
         request.system_prompt.as_deref(),
         &request.attachments,
+        &config.provider_id,
     );
     let tools = build_openai_tools(&request.tools);
 
@@ -471,7 +560,14 @@ pub async fn stream_chat_compat(
         && cached_capability("stream_options", &config.base_url) != Some(false);
     if matches!(
         config.provider_id.as_str(),
-        "openai" | "openrouter" | "minimax"
+        "openai"
+            | "openrouter"
+            | "minimax"
+            | "sugar"
+            | "cline-pass"
+            | "opencode-go"
+            | "ollama-cloud"
+            | "google"
     ) || ollama_usage
     {
         body["stream_options"] = serde_json::json!({ "include_usage": true });
@@ -640,6 +736,8 @@ pub async fn stream_chat_compat(
     let mut cached_tokens: u64 = 0;
     let mut reasoning = ReasoningAcc::default();
     let mut thinking_open = false;
+    let mut replay = CompatReplay::new(&config.provider_id);
+    let mut completed = false;
 
     let mut stream_ended = false;
     loop {
@@ -679,13 +777,17 @@ pub async fn stream_chat_compat(
                     input_tokens,
                     output_tokens,
                     cached_tokens,
+                    &mut replay,
                 )
                 .await;
                 return Ok(());
             }
 
-            if let Some(data) = line.strip_prefix("data: ") {
+            if let Some(data) = line.strip_prefix("data:").map(str::trim) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(error) = parsed.get("error") {
+                        return Err(format!("{} stream error: {}", config.provider_id, error));
+                    }
                     // Extract usage if present
                     if let Some(usage) = parsed.get("usage") {
                         input_tokens = usage
@@ -714,6 +816,17 @@ pub async fn stream_chat_compat(
                                 None => continue,
                             };
 
+                            replay.absorb(delta);
+                            if let Some(text) =
+                                delta.get("reasoning_content").and_then(|v| v.as_str())
+                            {
+                                thinking_open = true;
+                                let _ = tx
+                                    .send(StreamChunk::ThinkingDelta {
+                                        text: text.to_string(),
+                                    })
+                                    .await;
+                            }
                             // Provider-owned reasoning (MiniMax M3
                             // `reasoning_split`). Accumulated for verbatim
                             // replay in history, and mirrored to the thinking
@@ -761,6 +874,7 @@ pub async fn stream_chat_compat(
                             if let Some(finish_reason) =
                                 choice.get("finish_reason").and_then(|f| f.as_str())
                             {
+                                completed = true;
                                 if finish_reason == "tool_calls"
                                     || finish_reason == "stop"
                                     || finish_reason == "function_call"
@@ -779,8 +893,13 @@ pub async fn stream_chat_compat(
         }
     }
 
-    // If we exited the stream without [DONE]/finish_reason, still flush any
-    // accumulated tool calls before signalling Done.
+    if !completed {
+        return Err(format!(
+            "{} stream ended before completion",
+            config.provider_id
+        ));
+    }
+    // A finish_reason is sufficient even when the endpoint omits [DONE].
     finish_compat_turn(
         &tx,
         &mut tool_calls_acc,
@@ -789,6 +908,7 @@ pub async fn stream_chat_compat(
         input_tokens,
         output_tokens,
         cached_tokens,
+        &mut replay,
     )
     .await;
 
@@ -800,6 +920,57 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn signature_replay_handles_repeated_ids_and_indexless_sequential_calls() {
+        let mut replay = CompatReplay::new("google");
+        replay.absorb(&serde_json::json!({"tool_calls":[{"id":"a", "extra_content":{"google":{"thought_signature":"A"}}}]}));
+        replay.absorb(&serde_json::json!({"tool_calls":[{"id":"a"}]}));
+        replay.absorb(&serde_json::json!({"tool_calls":[{"id":"b", "extra_content":{"google":{"thought_signature":"B"}}}]}));
+        assert_eq!(
+            replay.finish()["tool_metadata"]["a"]["google"]["thought_signature"],
+            "A"
+        );
+        assert_eq!(
+            replay.finish()["tool_metadata"]["b"]["google"]["thought_signature"],
+            "B"
+        );
+    }
+
+    #[test]
+    fn gemini_signatures_survive_parallel_tool_streams_and_history_replay() {
+        let mut replay = CompatReplay::new("google");
+        replay.absorb(
+            &serde_json::json!({"tool_calls":[{"index":0,"id":"first"},{"index":1,"id":"second"}]}),
+        );
+        replay.absorb(&serde_json::json!({"tool_calls":[{"index":0,"extra_content":{"google":{"thought_signature":"opaque"}}}]}));
+        let messages = vec![ChatMessage {
+            role: ChatRole::Assistant,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::ToolUse {
+                    id: "first".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({}),
+                },
+                ContentBlock::ToolUse {
+                    id: "second".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({}),
+                },
+                ContentBlock::ProviderReasoning {
+                    details: replay.finish(),
+                },
+            ]),
+        }];
+        let built = build_openai_messages(&messages, None, &[], "google");
+        assert_eq!(
+            built[0]["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+            "opaque"
+        );
+        assert!(built[0]["tool_calls"][1].get("extra_content").is_none());
+        let other = build_openai_messages(&messages, None, &[], "openai");
+        assert!(other[0]["tool_calls"][0].get("extra_content").is_none());
+    }
 
     #[test]
     fn parallel_tool_calls_do_not_cross_contaminate() {
@@ -980,7 +1151,7 @@ mod tests {
             ]),
         }];
 
-        let built = build_openai_messages(&messages, None, &[]);
+        let built = build_openai_messages(&messages, None, &[], "minimax");
 
         assert_eq!(built.len(), 1);
         assert_eq!(built[0]["reasoning_details"], details);
@@ -999,7 +1170,7 @@ mod tests {
             }]),
         }];
 
-        let built = build_openai_messages(&messages, None, &[]);
+        let built = build_openai_messages(&messages, None, &[], "minimax");
 
         assert!(built[0].get("reasoning_details").is_none());
     }

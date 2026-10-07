@@ -11,17 +11,8 @@ import {
 import { Dropdown, DropdownItem } from "@/components/ui/Dropdown";
 import type { AgentCli } from "@/stores/agentTaskStore";
 import { useAppStore } from "@/stores/appStore";
-import {
-  buildApiModel,
-  getModelSpeed,
-  MODEL_SPEED_LABEL,
-  type ApiModel,
-} from "@/lib/api-models";
-import {
-  providerEnumeratesLive,
-  resolveModelRows,
-  liveModelSource,
-} from "@/lib/liveModels";
+import { buildApiModel, getModelSpeed, MODEL_SPEED_LABEL, type ApiModel } from "@/lib/api-models";
+import { providerEnumeratesLive, resolveModelRows, liveModelSource } from "@/lib/liveModels";
 import type { OllamaModelsState } from "../hooks/useOllamaModels";
 import { useCustomModels } from "../hooks/useCustomModels";
 import { useLiveModels } from "../hooks/useLiveModels";
@@ -37,9 +28,7 @@ function formatContextWindow(tokens: number | undefined): string | null {
 }
 
 /** Compact per-1M-token price label, e.g. { input: 3, output: 15 } -> "$3/$15". */
-function formatPricing(
-  pricing: { input: number; output: number } | undefined,
-): string | null {
+function formatPricing(pricing: { input: number; output: number } | undefined): string | null {
   if (!pricing) return null;
   return `$${pricing.input}/$${pricing.output}`;
 }
@@ -55,10 +44,7 @@ function formatPricing(
  * lists are empty — an empty picker with a search box you can type into is
  * still a working control.
  */
-function freeTextRow(
-  typed: string,
-  onSelect: (model: string) => void,
-): ReactNode {
+function freeTextRow(typed: string, onSelect: (model: string) => void): ReactNode {
   if (!typed) return null;
   return (
     <DropdownItem onClick={() => onSelect(typed)}>
@@ -170,8 +156,7 @@ export function ModelSelector({
   const isCustom = selectedAgent === "api-custom";
   // LM2: the custom endpoint models are a runtime-managed manual list, so
   // (like Ollama live list) the static catalog carries none.
-  const { customModels, refresh: refreshCustomModels } =
-    useCustomModels(selectedAgent);
+  const { customModels, refresh: refreshCustomModels } = useCustomModels(selectedAgent);
   // Every other live-enumerating provider goes through the shared cache. It
   // serves whatever it has immediately and refreshes behind the picker, so
   // opening this menu never waits on the network.
@@ -206,8 +191,7 @@ export function ModelSelector({
   if (isOllama) {
     if (Array.isArray(ollamaModels)) {
       const match = ollamaModels.find((m) => m.name === selectedModel);
-      triggerLabel =
-        match?.name ?? selectedModel ?? ollamaModels[0]?.name ?? "Select model";
+      triggerLabel = match?.name ?? selectedModel ?? ollamaModels[0]?.name ?? "Select model";
     } else if (ollamaModels === "loading") {
       triggerLabel = selectedModel || "Loading models…";
     } else {
@@ -216,9 +200,8 @@ export function ModelSelector({
   } else if (isCustom) {
     triggerLabel = selectedModel || "Select model";
   } else {
-    const currentModel =
-      modelRows.find((m) => m.value === selectedModel) ?? modelRows[0];
-    triggerLabel = currentModel?.label ?? "Select model";
+    const currentModel = modelRows.find((m) => m.value === selectedModel);
+    triggerLabel = currentModel?.label || selectedModel || "Select model";
   }
 
   const speed = getModelSpeed(selectedModel);
@@ -284,8 +267,7 @@ export function ModelSelector({
       notice = (
         <div className="px-3 py-1.5 text-meta text-text-muted">
           No models installed. Run{" "}
-          <code className="text-text-secondary">ollama pull &lt;model&gt;</code>{" "}
-          in a terminal.
+          <code className="text-text-secondary">ollama pull &lt;model&gt;</code> in a terminal.
         </div>
       );
     } else {
@@ -426,9 +408,7 @@ export function ModelSelector({
       // catalog — "no key yet" and "the provider rejected your key" are
       // different problems and the user can only fix the one they are told
       // about.
-      notice = (
-        <div className="px-3 py-1.5 text-meta text-text-muted">{resolution.notice}</div>
-      );
+      notice = <div className="px-3 py-1.5 text-meta text-text-muted">{resolution.notice}</div>;
     }
     for (const m of modelRows) {
       const ctx = formatContextWindow(m.contextWindow);
@@ -477,10 +457,7 @@ export function ModelSelector({
         {header}
         {notice}
         {rows.map((r) => (
-          <DropdownItem
-            key={r.key}
-            onClick={r.disabled ? () => {} : r.onSelect}
-          >
+          <DropdownItem key={r.key} onClick={r.disabled ? () => {} : r.onSelect}>
             {r.body}
           </DropdownItem>
         ))}
@@ -491,9 +468,7 @@ export function ModelSelector({
   // ── Upward (composer row, pinned to the bottom edge) ────────────────────
   const needle = filter.trim().toLowerCase();
   const visible =
-    needle === ""
-      ? rows
-      : rows.filter((r) => r.searchText.toLowerCase().includes(needle));
+    needle === "" ? rows : rows.filter((r) => r.searchText.toLowerCase().includes(needle));
 
   return (
     <div ref={rootRef} className="relative">

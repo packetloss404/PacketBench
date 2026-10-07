@@ -1,3 +1,4 @@
+import { NAMED_PROVIDERS } from "@/lib/named-providers";
 import type { AgentCli } from "@/stores/agentTaskStore";
 import { getModelContextWindow } from "@/lib/modelContext";
 import { getModelRates } from "@/lib/conversationCost";
@@ -43,6 +44,13 @@ export interface ApiProviderInfo {
 }
 
 export const API_PROVIDERS: ApiProviderInfo[] = [
+  ...NAMED_PROVIDERS.map((p) => ({
+    id: p.id,
+    agentCli: `api-${p.id}` as AgentCli,
+    name: p.name,
+    needsKey: true,
+    models: [],
+  })),
   {
     // Historical id — the row is the Claude Agent SDK, which since 2026-07
     // authenticates with the `api-key-anthropic` keyring entry instead of a

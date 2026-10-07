@@ -999,6 +999,13 @@ fn provider_to_source(provider: &str) -> &'static str {
         "openrouter" | "api-openrouter" => "api-openrouter",
         "ollama" | "api-ollama" => "api-ollama",
         "custom" | "api-custom" => "api-custom",
+        "sugar" | "api-sugar" => "api-sugar",
+        "cline-pass" | "api-cline-pass" => "api-cline-pass",
+        "opencode-go" | "api-opencode-go" => "api-opencode-go",
+        "ollama-cloud" | "api-ollama-cloud" => "api-ollama-cloud",
+        "google" | "api-google" => "api-google",
+        "xai" | "api-xai" => "api-xai",
+
         _ => "api-claude",
     }
 }

@@ -84,6 +84,11 @@ describe("attemptRouting", () => {
     expect(target.baseBranch).toBe("develop");
   });
 
+  it("rejects a named provider route without a selected model before building a target", () => {
+    expect(() => localAttemptTargetFromRoute({agentConfigId:"api-sugar"}, "/repo"))
+      .toThrow("Choose a model");
+  });
+
   it("always produces a non-empty model", () => {
     for (const agent of ["api-claude", "api-openai", "api-minimax", "api-openrouter"]) {
       const executor = resolveAttemptExecutor({ agentConfigId: agent });
@@ -113,6 +118,13 @@ const EXPECTED_PROVIDER_IDS: ReadonlyArray<[AgentCli, string]> = [
   // LM2 — user-supplied OpenAI-compatible endpoint. The prefix-strip happens
   // to round-trip here, but the map stays the single authority.
   ["api-custom", "custom"],
+  ["api-sugar", "sugar"],
+  ["api-cline-pass", "cline-pass"],
+  ["api-opencode-go", "opencode-go"],
+  ["api-ollama-cloud", "ollama-cloud"],
+  ["api-google", "google"],
+  ["api-xai", "xai"],
+
 ];
 
 describe("attemptProviderFor", () => {

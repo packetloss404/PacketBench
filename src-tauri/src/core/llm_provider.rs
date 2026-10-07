@@ -42,6 +42,12 @@ pub const IN_PROCESS_PROVIDERS: &[&str] = &[
     "openrouter",
     "ollama",
     "custom",
+    "sugar",
+    "cline-pass",
+    "opencode-go",
+    "ollama-cloud",
+    "google",
+    "xai",
 ];
 
 /// Get a provider instance by name.
@@ -63,6 +69,9 @@ pub fn get_provider(name: &str) -> Result<Box<dyn LlmProvider>, String> {
         // LM2: user-supplied OpenAI-compatible endpoint (vLLM / LM Studio /
         // LiteLLM / Together, …). Key optional — `api-key-custom` when set.
         "custom" => Ok(Box::new(super::llm_custom_compat::CustomCompatProvider)),
+        name if super::provider_endpoints::NAMED_PROVIDERS.contains(&name) => {
+            Ok(Box::new(super::llm_named::NamedProvider::new(name)))
+        }
         _ => Err(format!("Unknown provider: {}", name)),
     }
 }

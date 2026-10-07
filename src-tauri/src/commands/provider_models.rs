@@ -141,6 +141,13 @@ fn canonical_provider(provider: &str) -> Option<&'static str> {
         "minimax-api" => Some("minimax-api"),
         "ollama" | "api-ollama" => Some("ollama"),
         "custom" | "api-custom" => Some("custom"),
+        "sugar" | "api-sugar" => Some("sugar"),
+        "cline-pass" | "api-cline-pass" => Some("cline-pass"),
+        "opencode-go" | "api-opencode-go" => Some("opencode-go"),
+        "ollama-cloud" | "api-ollama-cloud" => Some("ollama-cloud"),
+        "google" | "api-google" => Some("google"),
+        "xai" | "api-xai" => Some("xai"),
+
         _ => None,
     }
 }
@@ -153,7 +160,7 @@ fn canonical_provider(provider: &str) -> Option<&'static str> {
 /// broke". `load_api_key` collapses both into `Err(String)`, so we match on the
 /// shared prefix it exports rather than re-implementing the keyring walk
 /// (which includes the legacy-service migration).
-fn require_api_key(provider: &str) -> Result<String, String> {
+pub(super) fn require_api_key(provider: &str) -> Result<String, String> {
     match crate::commands::api_keys::load_api_key(provider) {
         Ok(key) if key.trim().is_empty() => Err(tagged(
             ERR_NO_KEY,
@@ -184,9 +191,10 @@ fn optional_api_key(provider: &str) -> Option<String> {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-fn http_client() -> Result<reqwest::Client, String> {
+pub(super) fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(REMOTE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| tagged(ERR_NETWORK, format!("Failed to build HTTP client: {}", e)))
 }
@@ -194,7 +202,11 @@ fn http_client() -> Result<reqwest::Client, String> {
 /// Send a prepared request and return the body text, classifying failures into
 /// the tag vocabulary above. 401/403 is the stale-key signal and is kept
 /// distinct from every other non-2xx.
-async fn fetch_text(req: reqwest::RequestBuilder, label: &str, url: &str) -> Result<String, String> {
+pub(super) async fn fetch_text(
+    req: reqwest::RequestBuilder,
+    label: &str,
+    url: &str,
+) -> Result<String, String> {
     let resp = req.send().await.map_err(|e| {
         if e.is_connect() || e.is_timeout() {
             tagged(ERR_NETWORK, format!("{} not reachable at {}", label, url))
@@ -221,9 +233,12 @@ async fn fetch_text(req: reqwest::RequestBuilder, label: &str, url: &str) -> Res
         ));
     }
 
-    resp.text()
-        .await
-        .map_err(|e| tagged(ERR_NETWORK, format!("Failed to read {} response: {}", label, e)))
+    resp.text().await.map_err(|e| {
+        tagged(
+            ERR_NETWORK,
+            format!("Failed to read {} response: {}", label, e),
+        )
+    })
 }
 
 /// Build the `/models` URL for an OpenAI-compatible base that may or may not
@@ -647,7 +662,10 @@ fn parse_minimax_models(body: &str) -> Result<Vec<LiveModel>, String> {
                         ),
                     )
                 } else {
-                    tagged(ERR_NETWORK, format!("MiniMax returned an error: {}", detail))
+                    tagged(
+                        ERR_NETWORK,
+                        format!("MiniMax returned an error: {}", detail),
+                    )
                 });
             }
         }
@@ -772,6 +790,9 @@ pub async fn list_provider_models(provider: String) -> Result<Vec<LiveModel>, St
         slot @ ("minimax" | "minimax-api") => list_minimax_models(slot).await,
         "ollama" => list_ollama_live_models().await,
         "custom" => list_custom_models().await,
+        name if crate::core::provider_endpoints::NAMED_PROVIDERS.contains(&name) => {
+            super::named_provider_models::list_models(name).await
+        }
         other => Err(tagged(
             ERR_UNSUPPORTED,
             format!("Live model discovery is not supported for '{}'.", other),

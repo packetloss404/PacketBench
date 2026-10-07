@@ -123,18 +123,20 @@ fn read_only_tool_definitions() -> Result<Vec<ToolDefinition>, String> {
         .collect())
 }
 
-/// Drain a `StreamChunk` receiver into (assistant text, tool calls).
+/// Drain a response, retaining opaque provider state for the next tool round.
 pub(crate) async fn collect_response(
     mut rx: mpsc::Receiver<StreamChunk>,
     provider: &str,
     model: &str,
-) -> Result<(String, Vec<ToolCall>), String> {
+) -> Result<(String, Vec<ToolCall>, Option<serde_json::Value>), String> {
     let mut text = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut provider_reasoning = None;
 
     while let Some(chunk) = rx.recv().await {
         match chunk {
             StreamChunk::TextDelta { text: t } => text.push_str(&t),
+            StreamChunk::ReasoningDetails { details } => provider_reasoning = Some(details),
             StreamChunk::ToolUseEnd {
                 id,
                 name,
@@ -163,7 +165,7 @@ pub(crate) async fn collect_response(
                     cache_read: cache_read_input_tokens,
                     cache_write: cache_creation_input_tokens,
                 })?;
-                return Ok((text, tool_calls));
+                return Ok((text, tool_calls, provider_reasoning));
             }
             _ => {}
         }
@@ -242,6 +244,8 @@ async fn run_agent_loop_inner(
     }];
 
     let mut final_text = String::new();
+    // A child owns a separate conversation, stable across its tool rounds.
+    let cache_key = uuid::Uuid::new_v4().to_string();
 
     for _ in 0..MAX_ITERATIONS {
         crate::commands::usage::ensure_usage_accounting_healthy()?;
@@ -255,7 +259,7 @@ async fn run_agent_loop_inner(
             attachments: Vec::new(),
             thinking_enabled: false,
             thinking_budget_tokens: 0,
-            cache_key: None,
+            cache_key: Some(cache_key.clone()),
         };
 
         let (tx, rx) = mpsc::channel::<StreamChunk>(64);
@@ -264,10 +268,13 @@ async fn run_agent_loop_inner(
 
         let (stream_res, collected) = tokio::join!(stream_fut, collect_fut);
         stream_res?;
-        let (assistant_text, tool_calls) = collected?;
+        let (assistant_text, tool_calls, provider_reasoning) = collected?;
 
         // Build the assistant turn (text + tool_use blocks) for history.
         let mut blocks: Vec<ContentBlock> = Vec::new();
+        if let Some(details) = provider_reasoning {
+            blocks.push(ContentBlock::ProviderReasoning { details });
+        }
         if !assistant_text.is_empty() {
             blocks.push(ContentBlock::Text {
                 text: assistant_text.clone(),
@@ -533,6 +540,131 @@ mod tests {
             "empty",
         )
         .await
+    }
+
+    struct ReplayFixtureProvider {
+        replay: serde_json::Value,
+        requests: std::sync::Mutex<Vec<LlmRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::core::llm_provider::LlmProvider for ReplayFixtureProvider {
+        fn provider_id(&self) -> &str {
+            "google"
+        }
+
+        async fn stream_chat(
+            &self,
+            _: &str,
+            request: LlmRequest,
+            tx: mpsc::Sender<StreamChunk>,
+        ) -> Result<(), String> {
+            let first_round = request.messages.len() == 1;
+            self.requests.lock().unwrap().push(request);
+            if first_round {
+                tx.send(StreamChunk::ToolUseEnd {
+                    id: "signed-call".into(),
+                    name: "task_list".into(),
+                    arguments: serde_json::json!({}),
+                })
+                .await
+                .unwrap();
+                tx.send(StreamChunk::ReasoningDetails {
+                    details: self.replay.clone(),
+                })
+                .await
+                .unwrap();
+            } else {
+                tx.send(StreamChunk::TextDelta {
+                    text: "finished".into(),
+                })
+                .await
+                .unwrap();
+            }
+            tx.send(StreamChunk::Done {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+            .await
+            .unwrap();
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn child_tool_rounds_preserve_opaque_replay_and_a_stable_private_session_key() {
+        for replay in [
+            serde_json::json!({"compat_provider":"google", "tool_metadata":{
+                "signed-call":{"google":{"thought_signature":"opaque-signature"}}
+            }}),
+            serde_json::json!({"responses_provider":"xai", "output":[
+                {"type":"reasoning", "encrypted_content":"opaque-reasoning"},
+                {"type":"function_call", "call_id":"signed-call", "name":"task_list", "arguments":"{}"}
+            ]}),
+            serde_json::json!({"anthropic_content":[
+                {"type":"thinking", "thinking":"private", "signature":"opaque-signature"},
+                {"type":"tool_use", "id":"signed-call", "name":"task_list", "input":{}}
+            ]}),
+        ] {
+            let provider = ReplayFixtureProvider {
+                replay: replay.clone(),
+                requests: Default::default(),
+            };
+            let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+            // Independent children must not share a cache/session identity.
+            for _ in 0..2 {
+                let result = PARENT_LLM
+                    .scope(
+                        parent(recorded.clone()),
+                        run_agent_loop(
+                            &provider,
+                            "fixture-key",
+                            "selected-model".into(),
+                            "".into(),
+                            vec![def("task_list")],
+                            20,
+                            "task".into(),
+                            &ExecutionTarget::Local {
+                                project_path: ".".into(),
+                            },
+                            "empty",
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(result, "finished");
+            }
+            let requests = provider.requests.lock().unwrap();
+            assert_eq!(requests.len(), 4);
+            for rounds in requests.chunks_exact(2) {
+                let key = rounds[0].cache_key.as_deref().unwrap();
+                assert!(uuid::Uuid::parse_str(key).is_ok());
+                assert_eq!(rounds[1].cache_key.as_deref(), Some(key));
+                let followup = &rounds[1].messages;
+                assert_eq!(followup.len(), 3);
+                assert_eq!(followup[1].role, ChatRole::Assistant);
+                let MessageContent::Blocks(blocks) = &followup[1].content else {
+                    panic!("tool follow-up must retain structured assistant content");
+                };
+                assert!(
+                    matches!(&blocks[0], ContentBlock::ProviderReasoning { details } if details == &replay)
+                );
+                assert!(
+                    matches!(&blocks[1], ContentBlock::ToolUse { id, .. } if id == "signed-call")
+                );
+                assert_eq!(followup[2].role, ChatRole::Tool);
+                let MessageContent::Blocks(results) = &followup[2].content else {
+                    panic!("tool follow-up must include the correlated result");
+                };
+                assert!(
+                    matches!(&results[0], ContentBlock::ToolResult { tool_call_id, .. } if tool_call_id == "signed-call")
+                );
+            }
+            assert_ne!(requests[0].cache_key, requests[2].cache_key);
+            assert_eq!(recorded.lock().unwrap().len(), 4);
+        }
     }
 
     #[tokio::test]

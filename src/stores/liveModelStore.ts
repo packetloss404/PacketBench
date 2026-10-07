@@ -122,6 +122,7 @@ export const useLiveModelStore = create<LiveModelState>((set, get) => ({
 
     const request = fetchLiveModels(key)
       .then((result) => {
+        if (inFlight.get(key) !== request) return;
         if (result === "unsupported") {
           set((s) => ({
             entries: {
@@ -131,7 +132,7 @@ export const useLiveModelStore = create<LiveModelState>((set, get) => ({
           }));
           return;
         }
-        const rows = result.map(liveModelRow);
+        const rows = result.map((model) => liveModelRow(model, key));
         set((s) => ({
           entries: {
             ...s.entries,
@@ -148,6 +149,7 @@ export const useLiveModelStore = create<LiveModelState>((set, get) => ({
         }));
       })
       .catch((err: unknown) => {
+        if (inFlight.get(key) !== request) return;
         const { status, message } = classifyLiveModelError(err);
         set((s) => {
           const previous = s.entries[key];
@@ -170,7 +172,7 @@ export const useLiveModelStore = create<LiveModelState>((set, get) => ({
         });
       })
       .finally(() => {
-        inFlight.delete(key);
+        if (inFlight.get(key) === request) inFlight.delete(key);
       });
 
     inFlight.set(key, request);
@@ -196,7 +198,7 @@ export const useLiveModelStore = create<LiveModelState>((set, get) => ({
     listen<{ provider: string }>("provider-auth:changed", (event) => {
       // A credential changed for this vendor, so whatever it previously told
       // us about its catalog (including "no key") is now suspect. Drop it; the
-      // next `ensureFresh` — which every mounted picker issues on render —
+      // next `ensureFresh` — mounted pickers rerun it when the entry disappears —
       // re-asks.
       const provider = event.payload?.provider;
       if (!provider) {

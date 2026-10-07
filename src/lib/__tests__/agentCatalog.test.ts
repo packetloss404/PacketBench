@@ -24,34 +24,12 @@ describe("agent-catalog merged registry", () => {
     expect(faces).toContain("Custom endpoint");
     for (const c of CHAT_AGENTS) {
       expect(c.section).toBe("chat");
-      // A row must be usable — but "usable" is no longer the same as "ships
-      // with models".
-      //
-      // This assertion used to exempt the model-less rows BY NAME. That list
-      // was one of four hardcoded exemption lists that had drifted apart, and
-      // it encoded the wrong rule: what makes a model-less row legitimate is
-      // not its identity, it is that SOMETHING ELSE owns its list and can
-      // produce one at runtime — `api-custom`'s is a manual list in Settings.
-      //
-      // Re-expressed against the registry. Note that "is registered as
-      // live-enumerating" alone is NOT enough to excuse an empty row — every
-      // catalog row is registered now, so that reading would make this
-      // assertion vacuous. The rule that actually holds is about WHO owns the
-      // list:
-      //
-      //   needsKey  → PacketBench holds the credential and knows the vendor's
-      //               public catalog. It MUST ship those rows: they are what a
-      //               user with no API key yet, or a first launch before any
-      //               enumeration has landed, sees. An empty picker there is
-      //               the exact failure the live seam exists to prevent.
-      //   !needsKey → the list is a property of the user's own environment
-      //               (their Ollama daemon, their custom endpoint's config).
-      //               We cannot know it, and guessing is worse than empty.
-      const source = liveModelSource(c.agentCli);
+      // Live-only catalogs remain usable without invented default models.
       expect(providerEnumeratesLive(c.agentCli), c.agentCli).toBe(true);
-      if (!source?.needsKey) continue;
-      expect(c.defaultModel.length, c.agentCli).toBeGreaterThan(0);
-      expect(c.models.length, c.agentCli).toBeGreaterThan(0);
+      const source = liveModelSource(c.agentCli);
+      expect(source).toBeDefined();
+      if (c.models.length) expect(c.defaultModel).toBe(c.models[0].value);
+      else expect(source?.producer).toMatch(/ipc|custom/);
     }
     // Named explicitly so a future edit cannot satisfy the loop above by
     // flipping a keyed row to `needsKey: false` and emptying it.

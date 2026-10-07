@@ -147,3 +147,27 @@ describe("liveModelStore", () => {
     expect(listProviderModels).toHaveBeenCalledTimes(2);
   });
 });
+
+
+describe("provider configuration changes", () => {
+  it("does not let an old endpoint response overwrite a refreshed catalog", async () => {
+    let finishOld!: (models: { id: string }[]) => void;
+    listProviderModels.mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }));
+    useLiveModelStore.getState().ensureFresh("api-sugar");
+    useLiveModelStore.getState().invalidate("sugar");
+    listProviderModels.mockResolvedValueOnce([{ id: "new-endpoint/model" }]);
+    useLiveModelStore.getState().ensureFresh("api-sugar");
+    await settle();
+    finishOld([{ id: "old-endpoint/model" }]);
+    await settle();
+    expect(useLiveModelStore.getState().answerFor("api-sugar")?.models?.map((m) => m.value)).toEqual(["new-endpoint/model"]);
+  });
+
+  it.each(["sugar", "cline-pass", "opencode-go", "ollama-cloud", "google", "xai"])("loads current %s models through the shared cache", async (provider) => {
+    listProviderModels.mockResolvedValue([{ id: "newly-published-model" }]);
+    useLiveModelStore.getState().ensureFresh(`api-${provider}`);
+    await settle();
+    expect(listProviderModels).toHaveBeenCalledWith(provider);
+    expect(useLiveModelStore.getState().answerFor(`api-${provider}`)?.models?.[0].value).toBe("newly-published-model");
+  });
+});

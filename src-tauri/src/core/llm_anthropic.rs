@@ -101,6 +101,15 @@ fn build_anthropic_messages(
                     }));
                 }
                 MessageContent::Blocks(blocks) => {
+                    if let Some(content) = blocks.iter().find_map(|b| match b {
+                        ContentBlock::ProviderReasoning { details } => {
+                            details.get("anthropic_content").and_then(|v| v.as_array())
+                        }
+                        _ => None,
+                    }) {
+                        out.push(serde_json::json!({"role":"assistant", "content":content}));
+                        continue;
+                    }
                     let content_blocks: Vec<serde_json::Value> = blocks
                         .iter()
                         .filter_map(|b| match b {
@@ -219,286 +228,330 @@ impl LlmProvider for AnthropicProvider {
         request: LlmRequest,
         tx: mpsc::Sender<StreamChunk>,
     ) -> Result<(), String> {
-        let client = reqwest::Client::new();
-
-        let body = build_anthropic_body(&request);
-
-        tracing::info!(
-            target: "packetbench::egress",
-            service = "anthropic",
-            model = %request.model,
-            url = ANTHROPIC_API_URL,
-            "LLM request"
-        );
-        let response = client
-            .post(ANTHROPIC_API_URL)
-            .header("x-api-key", api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Anthropic request failed: {}", e))?;
-        // See the note in `llm_openai_compat.rs`: a failed call must not log at
-        // the same level as a successful one.
-        if response.status().is_success() {
-            tracing::info!(
-                target: "packetbench::egress",
-                service = "anthropic",
-                model = %request.model,
-                status = response.status().as_u16(),
-                "LLM response"
-            );
-        } else {
-            tracing::warn!(
-                target: "packetbench::egress",
-                service = "anthropic",
-                model = %request.model,
-                status = response.status().as_u16(),
-                "LLM response failed"
-            );
-        }
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Failed to read response".to_string());
-            return Err(format!("Anthropic API error ({}): {}", status, body_text));
-        }
-
-        let mut stream = response.bytes_stream();
-        // F46: buffer raw bytes rather than lossy-decoding each chunk. A multibyte
-        // UTF-8 char split across two chunks would otherwise be mangled into U+FFFD
-        // by a per-chunk from_utf8_lossy. SSE lines are '\n'-terminated (an ASCII
-        // byte that cannot occur mid-codepoint), so a complete line is always a
-        // complete UTF-8 sequence; we only decode once a full line is buffered.
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut current_tool_id = String::new();
-        let mut current_tool_name = String::new();
-        let mut current_tool_args = String::new();
-        let mut current_block_type: &str = "";
-        let mut input_tokens: u64 = 0;
-        let mut output_tokens: u64 = 0;
-        let mut cache_read_input_tokens: u64 = 0;
-        let mut cache_creation_input_tokens: u64 = 0;
-
-        let mut stream_ended = false;
-        loop {
-            // RA1: if the consumer dropped the receiver, stop parsing the rest of
-            // the upstream HTTP stream instead of draining it into a dead channel.
-            if tx.is_closed() {
-                return Ok(());
-            }
-            if !stream_ended {
-                match stream.next().await {
-                    Some(chunk_result) => {
-                        let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
-                        buffer.extend_from_slice(&chunk);
-                    }
-                    None => {
-                        stream_ended = true;
-                        // SSE permits the final record at EOF without a trailing
-                        // newline. Add a parser delimiter so it follows the exact
-                        // same path as every other complete line.
-                        delimit_final_sse_line(&mut buffer);
-                    }
-                }
-            }
-
-            while let Some(line_end) = buffer.iter().position(|&b| b == b'\n') {
-                let line_bytes: Vec<u8> = buffer.drain(..=line_end).collect();
-                let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
-
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
-                }
-
-                // Anthropic uses "event: <type>" lines followed by "data: <json>"
-                if line.starts_with("event:") {
-                    continue; // We parse the data lines directly
-                }
-
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                        let event_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-                        match event_type {
-                            "message_start" => {
-                                if let Some(usage) =
-                                    parsed.get("message").and_then(|m| m.get("usage"))
-                                {
-                                    input_tokens = usage
-                                        .get("input_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-                                    cache_read_input_tokens = usage
-                                        .get("cache_read_input_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-                                    cache_creation_input_tokens = usage
-                                        .get("cache_creation_input_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-                                }
-                            }
-                            "content_block_start" => {
-                                if let Some(cb) = parsed.get("content_block") {
-                                    let cb_type =
-                                        cb.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                    if cb_type == "tool_use" {
-                                        current_block_type = "tool_use";
-                                        current_tool_id = cb
-                                            .get("id")
-                                            .and_then(|id| id.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        current_tool_name = cb
-                                            .get("name")
-                                            .and_then(|n| n.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        current_tool_args.clear();
-                                        let _ = tx
-                                            .send(StreamChunk::ToolUseStart {
-                                                id: current_tool_id.clone(),
-                                                name: current_tool_name.clone(),
-                                            })
-                                            .await;
-                                    } else if cb_type == "thinking" {
-                                        current_block_type = "thinking";
-                                    } else if cb_type == "text" {
-                                        current_block_type = "text";
-                                    }
-                                }
-                            }
-                            "content_block_delta" => {
-                                if let Some(delta) = parsed.get("delta") {
-                                    let delta_type =
-                                        delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                    match delta_type {
-                                        "text_delta" => {
-                                            if let Some(text) =
-                                                delta.get("text").and_then(|t| t.as_str())
-                                            {
-                                                let _ = tx
-                                                    .send(StreamChunk::TextDelta {
-                                                        text: text.to_string(),
-                                                    })
-                                                    .await;
-                                            }
-                                        }
-                                        "input_json_delta" => {
-                                            if let Some(partial) =
-                                                delta.get("partial_json").and_then(|p| p.as_str())
-                                            {
-                                                current_tool_args.push_str(partial);
-                                                let _ = tx
-                                                    .send(StreamChunk::ToolUseInputDelta {
-                                                        delta: partial.to_string(),
-                                                    })
-                                                    .await;
-                                            }
-                                        }
-                                        "thinking_delta" => {
-                                            if let Some(text) =
-                                                delta.get("thinking").and_then(|t| t.as_str())
-                                            {
-                                                let _ = tx
-                                                    .send(StreamChunk::ThinkingDelta {
-                                                        text: text.to_string(),
-                                                    })
-                                                    .await;
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                            "content_block_stop" => {
-                                if current_block_type == "tool_use" && !current_tool_id.is_empty() {
-                                    let args = serde_json::from_str(&current_tool_args)
-                                        .unwrap_or_else(|e| {
-                                            tracing::warn!(error = %e, tool = %current_tool_name, "malformed tool-arg JSON from stream; coercing to empty object");
-                                            serde_json::Value::Object(serde_json::Map::new())
-                                        });
-                                    let _ = tx
-                                        .send(StreamChunk::ToolUseEnd {
-                                            id: current_tool_id.clone(),
-                                            name: current_tool_name.clone(),
-                                            arguments: args,
-                                        })
-                                        .await;
-                                    current_tool_id.clear();
-                                    current_tool_name.clear();
-                                    current_tool_args.clear();
-                                } else if current_block_type == "thinking" {
-                                    let _ = tx.send(StreamChunk::ThinkingStop).await;
-                                }
-                                current_block_type = "";
-                            }
-                            "message_delta" => {
-                                if let Some(usage) = parsed.get("usage") {
-                                    output_tokens = usage
-                                        .get("output_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(output_tokens);
-                                    cache_read_input_tokens = usage
-                                        .get("cache_read_input_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(cache_read_input_tokens);
-                                    cache_creation_input_tokens = usage
-                                        .get("cache_creation_input_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(cache_creation_input_tokens);
-                                }
-                            }
-                            "message_stop" => {
-                                let _ = tx
-                                    .send(StreamChunk::Done {
-                                        input_tokens,
-                                        output_tokens,
-                                        cache_read_input_tokens,
-                                        cache_creation_input_tokens,
-                                    })
-                                    .await;
-                                return Ok(());
-                            }
-                            "error" => {
-                                let msg = parsed
-                                    .get("error")
-                                    .and_then(|e| e.get("message"))
-                                    .and_then(|m| m.as_str())
-                                    .unwrap_or("Unknown error");
-                                return Err(msg.to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            if stream_ended {
-                break;
-            }
-        }
-
-        // Stream ended without message_stop
-        let _ = tx
-            .send(StreamChunk::Done {
-                input_tokens,
-                output_tokens,
-                cache_read_input_tokens,
-                cache_creation_input_tokens,
-            })
-            .await;
-        Ok(())
+        stream_anthropic_at(
+            ANTHROPIC_API_URL,
+            reqwest::header::HeaderMap::new(),
+            api_key,
+            request,
+            tx,
+        )
+        .await
     }
 
     fn provider_id(&self) -> &str {
         "anthropic"
     }
+}
+
+pub async fn stream_anthropic_at(
+    url: &str,
+    headers: reqwest::header::HeaderMap,
+    api_key: &str,
+    request: LlmRequest,
+    tx: mpsc::Sender<StreamChunk>,
+) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut body = build_anthropic_body(&request);
+    if url != ANTHROPIC_API_URL {
+        body.as_object_mut().unwrap().remove("cache_control");
+    }
+
+    tracing::info!(
+        target: "packetbench::egress",
+        service = "anthropic",
+        model = %request.model,
+        url = url,
+        "LLM request"
+    );
+    let response = client
+        .post(url)
+        .headers(headers)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Anthropic request failed: {}", e))?;
+    // See the note in `llm_openai_compat.rs`: a failed call must not log at
+    // the same level as a successful one.
+    if response.status().is_success() {
+        tracing::info!(
+            target: "packetbench::egress",
+            service = "anthropic",
+            model = %request.model,
+            status = response.status().as_u16(),
+            "LLM response"
+        );
+    } else {
+        tracing::warn!(
+            target: "packetbench::egress",
+            service = "anthropic",
+            model = %request.model,
+            status = response.status().as_u16(),
+            "LLM response failed"
+        );
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Failed to read response".to_string());
+        return Err(format!("Anthropic API error ({}): {}", status, body_text));
+    }
+
+    let mut stream = response.bytes_stream();
+    // F46: buffer raw bytes rather than lossy-decoding each chunk. A multibyte
+    // UTF-8 char split across two chunks would otherwise be mangled into U+FFFD
+    // by a per-chunk from_utf8_lossy. SSE lines are '\n'-terminated (an ASCII
+    // byte that cannot occur mid-codepoint), so a complete line is always a
+    // complete UTF-8 sequence; we only decode once a full line is buffered.
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut current_tool_id = String::new();
+    let mut current_tool_name = String::new();
+    let mut current_tool_args = String::new();
+    let mut current_block_type: &str = "";
+    let mut input_tokens: u64 = 0;
+    let mut output_tokens: u64 = 0;
+    let mut cache_read_input_tokens: u64 = 0;
+    let mut cache_creation_input_tokens: u64 = 0;
+
+    let mut replay_blocks: Vec<serde_json::Value> = Vec::new();
+    let mut stream_ended = false;
+    loop {
+        // RA1: if the consumer dropped the receiver, stop parsing the rest of
+        // the upstream HTTP stream instead of draining it into a dead channel.
+        if tx.is_closed() {
+            return Ok(());
+        }
+        if !stream_ended {
+            match stream.next().await {
+                Some(chunk_result) => {
+                    let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
+                    buffer.extend_from_slice(&chunk);
+                }
+                None => {
+                    stream_ended = true;
+                    // SSE permits the final record at EOF without a trailing
+                    // newline. Add a parser delimiter so it follows the exact
+                    // same path as every other complete line.
+                    delimit_final_sse_line(&mut buffer);
+                }
+            }
+        }
+
+        while let Some(line_end) = buffer.iter().position(|&b| b == b'\n') {
+            let line_bytes: Vec<u8> = buffer.drain(..=line_end).collect();
+            let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
+
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+
+            // Anthropic uses "event: <type>" lines followed by "data: <json>"
+            if line.starts_with("event:") {
+                continue; // We parse the data lines directly
+            }
+
+            if let Some(data) = line.strip_prefix("data:").map(str::trim) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                    let event_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+                    match event_type {
+                        "message_start" => {
+                            if let Some(usage) = parsed.get("message").and_then(|m| m.get("usage"))
+                            {
+                                input_tokens = usage
+                                    .get("input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                cache_read_input_tokens = usage
+                                    .get("cache_read_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                cache_creation_input_tokens = usage
+                                    .get("cache_creation_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                            }
+                        }
+                        "content_block_start" => {
+                            if let Some(cb) = parsed.get("content_block") {
+                                replay_blocks.push(cb.clone());
+                                let cb_type = cb.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                if cb_type == "tool_use" {
+                                    current_block_type = "tool_use";
+                                    current_tool_id = cb
+                                        .get("id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    current_tool_name = cb
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    current_tool_args.clear();
+                                    let _ = tx
+                                        .send(StreamChunk::ToolUseStart {
+                                            id: current_tool_id.clone(),
+                                            name: current_tool_name.clone(),
+                                        })
+                                        .await;
+                                } else if cb_type == "thinking" {
+                                    current_block_type = "thinking";
+                                } else if cb_type == "text" {
+                                    current_block_type = "text";
+                                }
+                            }
+                        }
+                        "content_block_delta" => {
+                            if let Some(delta) = parsed.get("delta") {
+                                let delta_type =
+                                    delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                if let Some(block) = replay_blocks.last_mut() {
+                                    let field = match delta_type {
+                                        "text_delta" => Some("text"),
+                                        "thinking_delta" => Some("thinking"),
+                                        "signature_delta" => Some("signature"),
+                                        _ => None,
+                                    };
+                                    if let Some(field) = field {
+                                        let text = format!(
+                                            "{}{}",
+                                            block[field].as_str().unwrap_or(""),
+                                            delta[field].as_str().unwrap_or("")
+                                        );
+                                        block[field] = serde_json::json!(text);
+                                    }
+                                }
+                                match delta_type {
+                                    "text_delta" => {
+                                        if let Some(text) =
+                                            delta.get("text").and_then(|t| t.as_str())
+                                        {
+                                            let _ = tx
+                                                .send(StreamChunk::TextDelta {
+                                                    text: text.to_string(),
+                                                })
+                                                .await;
+                                        }
+                                    }
+                                    "input_json_delta" => {
+                                        if let Some(partial) =
+                                            delta.get("partial_json").and_then(|p| p.as_str())
+                                        {
+                                            current_tool_args.push_str(partial);
+                                            let _ = tx
+                                                .send(StreamChunk::ToolUseInputDelta {
+                                                    delta: partial.to_string(),
+                                                })
+                                                .await;
+                                        }
+                                    }
+                                    "thinking_delta" => {
+                                        if let Some(text) =
+                                            delta.get("thinking").and_then(|t| t.as_str())
+                                        {
+                                            let _ = tx
+                                                .send(StreamChunk::ThinkingDelta {
+                                                    text: text.to_string(),
+                                                })
+                                                .await;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        "content_block_stop" => {
+                            if current_block_type == "tool_use" && !current_tool_id.is_empty() {
+                                let args: serde_json::Value = if current_tool_args.is_empty() {
+                                    replay_blocks
+                                        .last()
+                                        .and_then(|b| b.get("input"))
+                                        .cloned()
+                                        .unwrap_or_else(|| serde_json::json!({}))
+                                } else {
+                                    serde_json::from_str(&current_tool_args)
+                                        .map_err(|_| "Invalid JSON in streamed tool arguments")?
+                                };
+                                if let Some(block) = replay_blocks.last_mut() {
+                                    block["input"] = args.clone();
+                                }
+                                let _ = tx
+                                    .send(StreamChunk::ToolUseEnd {
+                                        id: current_tool_id.clone(),
+                                        name: current_tool_name.clone(),
+                                        arguments: args,
+                                    })
+                                    .await;
+                                current_tool_id.clear();
+                                current_tool_name.clear();
+                                current_tool_args.clear();
+                            } else if current_block_type == "thinking" {
+                                let _ = tx.send(StreamChunk::ThinkingStop).await;
+                            }
+                            current_block_type = "";
+                        }
+                        "message_delta" => {
+                            if let Some(usage) = parsed.get("usage") {
+                                output_tokens = usage
+                                    .get("output_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(output_tokens);
+                                cache_read_input_tokens = usage
+                                    .get("cache_read_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(cache_read_input_tokens);
+                                cache_creation_input_tokens = usage
+                                    .get("cache_creation_input_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(cache_creation_input_tokens);
+                            }
+                        }
+                        "message_stop" => {
+                            let _ = tx
+                                .send(StreamChunk::ReasoningDetails {
+                                    details: serde_json::json!({"anthropic_content":replay_blocks}),
+                                })
+                                .await;
+                            let _ = tx
+                                .send(StreamChunk::Done {
+                                    input_tokens,
+                                    output_tokens,
+                                    cache_read_input_tokens,
+                                    cache_creation_input_tokens,
+                                })
+                                .await;
+                            return Ok(());
+                        }
+                        "error" => {
+                            let msg = parsed
+                                .get("error")
+                                .and_then(|e| e.get("message"))
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("Unknown error");
+                            return Err(msg.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        if stream_ended {
+            break;
+        }
+    }
+
+    Err("Messages stream ended before message_stop".to_string())
 }
 
 #[cfg(test)]

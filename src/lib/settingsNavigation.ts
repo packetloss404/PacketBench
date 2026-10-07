@@ -174,6 +174,7 @@ export const SETTINGS_GROUPS: SettingsGroupDefinition[] = [
           "openai",
           "minimax",
           "openrouter",
+          "sugar", "clinepass", "opencode go", "ollama cloud", "google", "gemini", "xai", "grok",
           "ollama",
           "models",
           // The keyless rows are configured here too.
