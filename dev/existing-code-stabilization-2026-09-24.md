@@ -260,3 +260,50 @@ task. Broader provider, native GUI and hardware acceptance remains separate.
 The owner requested this documentation checkpoint be committed, merged to
 main and pushed **without deployment**. It changes no application source or
 artifact and requires no new build, install, application restart or release tag.
+
+## Final pre-tag pass — 2026-10-06
+
+The owner requested one final round before tagging and confirmed that they have
+not dogfooded 0.14.8 enough yet. The checkout started clean at `44d81b13`, which
+matched remote main; `v0.14.8` was absent locally and remotely. Application,
+sidecar and dependency source still matches the built `9367b7a1` snapshot.
+
+Found and fixed a false-positive artifact check in `release-readiness.mjs`:
+substring matching accepted `0.14.80` or `0.14.8-beta.1` as evidence for `0.14.8`,
+and a matching empty file or directory could also pass. The checker now requires
+a nonempty regular file and the complete Tauri filename version field. Five
+CLI regression cases demonstrate the change: the positive case passed before
+the fix while all four rejection cases failed; all five pass afterward. This
+is release tooling only and does not alter the installed application.
+
+Validation on October 6:
+
+- `pnpm gates:full`: **all 11 gate categories passed in one run**, exit 0,
+  1,168.1 seconds. Includes formatting, lint, TypeScript, the complete frontend
+  suite, frontend build, Remote Agents, browser E2E, sidecar smoke checks,
+  Rust check/test and Tauri schema validation.
+- Scoped Prettier checks and `git diff --check` passed after the tooling/docs
+  changes. An initial shell invocation could not resolve the Prettier shim;
+  invoking the same installed Prettier CLI through Node succeeded.
+- `release:readiness --skip-gates`: exit 0, no failures. Its 17 warnings are
+  six existing signing/updater signals and eleven explicitly unexecuted
+  quality/composite rows; the separate full run above supplies gate evidence.
+- Both existing installer SHA-256 values still match the September 24 manifest.
+  All **8,683 installed files** also match; installed version remains **0.14.8**.
+  This was a read-only recheck, not a reinstall or a fresh native GUI run.
+
+Evidence under `test-results/acceptance/pretag-2026-10-06/`:
+`readiness-before.log`, `readiness-after.log`, `full-gates.log`,
+`distribution.log`, and `artifact-verification.json`.
+
+The backlog's obsolete claims that the packaging gate had never run and that
+Windows Rust/schema validation remained unproven were reconciled against the
+existing evidence. Gate documentation now lists all ten readiness leaf gates
+(the full runner also adds explicit type checking).
+
+The existing installers still belong to clean source `9367b7a1`; use that
+source identity if tagging those artifacts. The tag/source procedure is in
+`dev/beta-distribution-trust-runbook.md`. No tag, installer rebuild, release
+publication or deployment was performed. Owner dogfooding remains incomplete;
+broader native/provider/hardware acceptance and the paid Claude cost deferral
+are unchanged. These automated passes are not a claim of public-beta acceptance.

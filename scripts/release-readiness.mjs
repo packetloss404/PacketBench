@@ -21,11 +21,12 @@ const gateTimeoutMs = Number(process.env.PACKETBENCH_RELEASE_GATE_TIMEOUT_MS ?? 
 /**
  * The quality gates, executed in order and gated on exit code.
  *
- * These nine are exactly what `pnpm run check` runs, one level down:
+ * These ten are exactly what `pnpm run check` runs, one level down:
  * `check` = preflight + e2e + sidecar:check + check:tauri-schema + rust:check +
- * rust:test, and `preflight` = format:check + lint:src + test + build. So
+ * rust:test, and `preflight` = format:check + lint:src + test + build +
+ * remoteagents:check. So
  * `check` is reported as a row derived from these results rather than executed
- * — running it as a tenth gate would run everything a second time.
+ * — executing the composite too would run everything a second time.
  * `compositeGateRow` re-derives that relationship from package.json on every
  * run and refuses to claim the composite if the scripts have drifted.
  */
@@ -411,8 +412,17 @@ const updater = [
 // so a typo'd override (or an undetectable host) could be satisfied by a stale
 // bundle for the wrong OS. Refuse to guess instead.
 const artifactPatterns = targetIsKnown ? artifactGlobsByTarget[target] : [];
-const allArtifacts = latestByMtime(artifactPatterns.flatMap(findFiles));
-const artifacts = allArtifacts.filter((file) => path.basename(file).includes(releaseVersion));
+const allArtifacts = latestByMtime(
+  artifactPatterns.flatMap(findFiles).filter((file) => {
+    const stat = statSync(file);
+    return stat.isFile() && stat.size > 0;
+  }),
+);
+// Tauri separates product, version and architecture with underscores. Match
+// the complete version field: 0.14.80 and 0.14.8-beta.1 are not 0.14.8.
+const artifacts = allArtifacts.filter((file) =>
+  path.basename(file).includes(`_${releaseVersion}_`),
+);
 
 // Host detection under WSL asks for Linux bundles for a build that ran on the
 // Windows side. Say so, rather than leaving a red line nobody can act on.
@@ -438,7 +448,7 @@ const artifactSection = [
           ? artifacts.slice(0, 4).map(displayPath).join(", ")
           : allArtifacts.length
             ? `found artifacts, but none match version ${releaseVersion}: ${allArtifacts.slice(0, 4).map(displayPath).join(", ")}${wslHint}`
-            : `expected version ${releaseVersion} artifact under ${cargoTarget} (bundle root from ${bundleRoot.source}) matching one of ${artifactPatterns.join(", ")}${wslHint}`,
+            : `expected nonempty version ${releaseVersion} installer file under ${cargoTarget} (bundle root from ${bundleRoot.source}) matching one of ${artifactPatterns.join(", ")}${wslHint}`,
       },
 ];
 

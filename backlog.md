@@ -1,6 +1,6 @@
 # PacketBench Backlog
 
-Last reconciled: 2026-09-24 (0.14.8 installed; dogfood feedback pending)
+Last reconciled: 2026-10-06 (0.14.8 pre-tag review; dogfooding incomplete)
 
 This is the single task register for work that has not shipped or has not yet
 earned its required real/package proof. Completed implementation history belongs
@@ -15,8 +15,9 @@ Priority: **P1** = release blocker, real bug, or major user-facing gap;
 **Current direction, 2026-09-24:** no feature expansion. Stabilize and finish
 the existing product paths identified below before resuming expansion plans.
 The owner has pinned installed 0.14.8 to the desktop and plans to dogfood it.
-Resume with reported defects, prioritizing Workspaces. No dogfood outcome has
-been reported; this documentation checkpoint requests no deployment.
+On October 6 the owner confirmed they have not dogfooded enough yet. Resume
+with reported defects, prioritizing Workspaces; no feature expansion or
+deployment is requested by the pre-tag review.
 
 These are the only current product decisions blocking implementation.
 
@@ -864,35 +865,18 @@ below was re-read in source on that date unless it says otherwise.
   `src/lib/brand.ts:22,28`). Re-counted 2026-08-27 and unchanged: **43**
   literal `"packetbench:` occurrences outside `brand.ts` and test files, and
   9 `packetbench://` occurrences.
-- **P1 - Rehearse the Phase-3 release gates before the release window.** A
-  2026-08-06 dry run against the known-good v0.10.3 artifacts already reduces
-  the strict gate to exactly the two scheduled blockers — Authenticode
-  credentials and updater configuration — plus a dirty tree, with no
-  environmental noise. What that run could not cover is the nine quality gates
-  themselves, which were skipped. Run one full `release:readiness` from a
-  **Windows shell** (where Cargo is on PATH) on a quiet machine, so a release
-  window is not spent distinguishing real failures from tooling artifacts.
-  **The 2026-08-17 deadline this item used to carry is void** — it belonged to
-  the v1.0.0 definition the owner rejected on 2026-08-16; the rehearsal is
-  still wanted, it just has no date. Note also that `release:gate` has passed
-  standalone but has never yet run inside a real `pnpm tauri build` — it is
-  now wired into `prebundle` (`package.json:44`), so the next real build is
-  that first run.
-- **P1 - Release gates report false failures when run from WSL.** Three
-  independent traps, all confirmed on this machine, all of which would burn
-  time during the release window: `hostTarget()` reads `os.platform()`, so WSL
-  reports `linux` and the script demands Linux bundles for a Windows-only
-  release (fixed — `PACKETBENCH_RELEASE_TARGET` is now validated and its
-  provenance is printed); `cargo` is not on the WSL path, so `rust:check`,
-  `rust:test`, and `check:tauri-schema` fail with `cargo: not found`; and the
-  bundle-root lookup used to fall through to `src-tauri/target` whenever
-  `cargo metadata` could not run — the same missing-Cargo cause — so readiness
-  reported missing artifacts for a release that had built correctly (fixed:
-  the root now resolves from `CARGO_TARGET_DIR`, then `.cargo/config.toml`,
-  then `cargo metadata`, translating Windows paths under WSL, and prints its
-  provenance). The remaining item is the Rust gates: run release gates from
-  the Windows shell, or put the MSVC toolchain on the WSL path. See
-  `dev/local-quality-gates.md`.
+- **RECONCILED 2026-10-06 - Local release rehearsal.** The September 24
+  validation completed all eleven local gate categories, and the 0.14.8 build
+  ran all twelve packaging prechecks inside `prebundle`. The older claim that
+  the packaging gate had never run is obsolete. Signing/updater requirements
+  remain scoped to the owner decisions above; historical v1.0 deadlines remain
+  void. Exact evidence and the latest pre-tag pass:
+  `dev/existing-code-stabilization-2026-09-24.md`.
+- **RESOLVED for the Windows release path - WSL gate environment.** Target
+  override validation and Cargo bundle-root discovery were fixed; Windows
+  Rust/schema checks passed in the September validation. Run native Windows
+  release gates from Windows, as documented in `dev/local-quality-gates.md`.
+  This does not claim that a WSL-hosted MSVC build was validated.
 - **P2 - Remote sidecar provider/GUI acceptance.** The 2026-09-07 consolidation
   fixes the request-before-handshake race in source: SSH startup awaits a
   compatible v12 `ready` before forwarding the session/API key. Regression
@@ -1303,7 +1287,8 @@ Do not reopen these from historical plans:
 - Product direction: [`ROADMAP.md`](./ROADMAP.md)
 - Restart state and exact artifacts: [`HANDOFF.md`](./HANDOFF.md)
 - Current audit summary: [`docs/reports/state-of-the-ade-2026-07-30.md`](./docs/reports/state-of-the-ade-2026-07-30.md), Section 0
-- Current release record: [`dev/release-v0.10.3.md`](./dev/release-v0.10.3.md)
+- Current build/install record: [`dev/existing-code-stabilization-2026-09-24.md`](./dev/existing-code-stabilization-2026-09-24.md)
+- Historical tagged release: [`dev/release-v0.10.3.md`](./dev/release-v0.10.3.md)
 - Remote Agents: [`dev/remoteagents/README.md`](./dev/remoteagents/README.md)
 - Syndicate execution target (removed 2026-08-27; historical): [`dev/archive/syndicate/syndicate-execution-target.md`](./dev/archive/syndicate/syndicate-execution-target.md)
 - Main shell: [`dev/main-shell-navigation-and-right-panel-audit-2026-07-29.md`](./dev/main-shell-navigation-and-right-panel-audit-2026-07-29.md)

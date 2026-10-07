@@ -1,11 +1,42 @@
 # Beta Distribution Trust Runbook
 
-Last updated: 2026-05-28
+Last updated: 2026-10-06
 
 This is the current trust checklist for public beta builds. The goal is to keep
 release friction boring: versions line up, sidecar assets are embedded, updater
 readiness is explicit, and signed/notarized release candidates fail fast when
 required credentials are missing.
+
+## Existing local artifacts and tags
+
+An owner-only version tag and a public installer release are separate actions.
+Signing remains deferred for owner-only use under the recorded cost decision;
+the public distribution requirements below still apply when that scope changes.
+
+The existing 0.14.8 Windows installers were built from clean commit
+`9367b7a1b0d2239df48eb1524705c593873df011`. The
+[release record](./existing-code-stabilization-2026-09-24.md) contains their
+hashes, installation checks and the final pre-tag pass. Later documentation
+and release-tooling commits do not change that artifact identity.
+
+Before creating a tag for existing artifacts:
+
+1. Confirm the intended tag does not exist locally or remotely; never move an
+   existing release tag to repair a provenance mismatch.
+2. Verify installer hashes against the saved build manifest and use its source
+   commit as the tag target. For the existing 0.14.8 pair that is `9367b7a1`.
+   If a different source commit should own the release, build and record new
+   artifacts from it instead of assigning old installers to that source.
+3. Read the exact validation scope. Startup and isolated echo checks do not
+   establish Workspace dogfooding or paid-provider/hardware acceptance. The
+   owner reported on October 6 that dogfooding is not yet sufficient.
+4. When tagging is requested, use an annotated tag recording the source and
+   evidence. Publishing installers, deploying services and enabling the updater
+   remain separate actions. No tag or publication was performed in this pass.
+
+The readiness script verifies artifact presence and exact filename versions.
+It does not replace manifest/hash verification or validate signing credentials
+cryptographically.
 
 ## Local Release Gate
 

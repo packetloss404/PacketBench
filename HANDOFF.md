@@ -1,6 +1,6 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-09-24 (0.14.8 installed; owner dogfooding next)
+Last reconciled: 2026-10-06 (pre-tag check; owner dogfooding incomplete)
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
@@ -9,10 +9,15 @@ the current contracts below supersede their older protocol and queue details.
 
 ## Checkout and artifacts
 
-- **Resume here:** the owner has pinned 0.14.8 to the desktop and plans to
-  dogfood it. No dogfood results have been reported yet. Keep Workspaces the
+- **Resume here:** the owner has pinned 0.14.8 to the desktop and confirmed on
+  October 6 that they have not dogfooded enough yet. Keep Workspaces the
   priority and fix reported defects in existing functionality; no feature
-  expansion. This checkpoint is documentation-only: no new build or deployment.
+  expansion. The final pre-tag pass corrected false artifact acceptance in the
+  release checker and reverified both installers plus all 8,683 installed
+  files. See the October 6 section of `dev/existing-code-stabilization-2026-09-24.md`
+  for validation results. No new installer, tag, publication or deployment was
+  produced. Existing installers still belong to source `9367b7a1`; tag/source
+  guidance is in `dev/beta-distribution-trust-runbook.md`.
 - **Current work is source stabilization, with no feature expansion.** The
   three-team September 24 audit and its fix ledger are linked from `backlog.md`.
   Workspaces remain the primary focus. **0.14.8 is built and pushed to main**

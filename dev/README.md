@@ -1,9 +1,17 @@
 # PacketBench Development Plans
 
-Last reconciled: 2026-09-24 (0.14.8 installation and resume checkpoint)
+Last reconciled: 2026-10-06 (0.14.8 pre-tag review)
 
 This directory contains active implementation plans, proof runbooks, research,
 and historical evidence. It is not a second backlog.
+
+The October 6 pre-tag follow-up is recorded in
+[`existing-code-stabilization-2026-09-24.md`](./existing-code-stabilization-2026-09-24.md).
+It fixes false artifact acceptance in the release checker and rechecks the
+existing installer/installed payload hashes. The owner confirmed dogfooding
+is not yet sufficient. No tag, publication or deployment was performed.
+Use the [tag/source guidance](./beta-distribution-trust-runbook.md#existing-local-artifacts-and-tags)
+before reusing the existing 0.14.8 installers.
 
 Current work is existing-code stabilization with no feature expansion. The
 September 24 audit is in
