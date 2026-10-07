@@ -5,6 +5,12 @@ Last reconciled: 2026-10-06 (provider integrations)
 This directory contains active implementation plans, proof runbooks, research,
 and historical evidence. It is not a second backlog.
 
+The current desktop release is **0.14.9**, built from `83bd3125`, tagged
+`v0.14.9`, installed and launched. [Release evidence](./provider-release-0.14.9.md)
+records the three corrected peer-review findings, all eleven quality gates,
+installer hashes and all 8,683 installed payload checks. Real-account provider
+acceptance and Workspace dogfooding remain separate.
+
 The October 6 pre-tag follow-up is recorded in
 [`existing-code-stabilization-2026-09-24.md`](./existing-code-stabilization-2026-09-24.md).
 It fixes false artifact acceptance in the release checker and rechecks the
@@ -63,8 +69,8 @@ work. Completed work belongs in `CHANGELOG.md`.
 
 | Document                                                                     | Status                                                                                                                                                                                    |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`../CHANGELOG.md`](../CHANGELOG.md) | **CURRENT BUILD RECORD** — 0.14.8 built, pushed to main, installed and launched. Latest annotated release tag remains v0.10.3. |
-| [`existing-code-stabilization-2026-09-24.md`](./existing-code-stabilization-2026-09-24.md) | **CURRENT CHECKPOINT** — audit/follow-up fixes, eleven gate categories, exact 0.14.8 build/install evidence and owner dogfooding next. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | **CURRENT BUILD RECORD** — 0.14.9 built, pushed to main, tagged v0.14.9, installed and launched. See `provider-release-0.14.9.md`. |
+| [`existing-code-stabilization-2026-09-24.md`](./existing-code-stabilization-2026-09-24.md) | **PREVIOUS CHECKPOINT** — audit/follow-up fixes, eleven gate categories, exact 0.14.8 build/install evidence and owner dogfooding next. |
 | [`workspace-release-0.14.7.md`](./workspace-release-0.14.7.md) | **BUILT** — summary/zoom/Monitor fixes, isolated native WebView2 profiles, eleven full gates, fifteen OpenSSH cases and both Windows installers passed. Exact source and artifact hashes recorded. |
 | [`proof-audit-2026-08-01.md`](./proof-audit-2026-08-01.md)                   | **DATED SNAPSHOT** - exact August 1 source/package proof; superseded for current counts and package identity by v0.10.3, but still authoritative for why each external gate remained open |
 | [`acceptance.md`](./acceptance.md) | **HISTORICAL MATRIX** — rows describe 0.13.2. Current 0.14.1 installer/OpenSSH proof is in [`installer-ssh-evidence-2026-09-08.md`](./installer-ssh-evidence-2026-09-08.md); later GUI/provider/hardware observations are in the September 8 GUI report. Existing ticks are not promoted. |

@@ -21,6 +21,10 @@ task list.
 - Peer review, validation scope and artifact identity:
   [0.14.9 release record](./dev/provider-release-0.14.9.md).
 
+- Built NSIS/MSI from clean source `83bd3125`, tagged `v0.14.9`, and upgraded
+  the desktop installation. All 8,683 manifest hashes and two bundled-sidecar
+  turns passed; normal startup opened a responding window.
+
 ## [0.14.8] - 2026-09-24 (local build)
 
 - Scoped Workspace approval shortcuts to the selected visible terminal, rejected

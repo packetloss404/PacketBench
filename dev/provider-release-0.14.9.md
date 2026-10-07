@@ -1,6 +1,6 @@
 # PacketBench 0.14.9 release
 
-Release preparation: October 6, 2026. The owner requested peer review, a new
+Released and installed: October 6, 2026 (America/Chicago). The owner requested peer review, a new
 release tag, commit/push, compilation and an update of the desktop installation.
 
 ## Scope
@@ -16,7 +16,7 @@ acceptance limits are documented in [the integration record](./provider-integrat
 The source implementation passed all eleven quality gate categories. Final
 implementation follow-up passed 1,041 Rust library tests (5 ignored), frontend
 tests, lint and the production frontend build. Release peer review and final
-artifact/install evidence are recorded below when completed.
+artifact/install evidence are recorded below.
 
 Real-key model discovery and paid-provider conversations are not established by
 local HTTP fixtures. Interactive Workspace dogfooding remains incomplete. The
@@ -52,3 +52,30 @@ full run found only release-version file formatting; that was corrected and
 the same formatting gate passed separately. The lightweight packaging gate
 also passed all eleven checks. Artifact and installation results follow in a
 post-build evidence update; they are not implied by source validation.
+
+## Built artifacts and installed update
+
+- Source/tag target: `83bd31251ef3069c283b310b1f809f393715774f` (clean main checkout).
+- Annotated release tag: `v0.14.9`.
+- Source fingerprint: `c560bfa86b24909bb116b31ad0354affaefe208550eb3c7b63619a6433647152`.
+- Build manifest: `test-results/acceptance/windows/2026-10-07T03-19-34-200Z/manifest.json`.
+- Both Windows bundles compiled successfully. The build restored sidecar development dependencies afterward.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `PacketBench_0.14.9_x64-setup.exe` | `beec062a8db0c7e0d4f10afb0a3afe46e4fb9d255664d0b6e4b19ed9bf23c911` |
+| `PacketBench_0.14.9_x64_en-US.msi` | `2a769a25cecf7dc1cb7793099c75c8dc50e1b06a0f5b29ce17a85e8e4e531b69` |
+
+Installers are under `C:/Users/ianwalmsley/packetbench-build/release/bundle/`.
+The NSIS upgrade of the existing 0.14.8 desktop installation exited 0. All
+8,683 manifest payload hashes matched; the installed executable reports
+0.14.9 with SHA-256 `6cad2558305b41457dc22c50230e90f24a19872b01af57f42bc2e36165cf9db0`.
+Bundled Node 24.15.0 and the protocol-v12 sidecar completed two isolated echo
+turns. MSI was built and hashed, but MSI installation was not exercised.
+
+Normal launch opened a responding PacketBench window from
+`C:/Users/ianwalmsley/AppData/Local/PacketBench/packetbench.exe` and left the app
+running. `installation.json`, `packaged-sidecar.json` and `startup.json` sit
+beside the build manifest. This is payload/startup evidence, not full native
+provider or Workspace acceptance. The tag remains on the exact build-source
+commit; the later evidence-only documentation commit does not change artifacts.

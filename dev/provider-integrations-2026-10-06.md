@@ -1,10 +1,9 @@
 # Provider integrations — October 6, 2026
 
-This source change adds Sugar, ClinePass, OpenCode Go, Ollama Cloud, Google
-Gemini and xAI. It is not included in the installed 0.14.8 executable. No
-installer was produced during implementation. The owner subsequently requested
-peer review and a 0.14.9 desktop release/update; see
-[release evidence](./provider-release-0.14.9.md).
+PacketBench 0.14.9 adds Sugar, ClinePass, OpenCode Go, Ollama Cloud, Google
+Gemini and xAI. It is now included in the updated desktop executable. Peer
+review, release source and installation evidence are recorded in
+[the 0.14.9 release record](./provider-release-0.14.9.md).
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-10-06 (0.14.9 release preparation)
+Last reconciled: 2026-10-06 (0.14.9 built, installed and launched)
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
@@ -9,21 +9,19 @@ the current contracts below supersede their older protocol and queue details.
 
 ## Checkout and artifacts
 
-- **Resume here:** the owner explicitly requested provider expansion on October 6:
-  Sugar (`D:\projects\sugar`), ClinePass, OpenCode Go, Ollama Cloud, direct
-  Google Gemini and xAI, plus current Anthropic/OpenAI model discovery.
-  Implementation and acceptance notes are in
-  `dev/provider-integrations-2026-10-06.md`. This supersedes the previous
-  no-feature-expansion direction for that named scope. Workspaces remain the
-  primary product focus.
-- The installed **0.14.8** still belongs to source `9367b7a1`. The owner has not
-  dogfooded enough to establish release acceptance. The earlier October 6
-  pre-tag checks verified its installers and all 8,683 installed files;
-  provider source changes require a new build before local acceptance.
-  The owner subsequently requested peer review, a new release tag, commit/push,
-  and a desktop build/update. Version 0.14.9 is being prepared; build/install
-  evidence will be recorded in `dev/provider-release-0.14.9.md`.
-  Earlier release evidence remains in `dev/existing-code-stabilization-2026-09-24.md`.
+- **Resume here:** 0.14.9 is built, installed and launched. Source/tag target is
+  `83bd31251ef3069c283b310b1f809f393715774f`; annotated tag `v0.14.9` identifies
+  the exact build source. Main also contains the subsequent evidence record.
+  See `dev/provider-release-0.14.9.md` for peer review, hashes and installation.
+- Sugar, ClinePass, OpenCode Go, Ollama Cloud, Google Gemini and xAI are now
+  configurable API providers, with live catalogs including direct
+  Anthropic/OpenAI. All three peer-review findings were fixed and all eleven
+  quality-gate categories passed. Configuration: `dev/provider-integrations-2026-10-06.md`.
+- The desktop upgrade from 0.14.8 exited 0, verified all 8,683 manifest payload
+  hashes and passed two bundled-sidecar turns. A responding application window
+  was observed. Real-account provider testing and interactive Workspace
+  dogfooding remain; startup alone does not establish those. Workspaces remain
+  the primary product focus. Paid Claude testing stays deferred on cost.
 - Working directory: `D:\projects\PacketBench`.
 - Remote: `git@github.com:packetloss404/PacketBench.git`.
 - **0.14.7 is built and pushed to main** (2026-09-12), from clean code commit
@@ -73,8 +71,8 @@ the current contracts below supersede their older protocol and queue details.
   identify a binary by version alone.
   The current validation workflow records source and payload hashes; see
   `dev/installer-ssh-acceptance.md` and its dated evidence.
-- `v0.10.3` remains the latest annotated release tag. Newer build records
-  do not imply matching release tags.
+- `v0.14.9` is the latest annotated release tag. Older 0.14.x build records do
+  not imply corresponding tags; existing historical tags were not changed.
 
 ## Current contracts
 
