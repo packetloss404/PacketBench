@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b100d" />
+    <title>PacketBench — A workbench for the agent era</title>
+    <meta
+      name="description"
+      content="A local-first desktop environment for coding agents. Bring terminals, API conversations, planning, permissions, and review into one native workbench."
+    />
+    <link rel="canonical" href="https://packetloss404.github.io/PacketBench/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="PacketBench — A workbench for the agent era" />
+    <meta
+      property="og:description"
+      content="Your agents. Your projects. One native workbench. Explore the open-source desktop environment on GitHub."
+    />
+    <meta property="og:url" content="https://packetloss404.github.io/PacketBench/" />
+    <meta property="og:image" content="https://packetloss404.github.io/PacketBench/assets/product-flights.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="assets/brand-icon.png" />
+    <link rel="preload" href="assets/inter-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="assets/site.css" />
+    <script src="assets/site.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="PacketBench home"
+        ><img src="assets/brand-icon.png" width="36" height="36" alt="" /><span
+          >PacketBench</span
+        ></a
+      >
+      <nav aria-label="Main navigation">
+        <a href="#tour">Product tour</a><a class="nav-secondary" href="#workflow">Workflow</a
+        ><a class="nav-secondary" href="https://docs.ianlan.dev/packetbench/">Docs</a
+        ><a class="nav-github" href="https://github.com/packetloss404/PacketBench">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero wrap" id="top" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="status-dot"></span> Local-first · Open source</p>
+          <h1 id="hero-title">A workbench<br />for the <span>agent era.</span></h1>
+          <p class="hero-description">
+            Run coding agents. Supervise the changes.<br class="desktop-break" />
+            Keep the whole project in view.
+          </p>
+          <p class="hero-detail">
+            PacketBench brings terminals, API conversations, planning, and review into one native
+            desktop environment.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="https://github.com/packetloss404/PacketBench"
+              >Explore on GitHub <span aria-hidden="true">↗</span></a
+            ><a class="text-link" href="#tour"
+              >Tour the workbench <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <div class="hero-note">
+            <span class="tiny-mark">P&gt;</span> Built by an infrastructure engineer. Designed for
+            the work around the agent.
+          </div>
+        </div>
+        <div
+          class="workbench-graphic"
+          aria-label="Workflow illustration: project context connects planning, agents, review, and continued work"
+        >
+          <div class="graphic-topline">
+            <span>THE WORKBENCH</span><span class="graphic-code">01 / LOCAL DESKTOP</span>
+          </div>
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="center-node">
+            <img src="assets/brand-icon.png" width="88" height="88" alt="" /><span
+              >PacketBench</span
+            ><small>YOUR WORK, IN CONTEXT</small>
+          </div>
+          <div class="satellite satellite-plan">
+            <span class="node-symbol">◇</span>
+            <div><small>01 / PLAN</small><strong>Set the direction</strong></div>
+          </div>
+          <div class="satellite satellite-run">
+            <span class="node-symbol">&gt;_</span>
+            <div><small>02 / RUN</small><strong>Bring your agents</strong></div>
+          </div>
+          <div class="satellite satellite-review">
+            <span class="node-symbol">±</span>
+            <div><small>03 / REVIEW</small><strong>Inspect the changes</strong></div>
+          </div>
+          <div class="satellite satellite-context">
+            <span class="node-symbol">↻</span>
+            <div><small>04 / CONTINUE</small><strong>Keep your bearings</strong></div>
+          </div>
+          <div class="graphic-bottomline">
+            <span>CLI + API · LOCAL + SSH</span><span>WORKFLOW ILLUSTRATION</span>
+          </div>
+        </div>
+      </section>
+      <div class="foundation wrap">
+        <div><span>01</span><strong>Native desktop</strong><small>Tauri + Rust</small></div>
+        <div>
+          <span>02</span><strong>Multiple agent paths</strong
+          ><small>Terminal CLIs + API agents</small>
+        </div>
+        <div><span>03</span><strong>Inspectable source</strong><small>Apache-2.0</small></div>
+      </div>
+
+      <section class="tour-section section wrap" id="tour" aria-labelledby="tour-title">
+        <div class="section-heading">
+          <p class="eyebrow">01 / Inside the workbench</p>
+          <h2 id="tour-title">The project stays<br /><span>in the picture.</span></h2>
+          <p>
+            Move from a conversation to a supervised run, with the tools and controls close to the
+            work.
+          </p>
+        </div>
+        <div class="tour-tabs" role="tablist" aria-label="Product interface views">
+          <button
+            id="tab-flights"
+            class="tour-tab"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-flights"
+            tabindex="0"
+          >
+            01 <span>Supervised runs</span><span aria-hidden="true">↗</span>
+          </button>
+          <button
+            id="tab-agents"
+            class="tour-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-agents"
+            tabindex="-1"
+          >
+            02 <span>Agent conversations</span><span aria-hidden="true">↗</span>
+          </button>
+          <button
+            id="tab-workspaces"
+            class="tour-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-workspaces"
+            tabindex="-1"
+          >
+            03 <span>Workspace setup</span><span aria-hidden="true">↗</span>
+          </button>
+        </div>
+        <div
+          class="tour-panel"
+          id="panel-flights"
+          role="tabpanel"
+          aria-labelledby="tab-flights"
+          tabindex="0"
+        >
+          <div class="tour-intro">
+            <h3>Plan first. Launch when you’re ready.</h3>
+            <p>
+              Choose local or SSH targets, define execution supervision, and use isolated worktrees
+              with optional review gates.
+            </p>
+            <a href="assets/product-flights.png">View full capture ↗</a>
+          </div>
+          <figure class="product-capture">
+            <img
+              src="assets/product-flights.png"
+              width="1920"
+              height="1080"
+              alt="PacketBench supervised launch dialog with a planning option, execution controls, and a reviewer gate"
+            />
+            <figcaption>
+              Actual interface · web-mode verification capture · October 2026. Sample and empty
+              states; no live agent execution is claimed.
+            </figcaption>
+          </figure>
+        </div>
+        <div
+          class="tour-panel"
+          id="panel-agents"
+          role="tabpanel"
+          aria-labelledby="tab-agents"
+          tabindex="0"
+          hidden
+        >
+          <div class="tour-intro">
+            <h3>A place to direct the work.</h3>
+            <p>
+              Start API-agent conversations against a project, choose the provider and execution
+              posture, and keep conversation context visible.
+            </p>
+            <a href="assets/product-agents.png">View full capture ↗</a>
+          </div>
+          <figure class="product-capture">
+            <img
+              src="assets/product-agents.png"
+              width="1920"
+              height="1080"
+              alt="PacketBench Agents view with conversation navigation and the new-agent composer"
+              loading="lazy"
+            />
+            <figcaption>
+              Actual interface · web-mode verification capture · October 2026. Empty state with test
+              authentication; no live provider session is shown.
+            </figcaption>
+          </figure>
+        </div>
+        <div
+          class="tour-panel"
+          id="panel-workspaces"
+          role="tabpanel"
+          aria-labelledby="tab-workspaces"
+          tabindex="0"
+          hidden
+        >
+          <div class="tour-intro">
+            <h3>Make the workbench yours.</h3>
+            <p>
+              Configure terminal agents, execution hosts, and project rules. PTY-first Workspaces
+              keep your terminal workflow in a persistent pane layout.
+            </p>
+            <a href="assets/product-workspaces.png">View full capture ↗</a>
+          </div>
+          <figure class="product-capture">
+            <img
+              src="assets/product-workspaces.png"
+              width="1920"
+              height="1080"
+              alt="PacketBench Workspaces and Terminal settings with the CLI clients configuration"
+              loading="lazy"
+            />
+            <figcaption>
+              Actual interface · web-mode verification capture · October 2026. Detection and
+              configuration are shown in the test environment.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="workflow-section section wrap" id="workflow" aria-labelledby="workflow-title">
+        <div class="section-heading compact">
+          <p class="eyebrow">02 / One continuous workflow</p>
+          <h2 id="workflow-title">From intent<br /><span>to inspected work.</span></h2>
+          <p>The useful part is everything that connects the prompt to the project.</p>
+        </div>
+        <div class="workflow-list">
+          <article>
+            <span class="step-index">01</span>
+            <div>
+              <h3>Bring the project.</h3>
+              <p>
+                Open local or SSH workspaces. Keep terminals, project context, files, and Git close
+                enough to use together.
+              </p>
+            </div>
+            <span class="step-tag">WORKSPACES</span>
+          </article>
+          <article>
+            <span class="step-index">02</span>
+            <div>
+              <h3>Choose how the agent works.</h3>
+              <p>
+                Run familiar terminal CLIs or API-agent conversations. Select the provider and
+                permissions that fit the job.
+              </p>
+            </div>
+            <span class="step-tag">AGENTS</span>
+          </article>
+          <article>
+            <span class="step-index">03</span>
+            <div>
+              <h3>Organize the larger job.</h3>
+              <p>
+                Track issues, plan Flights, and launch supervised attempts against isolated
+                worktrees.
+              </p>
+            </div>
+            <span class="step-tag">FLIGHT DECK</span>
+          </article>
+          <article>
+            <span class="step-index">04</span>
+            <div>
+              <h3>Review, then continue.</h3>
+              <p>
+                Inspect pending edits, accept changes deliberately, and keep notes and history
+                available for the next session.
+              </p>
+            </div>
+            <span class="step-tag">REVIEW + MEMORY</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="provider-section wrap" aria-labelledby="provider-title">
+        <div>
+          <p class="eyebrow">03 / Your agent stack</p>
+          <h2 id="provider-title">Bring the tools<br />you work with.</h2>
+          <p>
+            Choose the terminal workflow or API path that suits your project. Provider credentials
+            and capabilities depend on your configuration.
+          </p>
+        </div>
+        <div class="provider-lines">
+          <div>
+            <span class="provider-label">TERMINAL CLIS</span>
+            <p>PacketCode <i> / </i> Claude Code <i> / </i> Codex <i> / </i> OpenCode</p>
+          </div>
+          <div>
+            <span class="provider-label">API + LOCAL MODELS</span>
+            <p>
+              Claude <i> / </i> OpenAI <i> / </i> MiniMax <i> / </i> OpenRouter <i> / </i> Ollama
+            </p>
+          </div>
+          <div>
+            <span class="provider-label">MORE CONFIGURABLE ENDPOINTS</span>
+            <p>Sugar <i> / </i> Gemini <i> / </i> xAI <i> / </i> OpenAI-compatible services</p>
+          </div>
+          <a class="text-link" href="https://github.com/packetloss404/PacketBench#supported-agents"
+            >See the current provider matrix <span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </section>
+
+      <section class="control-section" aria-labelledby="control-title">
+        <div class="wrap control-inner">
+          <div class="control-heading">
+            <p class="eyebrow">04 / Engineering with boundaries</p>
+            <h2 id="control-title">Keep authority<br /><em>visible.</em></h2>
+            <p>Automation earns trust through controls you can see and decisions you can make.</p>
+            <div class="control-stamp">
+              <span>HUMAN IN CONTROL</span><span aria-hidden="true">↗</span>
+            </div>
+          </div>
+          <div class="control-grid">
+            <article>
+              <span class="control-symbol">↳</span>
+              <h3>Approve the action.</h3>
+              <p>
+                Explicit permission prompts and project trust put tool access in front of the person
+                directing the work.
+              </p>
+            </article>
+            <article>
+              <span class="control-symbol">±</span>
+              <h3>Review the change.</h3>
+              <p>
+                Inspect pending edits and use review surfaces before accepting work into the
+                project.
+              </p>
+            </article>
+            <article>
+              <span class="control-symbol">⏱</span>
+              <h3>Bound the work.</h3>
+              <p>
+                Configure spending limits and supervised attempts. Bounded autonomy is an explicit
+                choice.
+              </p>
+            </article>
+            <article>
+              <span class="control-symbol">⌁</span>
+              <h3>Preserve context.</h3>
+              <p>
+                Persisted conversations, workspace layouts, notes, and history keep the next step
+                understandable.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="status-section section wrap" id="status" aria-labelledby="status-title">
+        <div class="section-heading compact">
+          <p class="eyebrow">05 / Built in the open</p>
+          <h2 id="status-title">Inspect the work.<br /><span>Follow what’s next.</span></h2>
+        </div>
+        <div class="release-panel">
+          <div class="release-number">
+            <span class="eyebrow">Current source version</span><strong>0.14.9</strong
+            ><span class="release-badge">ACTIVE DEVELOPMENT</span>
+          </div>
+          <div class="release-copy">
+            <h3>A working desktop project, still evolving.</h3>
+            <p>
+              The recorded Windows build has been installed and launched. Interactive Workspace use
+              and real-account provider acceptance are still being completed. The repository keeps
+              build evidence, current limits, and planned work visible.
+            </p>
+            <div class="release-links">
+              <a href="https://github.com/packetloss404/PacketBench/blob/main/HANDOFF.md">Current status ↗</a
+              ><a href="https://github.com/packetloss404/PacketBench/blob/main/ROADMAP.md">Roadmap ↗</a
+              ><a href="https://github.com/packetloss404/PacketBench/blob/main/CHANGELOG.md">Change history ↗</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="faq-section wrap" aria-labelledby="faq-title">
+        <div>
+          <p class="eyebrow">A few useful details</p>
+          <h2 id="faq-title">Before you<br />open the source.</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>Is this a browser app?<span aria-hidden="true">+</span></summary>
+            <p>
+              PacketBench is a native desktop application built with Tauri and Rust. This page
+              introduces the product; the repository contains the source, setup instructions, and
+              build records.
+            </p>
+          </details>
+          <details>
+            <summary>Does it replace my coding agent?<span aria-hidden="true">+</span></summary>
+            <p>
+              It provides the environment around the agents you use: terminal panes, API
+              conversations, project organization, permissions, and review. CLI and API paths remain
+              distinct.
+            </p>
+          </details>
+          <details>
+            <summary>Can I work on remote projects?<span aria-hidden="true">+</span></summary>
+            <p>
+              SSH workspaces and remote execution paths are supported. Remote hosts require their
+              own compatible tools and configuration. The separate Remote Agents relay feature
+              remains gated; it is not a general hosted service.
+            </p>
+          </details>
+          <details>
+            <summary>Where should I start?<span aria-hidden="true">+</span></summary>
+            <p>
+              Start with the <a href="https://github.com/packetloss404/PacketBench#readme">GitHub README</a> for prerequisites and
+              setup. Read the current handoff for acceptance status, and use the
+              <a href="https://docs.ianlan.dev/packetbench/">documentation</a> to explore the
+              workflow.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="closing wrap">
+        <div class="closing-mark" aria-hidden="true">P&gt;</div>
+        <p class="eyebrow">Your agents. Your projects. Your workbench.</p>
+        <h2>Bring your agents.<br /><span>Keep your bearings.</span></h2>
+        <a class="button primary" href="https://github.com/packetloss404/PacketBench"
+          >Explore PacketBench on GitHub <span aria-hidden="true">↗</span></a
+        >
+        <p class="closing-small">Open source · Apache-2.0 · Native desktop</p>
+      </section>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="brand" href="#top"
+        ><img src="assets/brand-icon.png" width="28" height="28" alt="" /><span
+          >PacketBench</span
+        ></a
+      >
+      <p>Built by <a href="https://ianwalmsley.me/">Ian Walmsley</a></p>
+      <nav aria-label="Footer">
+        <a href="https://docs.ianlan.dev/packetbench/">Documentation</a
+        ><a href="https://github.com/packetloss404/PacketBench">GitHub ↗</a><a href="#top">Back to top ↑</a>
+      </nav>
+    </footer>
+  </body>
+</html>

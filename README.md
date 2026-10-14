@@ -1,5 +1,7 @@
 # PacketBench
 
+[Product website](https://packetloss404.github.io/PacketBench/) | [Documentation](https://docs.ianlan.dev/packetbench/)
+
 **A local-first desktop ADE (Agent Development Environment) for orchestrating AI software work.**
 
 PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, issue tracking, memory, and workspace management into a single native environment. It is built for running real development workflows across multiple agent CLIs without leaving the app.
