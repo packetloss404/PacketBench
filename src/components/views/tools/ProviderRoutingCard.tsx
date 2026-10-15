@@ -5,7 +5,6 @@ import { useAgentStore } from "@/stores/agentStore";
 import {
   ALL_AUX_TASK_CLASSES,
   ALL_TASK_TYPES,
-  AUX_TASK_CLASS_CAVEATS,
   AUX_TASK_CLASS_GROUPS,
   AUX_TASK_CLASS_LABELS,
   TASK_TYPE_LABELS,
@@ -19,7 +18,7 @@ import {
 } from "@/lib/tauri";
 import { logSwallowed } from "@/lib/logSwallowed";
 import { getModelsForAgent } from "@/lib/models";
-import { API_PROVIDERS } from "@/lib/api-models";
+import { API_PROVIDERS, DEFAULT_API_AGENT } from "@/lib/api-models";
 import { liveModelSource, resolveModelRows } from "@/lib/liveModels";
 import { useLiveModelStore } from "@/stores/liveModelStore";
 import { SUBSCRIPTION_OAUTH_AGENTS } from "@/lib/attemptRouting";
@@ -28,6 +27,7 @@ import { APP_NAME } from "@/lib/brand";
 import type { AgentCli } from "@/stores/agentTaskStore";
 import { ModelSelector } from "@/components/agents/composer/ModelSelector";
 import { useOllamaModels } from "@/components/agents/hooks/useOllamaModels";
+import { InsightsChatModal } from "./InsightsChatModal";
 
 /**
  * API executors selectable as a workflow-role default.
@@ -119,7 +119,7 @@ export function ProviderRoutingCard() {
       <div className="flex flex-col gap-1.5">
         {ALL_TASK_TYPES.map((taskType) => {
           const mapping = mappings.find((m) => m.taskType === taskType);
-          const agentId = mapping?.agentConfigId ?? "claude-code";
+          const agentId = mapping?.agentConfigId ?? DEFAULT_API_AGENT;
           const modelValue = mapping?.model ?? null;
           const apiProvider = ROUTABLE_API_PROVIDERS.find((p) => p.agentCli === agentId);
           const models = getModelsForAgent(agentId);
@@ -207,6 +207,7 @@ export function ProviderRoutingCard() {
  * exactly what the "Resolves to" column shows.
  */
 function AuxRoutingSection() {
+  const [chatOpen, setChatOpen] = useState(false);
   const auxMappings = useRoutingStore((s) => s.auxMappings);
   const setAuxMapping = useRoutingStore((s) => s.setAuxMapping);
   const resetAuxToDefaults = useRoutingStore((s) => s.resetAuxToDefaults);
@@ -281,9 +282,8 @@ function AuxRoutingSection() {
   /** Model choices for a pinned provider. Every provider now lists what it
    * actually serves where it can say so, with the bundled catalog behind it;
    * Ollama keeps its own producer because it also reports install size and a
-   * tools template. Aux task classes are tool-less single shots today, so no
-   * supportsTools filter is applied — add one per-class if a tool-carrying aux
-   * class ever lands.
+   * tools template. Insights chat and issue investigation require tool support;
+   * selecting a model without it surfaces the provider error at execution.
    *
    * This function used to read `API_PROVIDERS.find(...).models` directly, which
    * was the third of three ad-hoc live/static precedence rules in the codebase
@@ -333,10 +333,10 @@ function AuxRoutingSection() {
       </div>
 
       <p className="mb-3 text-[10px] text-text-muted">
-        Short generation tasks {APP_NAME} runs for you.{" "}
+        AI tasks {APP_NAME} runs for you.{" "}
         <span className="text-text-secondary">Auto</span> picks the cheapest provider you have an
         API key for. No task routed through this table uses a Claude or ChatGPT subscription login —
-        a row flagged below is not routed through it yet and says what it does instead.
+        Insights chat and issue investigation use read-only project file tools with the selected provider.
       </p>
 
       <div className="mb-1.5 grid grid-cols-[1fr_0.9fr_0.9fr_1.1fr] gap-2 px-3">
@@ -371,7 +371,6 @@ function AuxRoutingSection() {
               const mapping = auxMappings.find((m) => m.taskClass === taskClass);
               const meta = AUX_TASK_CLASS_LABELS[taskClass];
               const resolved = describeResolution(taskClass);
-              const caveat = AUX_TASK_CLASS_CAVEATS[taskClass];
               const pinnedProvider = mapping?.provider ?? null;
               const models = pinnedProvider ? modelOptionsFor(pinnedProvider) : [];
               const requiresModel =
@@ -386,11 +385,10 @@ function AuxRoutingSection() {
                   <div className="min-w-0">
                     <div className="text-[11px] font-medium text-text-primary">{meta.label}</div>
                     <div className="text-[9px] text-text-muted">{meta.description}</div>
-                    {caveat && (
-                      <div className="mt-0.5 flex items-start gap-1 text-[9px] text-accent-amber">
-                        <AlertTriangle size={9} className="mt-px shrink-0" />
-                        <span>{caveat}</span>
-                      </div>
+                    {taskClass === "agent-chat" && (
+                      <button type="button" onClick={() => setChatOpen(true)} className="mt-1 text-[10px] text-accent-green hover:underline">
+                        Open Insights chat
+                      </button>
                     )}
                   </div>
 
@@ -447,6 +445,7 @@ function AuxRoutingSection() {
           </div>
         </div>
       ))}
+      {chatOpen && <InsightsChatModal onClose={() => setChatOpen(false)} />}
     </div>
   );
 }

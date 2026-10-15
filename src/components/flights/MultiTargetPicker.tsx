@@ -2,7 +2,7 @@ import { useMemo, useRef } from "react";
 import { Folder, Server, X, Check, AlertTriangle } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useServerStore } from "@/stores/serverStore";
-import { API_PROVIDERS, getDefaultModel } from "@/lib/api-models";
+import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import { detectBaseBranch } from "@/components/flights/detectBaseBranch";
 import type { AgentCli } from "@/stores/agentTaskStore";
 import type { ServerConfig } from "@/types/server";
@@ -54,7 +54,7 @@ const DEFAULT_BRANCH = "main";
 export function MultiTargetPicker({
   picked,
   onChange,
-  defaultAgent = "api-claude",
+  defaultAgent = DEFAULT_API_AGENT,
 }: MultiTargetPickerProps) {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const sshServers = useServerStore((s) => s.servers);
@@ -89,8 +89,9 @@ export function MultiTargetPicker({
   const localOptions = useMemo(
     () =>
       workspaces
-        .filter((w): w is Workspace & { projectPath: string } =>
-          Boolean(w.projectPath) && isLocalWorkspace(w),
+        .filter(
+          (w): w is Workspace & { projectPath: string } =>
+            Boolean(w.projectPath) && isLocalWorkspace(w),
         )
         .map((w) => ({
           key: `local:${w.id}`,
@@ -148,11 +149,7 @@ export function MultiTargetPicker({
   }
 
   function updatePicked(key: string, patch: Partial<PickedTarget>) {
-    onChange(
-      picked.map((p) =>
-        p.key === key ? ({ ...p, ...patch } as PickedTarget) : p,
-      ),
-    );
+    onChange(picked.map((p) => (p.key === key ? ({ ...p, ...patch } as PickedTarget) : p)));
   }
 
   return (
@@ -164,7 +161,7 @@ export function MultiTargetPicker({
         </span>
         <div className="flex flex-wrap gap-1.5">
           {localOptions.length === 0 && sshServers.length === 0 && (
-            <span className="text-[11px] text-text-muted italic">
+            <span className="text-[11px] italic text-text-muted">
               No workspaces or SSH servers — open a folder or add a server first.
             </span>
           )}
@@ -174,10 +171,10 @@ export function MultiTargetPicker({
               <button
                 key={key}
                 onClick={() => toggleLocal(workspace)}
-                className={`flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border transition-colors ${
+                className={`flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] transition-colors ${
                   selected
-                    ? "bg-accent-green/15 text-accent-green border-accent-green/40"
-                    : "bg-bg-primary text-text-secondary border-bg-border hover:border-accent-green/30"
+                    ? "border-accent-green/40 bg-accent-green/15 text-accent-green"
+                    : "border-bg-border bg-bg-primary text-text-secondary hover:border-accent-green/30"
                 }`}
               >
                 {selected ? <Check size={11} /> : <Folder size={11} />}
@@ -199,7 +196,7 @@ export function MultiTargetPicker({
                   type="button"
                   disabled
                   title="Host key not verified — pin it on the Servers page"
-                  className="flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border bg-accent-amber/5 text-accent-amber border-accent-amber/30 cursor-not-allowed opacity-70"
+                  className="flex cursor-not-allowed items-center gap-1.5 rounded border border-accent-amber/30 bg-accent-amber/5 px-2 py-1 text-[11px] text-accent-amber opacity-70"
                 >
                   <AlertTriangle size={11} />
                   {server.name}
@@ -210,10 +207,10 @@ export function MultiTargetPicker({
               <button
                 key={key}
                 onClick={() => toggleSsh(server)}
-                className={`flex items-center gap-1.5 px-2 py-1 text-[11px] rounded border transition-colors ${
+                className={`flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] transition-colors ${
                   selected
-                    ? "bg-accent-purple/15 text-accent-purple border-accent-purple/40"
-                    : "bg-bg-primary text-text-secondary border-bg-border hover:border-accent-purple/30"
+                    ? "border-accent-purple/40 bg-accent-purple/15 text-accent-purple"
+                    : "border-bg-border bg-bg-primary text-text-secondary hover:border-accent-purple/30"
                 }`}
               >
                 {selected ? <Check size={11} /> : <Server size={11} />}
@@ -230,29 +227,27 @@ export function MultiTargetPicker({
           <span className="text-[10px] uppercase tracking-wide text-text-muted">
             {picked.length} agent{picked.length !== 1 ? "s" : ""} will launch
           </span>
-          <div className="flex flex-col gap-1 border border-bg-border rounded overflow-hidden">
+          <div className="flex flex-col gap-1 overflow-hidden rounded border border-bg-border">
             {picked.map((p) => {
               const provider = API_PROVIDERS.find((pr) => pr.agentCli === p.agent);
               return (
                 <div
                   key={p.key}
-                  className="flex items-center gap-2 px-2 py-1.5 bg-bg-primary text-[11px] border-b border-bg-border last:border-b-0"
+                  className="flex items-center gap-2 border-b border-bg-border bg-bg-primary px-2 py-1.5 text-[11px] last:border-b-0"
                 >
                   {p.kind === "local" ? (
-                    <Folder size={11} className="text-text-muted shrink-0" />
+                    <Folder size={11} className="shrink-0 text-text-muted" />
                   ) : (
-                    <Server size={11} className="text-accent-purple shrink-0" />
+                    <Server size={11} className="shrink-0 text-accent-purple" />
                   )}
-                  <span className="text-text-primary font-medium truncate min-w-[80px] max-w-[140px]">
+                  <span className="min-w-[80px] max-w-[140px] truncate font-medium text-text-primary">
                     {p.label}
                   </span>
                   <input
                     type="text"
                     value={p.baseBranch}
-                    onChange={(e) =>
-                      updatePicked(p.key, { baseBranch: e.target.value })
-                    }
-                    className="flex-shrink-0 w-20 bg-bg-secondary border border-bg-border rounded px-1.5 py-0.5 text-[10px] text-text-primary outline-none focus:border-accent-green/40"
+                    onChange={(e) => updatePicked(p.key, { baseBranch: e.target.value })}
+                    className="w-20 flex-shrink-0 rounded border border-bg-border bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-primary outline-none focus:border-accent-green/40"
                     placeholder="branch"
                     title="Base branch for the worktree"
                   />
@@ -265,7 +260,7 @@ export function MultiTargetPicker({
                         model: getDefaultModel(agent),
                       });
                     }}
-                    className="flex-shrink-0 bg-bg-secondary border border-bg-border rounded px-1.5 py-0.5 text-[10px] text-text-secondary outline-none focus:border-accent-green/40"
+                    className="flex-shrink-0 rounded border border-bg-border bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-secondary outline-none focus:border-accent-green/40"
                   >
                     {API_PROVIDERS.map((pr) => (
                       <option key={pr.agentCli} value={pr.agentCli}>
@@ -276,7 +271,7 @@ export function MultiTargetPicker({
                   <select
                     value={p.model}
                     onChange={(e) => updatePicked(p.key, { model: e.target.value })}
-                    className="flex-1 min-w-[100px] bg-bg-secondary border border-bg-border rounded px-1.5 py-0.5 text-[10px] text-text-secondary outline-none focus:border-accent-green/40"
+                    className="min-w-[100px] flex-1 rounded border border-bg-border bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-secondary outline-none focus:border-accent-green/40"
                   >
                     {provider?.models.map((m) => (
                       <option key={m.value} value={m.value}>
@@ -285,9 +280,7 @@ export function MultiTargetPicker({
                     ))}
                   </select>
                   <button
-                    onClick={() =>
-                      onChange(picked.filter((x) => x.key !== p.key))
-                    }
+                    onClick={() => onChange(picked.filter((x) => x.key !== p.key))}
                     className="p-0.5 text-text-muted hover:text-accent-red"
                     title="Remove"
                   >

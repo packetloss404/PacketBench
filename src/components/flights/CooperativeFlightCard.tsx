@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, GitMerge, Network, Play, RotateCcw, X } from "lucide-react";
-import { API_PROVIDERS, getDefaultModel } from "@/lib/api-models";
+import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import {
   selectCooperativeTaskViews,
   validateCooperativeAssignments,
@@ -61,7 +61,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
           const agent: AgentCli =
             task.role === "reviewer" || task.role === "scout"
               ? "api-openai-agents"
-              : "api-claude";
+              : DEFAULT_API_AGENT;
           return {
             ...task,
             agentConfigId: task.agentConfigId === "unassigned" ? agent : task.agentConfigId,
@@ -102,7 +102,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
         <button
           type="button"
           onClick={enableCooperativeMode}
-          className="border-accent-purple/30 bg-accent-purple/10 hover:bg-accent-purple/20 rounded border px-2 py-1 text-[10px] font-medium text-accent-purple"
+          className="rounded border border-accent-purple/30 bg-accent-purple/10 px-2 py-1 text-[10px] font-medium text-accent-purple hover:bg-accent-purple/20"
         >
           Enable assisted graph
         </button>
@@ -112,7 +112,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
 
   const byId = new Map(views.map((view) => [view.task.id, view.task]));
   return (
-    <div className="border-accent-purple/25 rounded border bg-bg-secondary">
+    <div className="rounded border border-accent-purple/25 bg-bg-secondary">
       <div className="flex items-center gap-2 border-b border-bg-border px-3 py-2">
         <Network size={12} className="text-accent-purple" />
         <div className="min-w-0 flex-1">
@@ -133,7 +133,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
                 "Integration branch verified and ready.",
               )
             }
-            className="border-accent-amber/30 flex items-center gap-1 rounded border px-2 py-1 text-[10px] text-accent-amber"
+            className="flex items-center gap-1 rounded border border-accent-amber/30 px-2 py-1 text-[10px] text-accent-amber"
           >
             <RotateCcw size={9} /> Retry after resolution
           </button>
@@ -152,7 +152,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
                     "Flight integration branch landed.",
                   ).finally(() => setConfirmLanding(false))
                 }
-                className="hover:bg-accent-green/10 rounded p-0.5 hover:text-accent-green"
+                className="rounded p-0.5 hover:bg-accent-green/10 hover:text-accent-green"
               >
                 <Check size={10} />
               </button>
@@ -160,7 +160,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
                 type="button"
                 aria-label="Cancel final Flight landing"
                 onClick={() => setConfirmLanding(false)}
-                className="hover:bg-accent-red/10 rounded p-0.5 hover:text-accent-red"
+                className="rounded p-0.5 hover:bg-accent-red/10 hover:text-accent-red"
               >
                 <X size={10} />
               </button>
@@ -169,7 +169,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
             <button
               type="button"
               onClick={() => setConfirmLanding(true)}
-              className="border-accent-green/30 flex items-center gap-1 rounded border px-2 py-1 text-[10px] text-accent-green"
+              className="flex items-center gap-1 rounded border border-accent-green/30 px-2 py-1 text-[10px] text-accent-green"
             >
               <GitMerge size={9} /> Land Flight
             </button>
@@ -183,14 +183,14 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
               `Launched ${ready.length} ready task${ready.length === 1 ? "" : "s"}.`,
             )
           }
-          className="border-accent-purple/30 bg-accent-purple/10 flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-medium text-accent-purple disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-1 rounded border border-accent-purple/30 bg-accent-purple/10 px-2 py-1 text-[10px] font-medium text-accent-purple disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Play size={9} /> Launch ready tasks
         </button>
       </div>
 
       {flight.integrationBranch?.status === "needs_attention" && (
-        <div className="border-accent-amber/20 bg-accent-amber/5 flex items-start gap-1.5 border-b px-3 py-2 text-[10px] text-accent-amber">
+        <div className="flex items-start gap-1.5 border-b border-accent-amber/20 bg-accent-amber/5 px-3 py-2 text-[10px] text-accent-amber">
           <AlertTriangle size={10} className="mt-px" />
           <span>
             {flight.integrationBranch.errorMessage}
@@ -275,7 +275,7 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
       </div>
 
       {issues.length > 0 && (
-        <div className="border-accent-amber/20 bg-accent-amber/5 border-t px-3 py-2 text-[10px] text-accent-amber">
+        <div className="border-t border-accent-amber/20 bg-accent-amber/5 px-3 py-2 text-[10px] text-accent-amber">
           {issues.slice(0, 5).map((issue) => (
             <div key={`${issue.kind}:${issue.taskId}:${issue.relatedTaskId ?? ""}`}>
               {issue.message}

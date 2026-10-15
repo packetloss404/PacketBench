@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import { loadFromStorage, saveToStorage } from "@/lib/storage";
 import { setAuxRoutingOverrides } from "@/lib/tauri";
 import { logSwallowed } from "@/lib/logSwallowed";
@@ -10,13 +11,13 @@ import { storageKey } from "@/lib/brand";
 const STORAGE_KEY = storageKey("routing");
 const AUX_STORAGE_KEY = storageKey("routing-aux");
 
-const DEFAULT_AGENT = "claude-code";
+const DEFAULT_AGENT = DEFAULT_API_AGENT;
 
 function buildDefaults(): RouteMapping[] {
   return ALL_TASK_TYPES.map((taskType) => ({
     taskType,
     agentConfigId: DEFAULT_AGENT,
-    model: null,
+    model: getDefaultModel(DEFAULT_AGENT),
   }));
 }
 
@@ -26,9 +27,7 @@ function loadMappings(): RouteMapping[] {
 
   // Ensure every task type has a mapping (in case new types were added)
   const defaults = buildDefaults();
-  return defaults.map(
-    (d) => saved.find((s) => s.taskType === d.taskType) ?? d,
-  );
+  return defaults.map((d) => saved.find((s) => s.taskType === d.taskType) ?? d);
 }
 
 function saveMappings(mappings: RouteMapping[]) {
@@ -97,11 +96,7 @@ interface RoutingStore {
   setMapping: (taskType: TaskType, agentConfigId: string, model: string | null) => void;
   resetToDefaults: () => void;
   resolveForTask: (taskType: TaskType) => { agentConfigId: string; model?: string };
-  setAuxMapping: (
-    taskClass: AuxTaskClass,
-    provider: string | null,
-    model: string | null,
-  ) => void;
+  setAuxMapping: (taskClass: AuxTaskClass, provider: string | null, model: string | null) => void;
   resetAuxToDefaults: () => void;
   resolveForAuxTask: (taskClass: AuxTaskClass) => { provider: string | null; model: string | null };
   /** Re-push the persisted auxiliary settings to the backend (app boot). */
@@ -130,7 +125,7 @@ export const useRoutingStore = create<RoutingStore>((set, get) => ({
 
   resolveForTask: (taskType) => {
     const mapping = get().mappings.find((m) => m.taskType === taskType);
-    if (!mapping) return { agentConfigId: DEFAULT_AGENT };
+    if (!mapping) return { agentConfigId: DEFAULT_AGENT, model: getDefaultModel(DEFAULT_AGENT) };
     return {
       agentConfigId: mapping.agentConfigId,
       ...(mapping.model ? { model: mapping.model } : {}),

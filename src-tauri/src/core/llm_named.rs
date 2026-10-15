@@ -211,3 +211,7 @@ async fn stream_at(
     )
     .await
 }
+
+#[cfg(test)]
+#[path = "llm_named_sugar_live_tests.rs"]
+mod live_tests;

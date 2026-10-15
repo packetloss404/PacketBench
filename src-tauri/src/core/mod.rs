@@ -6,6 +6,7 @@ pub mod agents_md;
 pub mod aux_context;
 // WI-1 — the auxiliary LLM seam every non-agentic feature routes through.
 pub mod aux_llm;
+pub mod aux_research;
 pub mod boot_check;
 pub mod brand;
 pub mod claude_statusline;

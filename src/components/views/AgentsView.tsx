@@ -4,7 +4,7 @@ import { authProbeProvider, useAgentTaskStore, type AgentCli } from "@/stores/ag
 import { useAgentSettingsStore } from "@/stores/agentSettingsStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { launchConversation } from "@/lib/launchConversation";
-import { API_PROVIDERS } from "@/lib/api-models";
+import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import { getProviderAuthStatus, type ImageAttachment } from "@/lib/tauri";
 import { AgentSidebar } from "@/components/agents/AgentSidebar";
 import { AgentChatPane } from "@/components/agents/AgentChatPane";
@@ -18,9 +18,10 @@ import {
   useWorkspaceAgentsDogfoodStore,
 } from "@/stores/workspaceAgentsDogfoodStore";
 
-// First provider with a ready credential wins the empty-state default.
+// Prefer Sugar when connected; otherwise use the first ready API provider.
 // Probed via `authProbeProvider`, so every entry is an API-key check.
 const AUTO_PICK_ORDER: AgentCli[] = [
+  DEFAULT_API_AGENT,
   "api-claude-oauth",
   "api-claude",
   "api-openai",
@@ -31,6 +32,7 @@ const AUTO_PICK_ORDER: AgentCli[] = [
   ...API_PROVIDERS.map((p) => p.agentCli).filter(
     (id) =>
       ![
+        DEFAULT_API_AGENT,
         "api-claude-oauth",
         "api-claude",
         "api-openai",
@@ -42,8 +44,8 @@ const AUTO_PICK_ORDER: AgentCli[] = [
   ),
 ];
 
-const DEFAULT_AGENT: AgentCli = "api-minimax";
-const DEFAULT_MODEL = "MiniMax-M3";
+const DEFAULT_AGENT = DEFAULT_API_AGENT;
+const DEFAULT_MODEL = getDefaultModel(DEFAULT_API_AGENT);
 
 export interface AgentsViewProps {
   /**
@@ -118,11 +120,9 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
       if (cancelled) return;
       const ready = results.find((result) => result?.status.status === "ready");
       if (!ready) return;
-      const provider = API_PROVIDERS.find((candidate) => candidate.agentCli === ready.agent);
       setSelectedAgent(ready.agent);
-      if (provider?.models[0]?.value) {
-        setSelectedModel(provider.models[0].value);
-      }
+      // Clear a previous provider's model even when this provider has no bundled rows.
+      setSelectedModel(getDefaultModel(ready.agent));
     });
     return () => {
       cancelled = true;

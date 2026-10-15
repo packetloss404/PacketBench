@@ -169,7 +169,7 @@ impl AuxTaskClass {
             AuxTaskClass::SpecToFlight => "Spec → flight plan",
             AuxTaskClass::SpecToTickets => "Spec → tickets",
             AuxTaskClass::IssueInvestigate => "Issue investigation",
-            AuxTaskClass::AgentChat => "Agent chat",
+            AuxTaskClass::AgentChat => "Insights agent chat",
             AuxTaskClass::SideChat => "Side chat",
             AuxTaskClass::GitHubCatchUp => "GitHub catch-up digest",
             AuxTaskClass::GitHubTriage => "GitHub issue triage",
@@ -652,7 +652,7 @@ async fn collect_aux_stream(
 /// Append the turn to `~/.packetbench/usage.jsonl`. Auxiliary spend was invisible
 /// while these features ran on the subscription sidecar (which writes no usage
 /// rows at all); metering them is a side benefit of the move.
-fn record_usage(
+pub(crate) fn record_usage(
     task: AuxTaskClass,
     route: &AuxRoute,
     session_id: &str,
@@ -784,7 +784,7 @@ impl AuxTurnQueues {
     }
 }
 
-fn aux_turn_permits(provider: &str, task: AuxTaskClass) -> Arc<tokio::sync::Semaphore> {
+pub(crate) fn aux_turn_permits(provider: &str, task: AuxTaskClass) -> Arc<tokio::sync::Semaphore> {
     static QUEUES: std::sync::OnceLock<AuxTurnQueues> = std::sync::OnceLock::new();
     QUEUES
         .get_or_init(AuxTurnQueues::default)

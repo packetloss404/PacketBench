@@ -226,6 +226,7 @@ pub fn run() {
         // until the frontend routing store pushes; an empty map means
         // "auto (cheapest configured API key)", never a subscription login.
         .manage(core::aux_llm::AuxRoutingState::default())
+        .manage(std::sync::Arc::new(commands::insights::InsightsChatState::default()))
         // PH6 — registry of live PacketAgent SSE consumer tasks.
         .manage(commands::packet_agent_stream::PacketAgentStreamState::default())
         .setup(|app| {
@@ -401,6 +402,7 @@ pub fn run() {
             // Agent-chat side panel streaming (was Insights; Insights folded into
             // the Agents pane via the Scout profile).
             commands::insights::ask_agent_chat_stream,
+            commands::insights::cancel_agent_chat_stream,
             // Flight chat
             // Side chat (ephemeral context-aware helper)
             commands::side_chat::ask_side_chat_stream,

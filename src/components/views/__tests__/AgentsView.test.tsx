@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentCli } from "@/stores/agentTaskStore";
 
@@ -68,10 +68,13 @@ vi.mock("@/components/agents/composer/Composer", () => ({
 }));
 
 import { AgentsView } from "@/components/views/AgentsView";
+import { getProviderAuthStatus } from "@/lib/tauri";
+import { getDefaultModel } from "@/lib/api-models";
 
 describe("AgentsView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getProviderAuthStatus).mockResolvedValue({ status: "login_required", hint: "" });
     agentState.selectedRepo = "D:\\projects\\PacketBench";
     agentState.selectedConversationId = null;
   });
@@ -96,6 +99,43 @@ describe("AgentsView", () => {
     });
     expect(params).not.toHaveProperty("onLaunched");
     expect(params.onCreated).toEqual(expect.any(Function));
+  });
+
+  it("prefers Sugar over other connected providers and launches Conduit", async () => {
+    vi.mocked(getProviderAuthStatus).mockResolvedValue({ status: "ready", hint: "" });
+    await act(async () => {
+      render(<AgentsView />);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Launch agent" }));
+    expect(launchConversation.mock.calls[0][0]).toMatchObject({
+      selectedAgent: "api-sugar",
+      selectedModel: "sugar/conduit",
+    });
+  });
+
+  it("falls back to another connected provider with that provider's model", async () => {
+    vi.mocked(getProviderAuthStatus).mockImplementation(async (provider) => ({
+      status: provider === "openai" ? "ready" : "missing_key",
+      hint: "",
+    }));
+    await act(async () => {
+      render(<AgentsView />);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Launch agent" }));
+    expect(launchConversation.mock.lastCall?.[0]).toMatchObject({
+      selectedAgent: "api-openai",
+      selectedModel: getDefaultModel("api-openai"),
+    });
+  });
+
+  it("respects an explicitly pinned provider and model", () => {
+    render(<AgentsView pinnedAgent="api-ollama" pinnedModel="qwen3.5:4b" />);
+    fireEvent.click(screen.getByRole("button", { name: "Launch agent" }));
+    expect(launchConversation.mock.calls[0][0]).toMatchObject({
+      selectedAgent: "api-ollama",
+      selectedModel: "qwen3.5:4b",
+    });
+    expect(getProviderAuthStatus).not.toHaveBeenCalled();
   });
 
   it("renders the selected conversation and inspector in the main window", () => {

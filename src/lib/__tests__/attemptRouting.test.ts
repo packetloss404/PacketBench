@@ -62,7 +62,7 @@ describe("attemptRouting", () => {
     const target = resolveLocalAttemptTarget("implementation", "/repo");
 
     expect(target.agentConfigId).toBe(DEFAULT_ATTEMPT_AGENT);
-    expect(target.provider).toBe("anthropic");
+    expect(target.provider).toBe("sugar");
     // A model pinned for a different agent must not leak onto the fallback.
     expect(target.model).toBe(getDefaultModel(DEFAULT_ATTEMPT_AGENT));
     expect(target.model.length).toBeGreaterThan(0);
@@ -84,9 +84,18 @@ describe("attemptRouting", () => {
     expect(target.baseBranch).toBe("develop");
   });
 
-  it("rejects a named provider route without a selected model before building a target", () => {
-    expect(() => localAttemptTargetFromRoute({agentConfigId:"api-sugar"}, "/repo"))
-      .toThrow("Choose a model");
+  it("uses the stable Conduit alias for a Sugar route without a model pin", () => {
+    expect(localAttemptTargetFromRoute({ agentConfigId: "api-sugar" }, "/repo")).toMatchObject({
+      agentConfigId: "api-sugar",
+      provider: "sugar",
+      model: "sugar/conduit",
+    });
+  });
+
+  it("still requires a model for named providers without a stable routing alias", () => {
+    expect(() => localAttemptTargetFromRoute({ agentConfigId: "api-cline-pass" }, "/repo")).toThrow(
+      "Choose a model",
+    );
   });
 
   it("always produces a non-empty model", () => {
@@ -124,7 +133,6 @@ const EXPECTED_PROVIDER_IDS: ReadonlyArray<[AgentCli, string]> = [
   ["api-ollama-cloud", "ollama-cloud"],
   ["api-google", "google"],
   ["api-xai", "xai"],
-
 ];
 
 describe("attemptProviderFor", () => {

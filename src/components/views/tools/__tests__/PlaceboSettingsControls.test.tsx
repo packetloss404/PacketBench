@@ -30,7 +30,7 @@ import { ProviderRoutingCard } from "@/components/views/tools/ProviderRoutingCar
 import { useMcpProviderStore } from "@/stores/mcpProviderStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useAgentSettingsStore } from "@/stores/agentSettingsStore";
-import { AUX_TASK_CLASS_CAVEATS, ALL_AUX_TASK_CLASSES } from "@/types/routing";
+import { useRoutingStore } from "@/stores/routingStore";
 
 describe("Settings runtime honesty", () => {
   beforeEach(() => {
@@ -86,47 +86,16 @@ describe("Settings runtime honesty", () => {
     expect(screen.queryByText(/Not applied to OpenCode and PacketCode/)).not.toBeInTheDocument();
   });
 
-  /**
-   * FAULT: three rows of the auxiliary-routing table configured nothing.
-   * `issue-investigate` and `agent-chat` still shell out to the local Claude
-   * CLI and never consult the route at all — which also made the section's
-   * blanket "these never use a subscription login" false.
-   * `commands/aux_routing.rs::unrouted_aux_surfaces_stay_declared` fails if
-   * either is migrated without this list being trimmed.
-   *
-   * `memory-scan` was the third, and is no longer flagged: the Memory pane's
-   * "Scan codebase" button invokes `scan_codebase_memory`, so the row now
-   * configures a feature the user can actually run. A caveat left in place
-   * here would be the same lie in the opposite direction.
-   */
-  it("flags every auxiliary routing row that cannot take effect yet", () => {
-    expect(Object.keys(AUX_TASK_CLASS_CAVEATS).sort()).toEqual([
-      "agent-chat",
-      "issue-investigate",
-    ]);
-    // Every flagged class must still be a real row, or the note renders nowhere.
-    for (const taskClass of Object.keys(AUX_TASK_CLASS_CAVEATS)) {
-      expect(ALL_AUX_TASK_CLASSES).toContain(taskClass);
-    }
-    // The two CLI-backed ones must say why, since the section header's
-    // no-subscription claim does not hold for them.
-    expect(AUX_TASK_CLASS_CAVEATS["agent-chat"]).toMatch(/Claude CLI/);
-    expect(AUX_TASK_CLASS_CAVEATS["issue-investigate"]).toMatch(/Claude CLI/);
-    // The reachable row carries no caveat at all.
-    expect(AUX_TASK_CLASS_CAVEATS["memory-scan"]).toBeUndefined();
-  });
-
-  it("renders the unrouted flags next to the rows they belong to", async () => {
+  it("offers working provider/model controls for both project research features", async () => {
     render(<ProviderRoutingCard />);
-    // The pickers still work — the row is honest, not disabled.
-    expect(await screen.findByLabelText("Agent chat provider")).toBeInTheDocument();
-    expect(screen.getAllByText(/still runs the local Claude CLI/)).toHaveLength(2);
-    expect(screen.queryByText(/no PacketBench surface invokes a codebase scan/)).toBeNull();
-    // …and the section header no longer makes the blanket claim the two
-    // CLI-backed rows falsify.
-    expect(
-      screen.getByText(/No task routed through this table uses a Claude or ChatGPT subscription/),
-    ).toBeInTheDocument();
+    expect(await screen.findByLabelText("Insights agent chat provider")).toBeInTheDocument();
+    expect(screen.getByLabelText("Issue investigation provider")).toBeInTheDocument();
+    expect(screen.queryByText(/still runs the local Claude CLI/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Insights chat" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Insights agent chat provider"), { target: { value: "anthropic" } });
+    expect(useRoutingStore.getState().resolveForAuxTask("agent-chat").provider).toBe("anthropic");
+    fireEvent.change(screen.getByLabelText("Issue investigation provider"), { target: { value: "anthropic" } });
+    expect(useRoutingStore.getState().resolveForAuxTask("issue-investigate").provider).toBe("anthropic");
   });
 
   /**

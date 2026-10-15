@@ -1,15 +1,122 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-10-06 (0.14.9 built, installed and launched)
+Last reconciled: 2026-10-15 (Sugar defaults, Insights chat and issue investigation; local 0.14.9 rebuild installed)
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
 `docs/handoff.md` and `docs/audit-2026-09-04.md` describe the September audit;
 the current contracts below supersede their older protocol and queue details.
 
+## Sugar default activation — October 15, 2026
+
+The owner authorized testing Sugar and making it the default if it worked.
+The existing OpenCode Sugar API key was reused and saved in PacketBench's OS
+credential store. No raw key was printed or written to an ordinary file, and
+no Sugar server, upstream credentials, account limits or billing settings were changed.
+
+Sugar passed authenticated discovery (six models), streaming text, follow-up
+memory, a structured tool call, a synthetic local-file read and tool-result
+follow-up through PacketBench's actual native `NamedProvider` / Chat Completions
+adapter. The guarded live test completed in 12.58 seconds. It is ignored by
+normal test runs and requires `PACKETBENCH_LIVE_SUGAR_TEST=1` plus an explicit
+`cargo test --lib sugar_live_packetbench_acceptance -- --ignored --nocapture`.
+
+The local rebuilt 0.14.9 is installed with executable SHA-256
+`186f4ada0d437750b92f04d1d027e4a805de643f60ea0e4562f983c24a315890`. This is a local rebuild of the working tree, not a new tagged
+or published release. This source state is saved as a local Git checkpoint;
+no new tag or public release was created.
+
+- New API chats prefer Sugar when connected, using its stable `sugar/conduit`
+  alias. Other connected providers remain available. Provider-scoped launches
+  and existing conversations retain their explicit choices.
+- New Flight targets, workflow-role defaults and automatic API executor
+  fallback use Sugar/Conduit. Saved workflow pins remain authoritative.
+- This user's seven workflow roles and all fifteen auxiliary task
+  routes are saved on Sugar/Conduit. Auxiliary Auto still means cheapest
+  configured; these are explicit owner-authorized local pins.
+- `issue-investigate` and Insights `agent-chat` now resolve their own auxiliary
+  route and use native read-only project research. Settings → Automation →
+  Task Role Defaults → Auxiliary AI tasks controls both provider and model.
+  The Insights row offers **Open Insights chat** (the former UI had no caller).
+  Its scoped stream supports history, Stop, and cancellation on close; the
+  modal explicitly clears its chat when closed. Existing terminal CLI choices
+  and the independent cooperative reviewer/scout policy remain separate.
+
+Validation for the research follow-up: 53 unique focused frontend/routing
+checks, 63 auxiliary/Insights Rust unit tests, TypeScript, changed-file ESLint,
+production frontend build, live native Sugar research acceptance (33.61s), and
+all 11 prebundle checks passed. The earlier provider-only live acceptance also
+passed. Installer payload and installed executable hashes match.
+The installed GUI also passed: a fresh launch selected Sugar/Conduit without
+manual provider selection, `read_file` read `sugar-provider-check.txt` and the
+model returned its exact marker, then answered the follow-up with `MARBLE`.
+Saved conversation: `conv_1792103492573_024j0pqz`. The unrelated firewall prompt
+was cleared by the owner. The broader Workspace acceptance matrix remains open.
+
+Sanitized evidence: `D:/projects/context/output/packetbench-check-2026-10-15/sugar-native.json`, `sugar-gui.json`,
+`sugar-installation.json` and `sugar.json`. The prior installer is retained there as
+`PacketBench-before-sugar-setup.exe`; prior routing entries are in
+`settings-before-sugar.json`.
+
+## Project research migration — October 15, 2026
+
+`core::aux_research` supplies the two routed project-aware features with only
+`read_file`, `list_directory`, and literal `search_files`. It enforces project
+root confinement, rejects traversal, linked/reparse, hidden, generated and
+sensitive-name paths, and bounds reads, results, transcript size, steps and
+wall time (8 rounds, 24 calls, 3 minutes). It replays opaque provider reasoning,
+requires stream completion, meters each completed model turn, shares the
+auxiliary provider queue, and aborts HTTP tasks on timeout/cancellation.
+
+Live Sugar tests read a synthetic marker, preserved chat follow-up memory,
+and diagnosed the `items.length` bug in a sample cart function. The real
+`research_issue` helper was exercised; no GitHub issue was posted. PacketBench's
+GitHub repository contained no existing issues for an end-to-end remote-issue
+smoke test. The installed Insights modal also returned the file marker and
+remembered MARBLE; both saved routes survived the app reinstall.
+
+Current sanitized evidence: `sugar-research.json`, `sugar-research-settings.json`
+and `sugar-research-installation.json` in the evidence directory above. The
+immediately preceding installer is `PacketBench-before-insights-sugar-setup.exe`.
+Older provider-only acceptance records remain historical.
+
+## Initial provider checks — October 15, 2026
+
+The following baseline predates the Sugar activation above.
+
+Installed Windows 0.14.9 matches the October 6 executable hash
+`6cad2558305b41457dc22c50230e90f24a19872b01af57f42bc2e36165cf9db0`.
+The app was not running. These checks used the saved provider configuration
+and credentials directly, plus the installed Node sidecar; native GUI/Workspace
+acceptance and paid SDK inference are not implied.
+
+- Local Ollama `qwen3.5:4b` passed a response, follow-up memory, structured
+  function call, tool-result follow-up and NDJSON streaming. A separate stream
+  using the native request shape, with no thinking override, completed normally
+  with 247 output tokens. Initial cold loading exceeded a 90-second test limit;
+  a later run with a longer loading allowance passed. No persistent runtime
+  options were changed.
+- `qwen2.5-coder:7b` passed text and follow-up memory. Its one tool-call attempt
+  did not return the expected structured call. Ollama reports tool capability,
+  so this is not classified as an unsupported model or an app regression.
+- MiniMax is the only saved cloud key. Both `MiniMax-M2` and `MiniMax-M3`
+  returned HTTP 402, `insufficient balance (1008)`. This supersedes the older
+  429/quota observation. No top-up, credential replacement or retry loop ran.
+- OpenAI and the other cloud API rows have no saved keys in this installation.
+  Paid Claude testing remains deferred. Codex CLI 0.160.1 reports logged in
+  using ChatGPT; that status check did not exercise CLI inference.
+- The installed protocol-12 sidecar passed two isolated echo turns. No API
+  provider or global MCP server was started by that echo test.
+
+No persisted task/aux routing overrides were found. Shipped task routing still
+uses `claude-code`; automatic auxiliary routing selects the sole keyed provider,
+MiniMax. Choosing an active CLI default and a working auxiliary route is the
+next configuration decision. No routing, keyring or project state was changed.
+Sanitized evidence: `D:/projects/context/output/packetbench-check-2026-10-15/summary.json`.
+
 ## Checkout and artifacts
 
-- **Resume here:** 0.14.9 is built, installed and launched. Source/tag target is
+- **Published baseline:** the original 0.14.9 was built and installed October 6. Source/tag target is
   `83bd31251ef3069c283b310b1f809f393715774f`; annotated tag `v0.14.9` identifies
   the exact build source. Main also contains the subsequent evidence record.
   See `dev/provider-release-0.14.9.md` for peer review, hashes and installation.

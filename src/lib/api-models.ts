@@ -3,6 +3,11 @@ import type { AgentCli } from "@/stores/agentTaskStore";
 import { getModelContextWindow } from "@/lib/modelContext";
 import { getModelRates } from "@/lib/conversationCost";
 
+// Sugar owns specialist routing behind this stable, documented alias. Model
+// pickers still enumerate the live catalog; this does not bundle specialist IDs.
+export const DEFAULT_API_AGENT: AgentCli = "api-sugar";
+export const DEFAULT_API_MODEL = "sugar/conduit";
+
 export interface ApiModel {
   label: string;
   value: string;
@@ -250,7 +255,7 @@ export function getProviderForAgent(agent: AgentCli): ApiProviderInfo | undefine
 }
 
 /**
- * Get the default model for a provider — the FIRST BUNDLED row, or `""`.
+ * Get Sugar's stable Conduit alias, otherwise the first bundled row or `""`.
  *
  * The empty string is a silent failure everywhere: the request goes out naming
  * no model and comes back a 400. Rows whose models arrive live (`api-custom`,
@@ -264,6 +269,7 @@ export function getProviderForAgent(agent: AgentCli): ApiProviderInfo | undefine
  * `rows[0]` instead.
  */
 export function getDefaultModel(agent: AgentCli): string {
+  if (agent === DEFAULT_API_AGENT) return DEFAULT_API_MODEL;
   const provider = getProviderForAgent(agent);
   return provider?.models[0]?.value ?? "";
 }

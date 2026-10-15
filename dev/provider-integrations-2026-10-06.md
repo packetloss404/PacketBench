@@ -1,5 +1,15 @@
 # Provider integrations — October 6, 2026
 
+October 15 follow-up: Sugar passed real account discovery, streaming, memory
+and tool/result acceptance through the native adapter. Sugar/Conduit is now
+the default in the local rebuilt application; the stable routing alias is a
+default choice, while specialist catalogs remain live. See
+[the current activation record](../HANDOFF.md#sugar-default-activation--october-15-2026).
+Insights chat and issue investigation also passed live Sugar read-only research
+acceptance and now honor their Settings provider/model pins. The installed
+Insights chat UI passed a file read and follow-up. The October 6 fixture-only
+evidence below remains historical.
+
 PacketBench 0.14.9 adds Sugar, ClinePass, OpenCode Go, Ollama Cloud, Google
 Gemini and xAI. It is now included in the updated desktop executable. Peer
 review, release source and installation evidence are recorded in

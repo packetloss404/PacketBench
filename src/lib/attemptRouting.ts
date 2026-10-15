@@ -20,7 +20,7 @@
  * ChatGPT-subscription Codex row was removed.
  */
 
-import { API_PROVIDERS, getDefaultModel } from "@/lib/api-models";
+import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import { useRoutingStore } from "@/stores/routingStore";
 import { apiAgentProvider, canonicalizeAgentCli, type AgentCli } from "@/stores/agentTaskStore";
 import type { AttemptTargetSpec } from "@/lib/tauri";
@@ -45,7 +45,7 @@ export const SUBSCRIPTION_OAUTH_AGENTS: ReadonlySet<string> = new Set(["api-open
  * `defaultAgent`, so an auto-launched attempt looks exactly like the one the
  * user would get by opening the launch modal and pressing go.
  */
-export const DEFAULT_ATTEMPT_AGENT: AgentCli = "api-claude";
+export const DEFAULT_ATTEMPT_AGENT: AgentCli = DEFAULT_API_AGENT;
 
 /** Flight attempts run through `start_api_agent_session`, so the executor must
  * be an API agent — a PTY CLI agent id (`claude-code`, `codex`, …) cannot back

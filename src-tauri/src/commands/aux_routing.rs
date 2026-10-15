@@ -127,6 +127,7 @@ mod tests {
         ("commands/issues.rs", include_str!("issues.rs")),
         ("commands/code_quality.rs", include_str!("code_quality.rs")),
         ("commands/github.rs", include_str!("github.rs")),
+        ("commands/insights.rs", include_str!("insights.rs")),
     ];
 
     /// §6 of `dev/oauth-removal-plan.md` asks for this as a standing check:
@@ -154,10 +155,8 @@ mod tests {
     ///
     /// 3C-3 memory half (done): `scan_codebase_memory` now assembles its
     /// context in `core::aux_context` and runs one seam turn, so **no**
-    /// `run_claude` caller survives in memory.rs. `run_claude` itself stays —
-    /// `github.rs::github_investigate_issue` and
-    /// `insights.rs::ask_agent_chat_stream` still need the bounded read-only
-    /// tool loop that is the other half of 3C-3.
+    /// `run_claude` caller survives in memory.rs. Project-aware chat and issue
+    /// investigation use the bounded `core::aux_research` read-only loop.
     #[test]
     fn migrated_surfaces_stay_on_the_aux_seam() {
         assert!(
@@ -198,39 +197,18 @@ mod tests {
         assert!(rows.iter().all(|r| r.is_err()));
     }
 
-    /// The three task classes the Settings card flags as "not routed yet"
-    /// must stay the three that really are unrouted.
-    ///
-    /// `src/types/routing.ts::AUX_TASK_CLASS_CAVEATS` tells the user that
-    /// `issue-investigate` and `agent-chat` still shell out to the local
-    /// Claude CLI — so the pin in that table does not apply, and the task
-    /// runs on whatever login the CLI holds, possibly a subscription. When
-    /// either moves onto the seam, delete its caveat there; otherwise
-    /// Settings swaps over-claiming for under-claiming.
+    /// Both project-aware auxiliary features must honour Settings and stay off CLI credentials.
     #[test]
-    fn unrouted_aux_surfaces_stay_declared() {
-        let github = include_str!("github.rs");
-        let insights = include_str!("insights.rs");
-        assert!(
-            github.contains("run_claude("),
-            "github_investigate_issue moved off the Claude CLI - remove the \
-             issue-investigate entry from AUX_TASK_CLASS_CAVEATS in src/types/routing.ts"
-        );
-        assert!(
-            insights.contains("claude_command()"),
-            "ask_agent_chat_stream moved off the Claude CLI - remove the \
-             agent-chat entry from AUX_TASK_CLASS_CAVEATS in src/types/routing.ts"
-        );
-        // Neither surface resolves an auxiliary route today. The moment one
-        // does, its Settings row stops lying and the caveat must go.
-        assert!(
-            !github.contains("AuxTaskClass::IssueInvestigate"),
-            "github.rs now resolves IssueInvestigate - drop its AUX_TASK_CLASS_CAVEATS entry"
-        );
-        assert!(
-            !insights.contains("AuxTaskClass::AgentChat"),
-            "insights.rs now resolves AgentChat - drop its AUX_TASK_CLASS_CAVEATS entry"
-        );
+    fn project_research_surfaces_honour_routing() {
+        for (source, task) in [
+            (include_str!("github.rs"), "AuxTaskClass::IssueInvestigate"),
+            (include_str!("insights.rs"), "AuxTaskClass::AgentChat"),
+        ] {
+            assert!(source.contains(task));
+            assert!(!source.contains("run_claude("));
+            assert!(!source.contains("claude_command()"));
+        }
+        assert!(!include_str!("../../../src/types/routing.ts").contains("Not applied yet"));
     }
 
     #[test]

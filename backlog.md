@@ -1,18 +1,40 @@
 # PacketBench Backlog
 
-## Provider acceptance — October 6
+## Provider acceptance — October 15
 
+Live evidence and installation scope are in [the current handoff](HANDOFF.md#sugar-default-activation--october-15-2026).
+The local Sugar-default rebuild of 0.14.9 is installed. Sugar passed six-model
+discovery, streaming, follow-up memory and a synthetic local-file tool/result
+exchange through the actual native adapter. Ollama `qwen3.5:4b` passed its
+earlier provider checks; the packaged helper passed two protocol-12 echo turns.
+Full native Workspace acceptance remains open.
+
+- [x] Connect Sugar, test the real native adapter and make Sugar/Conduit the
+  default for new API chats, Flight targets and workflow roles. Preserve
+  existing conversation/provider pins. Installed executable hash verified.
+- [x] Select a working auxiliary route: all fifteen task classes are
+  explicitly pinned to Sugar/Conduit for this user.
+- [x] Migrate `issue-investigate` and Insights `agent-chat` onto the selected
+  auxiliary provider with bounded read-only file tools. Both are pinned to
+  Sugar/Conduit locally and passed live Sugar acceptance. Insights chat is
+  reachable from Settings; the installed UI and saved routes were verified.
+- [x] Verify the installed GUI selects Sugar/Conduit by default, runs an actual
+  `read_file` call and correctly answers a follow-up memory question.
+- [ ] Complete the broader native Workspace acceptance matrix. This focused
+  Sugar conversation does not establish every Workspace workflow.
+- [ ] Resolve direct MiniMax account/plan access if that provider is needed.
+  Both M2 and M3 returned HTTP 402, insufficient balance (1008), on October 15.
+  Sugar now supplies the selected API/background routes, so MiniMax is no
+  longer the default path. The older HTTP 429 observation is historical.
 - [ ] Configure real account keys and run a short tool call plus follow-up turn
-  through Sugar, ClinePass, OpenCode Go (each protocol family), Ollama Cloud,
-  Google and xAI. Source support and fixture coverage are described in
+  through ClinePass, OpenCode Go (each protocol family), Ollama Cloud, Google
+  and xAI. Source support and fixture coverage are described in
   [the integration report](dev/provider-integrations-2026-10-06.md).
 - [ ] Refresh authenticated Anthropic/OpenAI/Google/xAI catalogs in the native
   app and verify the chosen account's model access. Public plan inventory does
-  not prove subscription entitlement. Paid Claude testing remains deferred by
-  the owner because of subscription cost.
+  not prove subscription entitlement. Paid Claude testing remains deferred.
 
-
-Last reconciled: 2026-10-06 (0.14.8 pre-tag review; dogfooding incomplete)
+Provider status reconciled: 2026-10-15; remaining backlog baseline: 2026-10-06 (dogfooding incomplete)
 
 This is the single task register for work that has not shipped or has not yet
 earned its required real/package proof. Completed implementation history belongs
@@ -26,7 +48,7 @@ Priority: **P1** = release blocker, real bug, or major user-facing gap;
 
 **Current direction, 2026-09-24:** no feature expansion. Stabilize and finish
 the existing product paths identified below before resuming expansion plans.
-The owner has pinned installed 0.14.8 to the desktop and plans to dogfood it.
+The owner pinned 0.14.8 to the desktop; 0.14.9 was installed October 6 and its executable hash was reverified October 15. Workspace dogfooding remains incomplete.
 On October 6 the owner confirmed they have not dogfooded enough yet. Resume
 with reported defects, prioritizing Workspaces; no feature expansion or
 deployment is requested by the pre-tag review.
@@ -608,22 +630,15 @@ collapse to ACP `read-only` (`acp/routing.rs:70`, tests at `:535,:539`). The
 Deliberate leftovers from the LM / PacketAgent-handoff implementation wave
 (branches `feat/lm-and-packetagent-handoff` in this repo and
 `feat/packet-product-handoff-surface` in PacketAgent). Re-verified 2026-08-28:
-the Claude CLI shell-out now has exactly two live callers,
-`commands/github.rs` (`run_claude`) and `commands/insights.rs`
-(`claude_command`):
+the two remaining Claude CLI auxiliary callers were migrated on 2026-10-15.
 
-- **P2 - LM 3C-3 tool-loop half.** `github_investigate_issue` and
-  `ask_agent_chat_stream` remain on the Claude CLI
-  (`run_claude`/`claude_command`) because they depend on its file tools: unlike
-  the memory scan, they cannot know up front which files matter, so they need a
-  bounded read-only tool loop parameterized on an `AuxRoute`.
-  `core::tool_subagent::run_agent_loop` is most of that loop already (8
-  iterations, `read_only_tool_definitions`, workspace-confined
-  `tool_runtime::execute_tool`); what it lacks is `AuxRoute` parameterization
-  (it derives its provider from the parent session, with a hardcoded Anthropic
-  fallback) plus byte and wall-clock budgets on top of the iteration cap.
-  `run_claude` cannot be deleted until then. See
-  [`dev/local-model-routing.md`](./dev/local-model-routing.md).
+- **DONE 2026-10-15 - LM 3C-3 tool-loop half.** `github_investigate_issue` and
+  `ask_agent_chat_stream` resolve an `AuxRoute` and use `core::aux_research`:
+  bounded read-only local file tools, scoped chat streaming/cancellation,
+  reasoning replay and usage accounting. Both passed live Sugar/Conduit tests;
+  Settings controls both routes and exposes Insights chat. No auxiliary command
+  calls `run_claude` or `claude_command`. Full remote GitHub issue retrieval was
+  not part of the synthetic live acceptance (the repo has no issues).
 - **P2 - LM local-opt-in surface.** The "route aux tasks locally" banner and
   one-click pin are gated on a green `cargo test --test ollama_e2e -- --ignored`
   run against the live daemon (test ships ignored-by-default).
@@ -1146,9 +1161,10 @@ from the original report, which still lists them as findings.
   `api-custom` row (`src/lib/api-models.ts:189`) backed by
   `src-tauri/src/core/llm_custom_compat.rs`, and documented in `CLAUDE.md`'s
   nine-row provider table.
-- **P2 - Finish auxiliary-task routing.** Move remaining Memory, Insights,
-  Spec, and GitHub auxiliary calls onto `core/aux_llm.rs`; add task-class
-  provider/model settings without reviving the removed Cost Dashboard.
+- **DONE 2026-10-15 - Finish auxiliary-task routing.** All fifteen task classes
+  now honor provider/model settings. Insights chat and issue investigation use
+  the shared bounded read-only research loop; the remaining tasks use auxiliary
+  one-shot/streaming calls. No Cost Dashboard was revived.
 - **P2 - Retired-conversation provider switch.** Offer an explicit, logged
   user action to continue a conversation that references the retired
   `api-openai-codex` chat-provider id. Never rewrite automatically.

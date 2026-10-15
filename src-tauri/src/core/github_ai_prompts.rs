@@ -27,11 +27,8 @@
 /// v0.4 through v0.7. Moved here in v0.8-E so the new PR-description and
 /// PR-review prompts can share the same home and review pattern.
 ///
-/// The returned string is a single user-turn prompt; the legacy
-/// `github_investigate_issue` command feeds it into `claude::binary::run_claude`
-/// which provides its own implicit system prompt. Future migrations of this
-/// command onto the sidecar one-shot route should split this into a proper
-/// system / user pair.
+/// This is user-turn source material. The routed read-only research loop
+/// supplies its own system instructions and bounded local file tools.
 pub fn investigate_issue_prompt(title: &str, body: &str) -> String {
     format!(
         r#"Investigate this GitHub issue in the context of the current codebase.

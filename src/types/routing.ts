@@ -98,33 +98,8 @@ export const AUX_TASK_CLASS_LABELS: Record<AuxTaskClass, { label: string; descri
     label: "Flight retrospective",
     description: "Completed-flight lessons",
   },
-  "agent-chat": { label: "Agent chat", description: "Insights agent chat (file tools)" },
+  "agent-chat": { label: "Insights agent chat", description: "Insights agent chat (file tools)" },
   "side-chat": { label: "Side chat", description: "Floating side-chat overlay" },
-};
-
-/**
- * Task classes whose Settings row cannot take effect today, and why.
- *
- * FAULT: three of the sixteen rows were configuring nothing, with no way for a
- * user to tell. Two of them additionally falsified the section's blanket claim
- * that auxiliary tasks never touch a subscription login: they still shell out
- * to the local `claude` binary, which authenticates however that CLI is logged
- * in. The rows are KEPT rather than deleted — the pins are already persisted,
- * the backend `AuxTaskClass` arms still exist, and `core::aux_llm` resolves
- * them the moment a caller arrives — but each says what it does today.
- *
- * `memory-scan` was the third. Its caveat is gone because the Memory pane's
- * "Scan codebase" button now invokes `scan_codebase_memory`, so the pin it
- * always honoured finally has a caller.
- *
- * Drift guard: `commands/aux_routing.rs::unrouted_aux_surfaces_stay_declared`
- * fails when one of these surfaces moves onto the seam, pointing back here.
- */
-export const AUX_TASK_CLASS_CAVEATS: Partial<Record<AuxTaskClass, string>> = {
-  "issue-investigate":
-    "Not applied yet — still runs the local Claude CLI, so it uses whatever login that CLI has, including a subscription.",
-  "agent-chat":
-    "Not applied yet — still runs the local Claude CLI, so it uses whatever login that CLI has, including a subscription.",
 };
 
 /**

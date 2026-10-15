@@ -2498,15 +2498,14 @@ export async function issuesExtractFromSpec(
 export async function askAgentChatStream(
   projectPath: string,
   messages: { role: string; content: string }[],
-  sessionContext?: string,
-  requestId?: string,
+  sessionContext: string | undefined,
+  requestId: string,
 ): Promise<void> {
-  return invoke("ask_agent_chat_stream", {
-    projectPath,
-    messages,
-    sessionContext: sessionContext || null,
-    requestId: requestId || null,
-  });
+  return invoke("ask_agent_chat_stream", { projectPath, messages, sessionContext: sessionContext || null, requestId });
+}
+
+export async function cancelAgentChatStream(requestId: string): Promise<boolean> {
+  return invoke("cancel_agent_chat_stream", { requestId });
 }
 
 // GitHub integration

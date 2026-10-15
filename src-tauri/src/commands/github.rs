@@ -2064,12 +2064,14 @@ pub async fn github_list_repos_page(
 #[tauri::command]
 pub async fn github_investigate_issue(
     auth: State<'_, GitHubAuthState>,
+    routing: State<'_, crate::core::aux_llm::AuxRoutingState>,
     project_path: String,
     owner: String,
     repo: String,
     issue_number: u32,
 ) -> Result<String, String> {
     super::validate_project_path(&project_path)?;
+    let route = routing.resolve(crate::core::aux_llm::AuxTaskClass::IssueInvestigate)?;
     require_capability(auth.inner(), HostCapability::AiAssist).await?;
     validate_github_name(&owner, "owner")?;
     validate_github_name(&repo, "repo")?;
@@ -2085,12 +2087,35 @@ pub async fn github_investigate_issue(
     let title = issue["title"].as_str().unwrap_or("Unknown");
     let body = issue["body"].as_str().unwrap_or("No description");
 
-    // v0.8-E: prompt construction moved to `core::github_ai_prompts` so all
-    // GitHub AI features share one home. Behaviour here is identical to the
-    // pre-v0.8-E inline format — same string, same `run_claude` invocation.
-    let prompt = crate::core::github_ai_prompts::investigate_issue_prompt(title, body);
+    research_issue(route, project_path, title, body).await
+}
 
-    crate::claude::binary::run_claude(&prompt, Some(&project_path)).await
+pub(crate) async fn research_issue(
+    route: crate::core::aux_llm::AuxRoute,
+    project_path: String,
+    title: &str,
+    body: &str,
+) -> Result<String, String> {
+    let prompt = crate::core::github_ai_prompts::investigate_issue_prompt(title, body);
+    super::validate_input_size(
+        &prompt,
+        super::MAX_INPUT_SIZE.min(128 * 1024),
+        "Issue investigation",
+    )?;
+    crate::core::aux_research::run_readonly_research(
+        crate::core::aux_research::ResearchRequest {
+            task: crate::core::aux_llm::AuxTaskClass::IssueInvestigate,
+            route,
+            project_path,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            messages: vec![crate::core::llm_types::ChatMessage {
+                role: crate::core::llm_types::ChatRole::User,
+                content: crate::core::llm_types::MessageContent::text(prompt),
+            }],
+        },
+        |_| {},
+    )
+    .await
 }
 
 // === v0.8-E: AI PR description + AI pre-flight code review =================

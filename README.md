@@ -6,16 +6,20 @@
 
 PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, issue tracking, memory, and workspace management into a single native environment. It is built for running real development workflows across multiple agent CLIs without leaving the app.
 
-The latest recorded local build and installed version is **0.14.8**, with unsigned Windows NSIS/MSI
-installers and source/artifact hashes in
-the [September 24 release record](./dev/existing-code-stabilization-2026-09-24.md#windows-build-0148).
-The NSIS upgrade, 8,683 installed-file hashes, bundled sidecar checks and normal
-startup passed. The owner has pinned it to the desktop and plans to dogfood
-Workspaces; no dogfood results have been reported yet. Remaining acceptance
-gaps are tracked in [`backlog.md`](./backlog.md). Build checks,
-installed-app checks and paid-provider acceptance have separate evidence—passing
-one does not establish the others. Use [`HANDOFF.md`](./HANDOFF.md) for the
-recorded installed version and [`CHANGELOG.md`](./CHANGELOG.md) for build history.
+The local Windows **0.14.9** rebuild installed October 15 uses **Sugar** and
+its `sugar/conduit` routing alias as the default for new API chats and workflow
+executors. Sugar is preferred when connected; other providers stay selectable.
+Its authenticated live catalog, streaming replies, follow-up memory and tool
+round-trip passed through PacketBench's native adapter. The local auxiliary
+routes are also pinned to Sugar, including Insights chat and issue investigation.
+Both retain read-only project file tools and configurable provider/model choices
+in Settings → Automation → Task Role Defaults. Source, installation hashes and acceptance
+scope are recorded in [`HANDOFF.md`](./HANDOFF.md#sugar-default-activation--october-15-2026).
+
+Local Ollama also passed provider checks. Direct MiniMax remains blocked by an
+account-balance response. The other cloud providers still need account-level
+acceptance. Full native Workspace dogfooding remains open in [`backlog.md`](./backlog.md).
+[`CHANGELOG.md`](./CHANGELOG.md) records published build history.
 
 ![PacketBench Workspace running Claude Code and PacketCode side by side](./docs/screenshots/workspace-claude-packetcode.png)
 
@@ -399,7 +403,7 @@ The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that 
 - Issue browsing with search, labels, and import-to-board
 - Pull request browsing with diff viewer, inline review comments, reviews, merge, and draft/label/reviewer actions
 - Releases view and a notifications inbox (with background polling for a live badge)
-- AI investigation of issues via Claude (GitHub only)
+- AI investigation of issues through the selected API provider with read-only project file tools (GitHub only)
 
 ### Budget guardrails & History
 
