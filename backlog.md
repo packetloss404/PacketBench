@@ -1,5 +1,91 @@
 # PacketBench Backlog
 
+## Agent harness and experience review — October 19
+
+The [fresh review](dev/agent-harness-and-experience-review-2026-10-19.md) is
+research/source evidence, with one unresolved native observation. These are
+proposed follow-ups, not authorized implementation or completed app changes.
+Finding IDs below resolve to detailed source references and acceptance criteria.
+The subsequent [future-team implementation handoff](dev/agent-experience/README.md)
+adds researched contracts, packets, dependencies/file leases, migrations,
+fault tests and dispatch prompts. It is documentation only; all implementation
+statuses below remain open. Composer research is in a separate thread and
+excluded from that team. H1 evaluation applies to the existing production runtime.
+
+- [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
+      rendered, automated Agents navigation timed out, the next capture showed
+      Not Responding and process checks agreed. Separate app/main-thread and
+      accessibility/automation causes; preserve work/evidence and verify ordinary
+      navigation, restart and recovery before closing. Earlier Flight smoke
+      does not establish current whole-app responsiveness.
+- [x] **P1 — Fail closed on worktree provisioning (F1).** Source implementation:
+      a provisioning failure now starts no agent, creates no conversation and
+      performs no root-checkout fallback; the draft and staged images survive
+      for Retry or an explicit Local launch, and the error stays visible.
+      Focused Vitest (`launchConversation`, `Composer`, `AgentsView`), TypeScript
+      and ESLint pass. Native Windows acceptance remains open; installed payload
+      was not rebuilt.
+- [x] **P1 — Complete draft and attachment identity (F2A).** Staged images now
+      live in an in-memory map keyed by conversation/launch identity, so A→B→A
+      keeps A's images without leaking them into B. Late decodes bind to the
+      draft that started them and are discarded after clear/send; unsupported
+      type/size/read failures are visible; chips disclose **Kept in this
+      session**. Text persistence is unchanged; bytes deliberately do not
+      survive process exit. Focused Vitest (draft store, Composer) plus
+      TypeScript/ESLint pass. Durable assets and native paste/drop restart checks
+      remain open (F2B).
+- [ ] **P1 — Durable draft assets and Agents history (F2B, F3).** Add the
+      backend asset service/migration and submission pins; make Fork preserve
+      the original thread and distinguish transcript rewind from file
+      restoration. Add failed-send/restart/fork scenarios before promoting
+      source findings to native proof. These are not the completed Flight-runtime
+      fixes.
+- [ ] **P1 — Comfortable, adjustable reading defaults (V1–V3).** Raise shared
+      typography, repair informative-text contrast in both themes, and add
+      persisted reading base/App scale plus a separately owned terminal size
+      control. Keep Inter initially; verify native
+      Windows/Mac and enlarged text before claiming experience parity.
+- [ ] **P2 — Agents continuity and composition (F4–F8).** Preserve explicit
+      provider choices during probes, hold launch single-flight through startup,
+      group stable base projects, resolve exact attention blockers over review,
+      retain search/reading position and protect IME/history drafts.
+- [ ] **P2 — Shared GUI accessibility and layout (V4–V8).** Unify scalable
+      theme-aware code, name icon actions, reveal keyboard focus, enlarge targets,
+      resize/read sidebar titles and adapt narrow execution context. Use source
+      references and native acceptance in the review; do not infer Mac parity.
+- [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
+      opaque replay state and frozen authority; label incompatible/lossy fallback
+      and prevent completed-tool re-execution. Existing September transcript
+      recovery proof remains valid for its narrower scope.
+- [ ] **P1 — Request-level spend admission (H4).** Reserve/reconcile concurrent
+      parent/child requests and later loop iterations; preserve unknown pricing
+      and accurately describe SDK enforcement limits. This expands the existing
+      per-run cap item below rather than creating a second budget program.
+- [ ] **P2 — Measured production harness (H1/H3/H5–H7).** Add an injectable
+      production executor/evaluation seam, versioned run/context/capability
+      manifests and explicit subagent routes. Evaluate held-out task outcomes,
+      latency, cost and interventions before adding retrieval/graph complexity.
+      No Composer/model program is included. Extend the existing real-run
+      harness and reasoning-effort items below.
+- [ ] **P2 — Evidence-backed usage disclosure (H9).** Preserve existing PTY
+      Codex percentage signals; distinguish unknown/stale from zero and support
+      provenance/reset/window fields only when supplied. API tokens/USD and a
+      retry delay are not subscription allowance. Extend guardrails, not the
+      removed Cost Dashboard.
+- [ ] **P2 — Optional rendered-app verification (H8), after reliability.**
+      Evaluate supported browser/MCP integration with scoped local-app authority
+      and evidence artifacts. Preserve web_fetch SSRF protection. Any future
+      desktop-control integration must release control through waits/builds.
+- [ ] **P2 — Official ChatGPT-plan feasibility review.** Evaluate the documented
+      OSS/local SIWC consent/host/refresh/entitlement contract and Codex app-server
+      versus direct Responses route, including preview limitations. No login,
+      adapter resurrection or provider change is performed by the research.
+      Keep retired provider IDs retired; use a new explicit identity if approved.
+
+Composer/model-development research is owned by another thread. The packets
+above improve the existing runtime and do not create a separate model or
+competitor harness product.
+
 ## Provider acceptance — October 15
 
 Live evidence and installation scope are in [the current handoff](HANDOFF.md#sugar-default-activation--october-15-2026).
@@ -624,7 +710,9 @@ environment or packaged matrix has actually run.
   forwarding.
 - **P3 - Autonomy harness real-run validation.** Exercise
   `src/lib/agent-harness.ts` against a live provider and record the evidence.
-  (Folded from `docs/deferred-work.md`.)
+  Expanded into H1/H6 in the October 19 agent/harness review above; use that
+  consolidated item for production-executor evaluation and run attribution.
+  (Originally folded from `docs/deferred-work.md`.)
 - **P3 - PTY orphan-reaper live verification.** After the reaper is actually
   wired (see the Fable 5 P1), verify orphan reaping in a packaged build.
   (Folded from `docs/deferred-work.md`.)
@@ -1278,10 +1366,12 @@ from the original report, which still lists them as findings.
   `docs/deferred-work.md`.)
 - **P3 - Per-run cost cap.** A `costCapUsd` per conversation/run with mid-run
   cancel, complementing the existing budget guardrails. (Folded from
-  `docs/deferred-work.md`.)
+  `docs/deferred-work.md`.) Expanded into the P1 H4 request-reservation item above;
+  implement and track the combined requirement there.
 - **P3 - Cross-provider reasoning effort.** Expose a reasoning-effort control
   instead of the hardcoded 8000-token thinking budget in `api_agent.rs` /
-  `llm_anthropic.rs`. (Folded from `docs/deferred-work.md`.)
+  `llm_anthropic.rs`. Part of H3/H5's model/context capability contract in the
+  consolidated October 19 review above. (Folded from `docs/deferred-work.md`.)
 - **P3 - Diff viewer controls.** Side-by-side toggle, word wrap, and
   whitespace-ignore in the agent diff view. (Folded from
   `docs/deferred-work.md`.)

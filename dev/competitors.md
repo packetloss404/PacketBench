@@ -1,6 +1,13 @@
 # PacketBench — Competitor Landscape
 
 Last updated: 2026-07-27
+
+**Historical snapshot.** For current Cursor ownership, weekly versus legacy
+usage, Composer 2.5, official ChatGPT-plan integrations and PacketBench's fresh
+runtime/experience assessment, use the
+[October 19 review](./agent-harness-and-experience-review-2026-10-19.md).
+The July provider counts and exclusivity claims below are not current evidence.
+
 Scope: desktop/local agentic development environments and multi-agent coding-CLI orchestrators —
 the category PacketBench competes in. Compiled from read-only web research (fan-out subagent team).
 Figures are vendor/third-party-reported unless noted; treat funding/valuation/ARR as approximate.

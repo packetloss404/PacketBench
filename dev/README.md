@@ -1,15 +1,22 @@
 # PacketBench Development Plans
 
-Last reconciled: 2026-10-06 (provider integrations)
+Last reconciled: 2026-10-19 (Flight closeout and agent/harness/experience review)
 
 This directory contains active implementation plans, proof runbooks, research,
 and historical evidence. It is not a second backlog.
 
-The current desktop release is **0.14.9**, built from `83bd3125`, tagged
-`v0.14.9`, installed and launched. [Release evidence](./provider-release-0.14.9.md)
+The tagged desktop baseline is **0.14.9**, built from `83bd3125`, tagged
+`v0.14.9`. [Release evidence](./provider-release-0.14.9.md)
 records the three corrected peer-review findings, all eleven quality gates,
 installer hashes and all 8,683 installed payload checks. Real-account provider
 acceptance and Workspace dogfooding remain separate.
+
+The current workstation installation is the later local 0.14.9 Flight rebuild,
+source contents `0b6dbf52`, recorded in [the handoff](../HANDOFF.md).
+The subsequent [agent/harness/experience review](./agent-harness-and-experience-review-2026-10-19.md)
+records a nonresponding observation during Windows navigation with cause still
+unisolated. Earlier installed smoke checks do not close that new finding.
+The review adds research and recommendations only; no app changes were made.
 
 The October 6 pre-tag follow-up is recorded in
 [`existing-code-stabilization-2026-09-24.md`](./existing-code-stabilization-2026-09-24.md).
@@ -32,9 +39,9 @@ rerun includes 2,869 tests and 14 browser cases. Both 0.14.8 Windows installers
 are built and hash-verified; the same record contains their source/artifact
 identity. The NSIS upgrade from 0.14.6 passed all 8,683 installed hashes and
 two bundled-sidecar echo turns; normal launch opened a responding window.
-The owner has pinned 0.14.8 to the desktop and plans to dogfood it. Resume
-with their feedback, keeping Workspaces the priority and feature expansion
-deferred. Broader interactive/provider/hardware acceptance remains separate.
+That checkpoint left 0.14.8 pinned for owner dogfooding; it has since been
+superseded by the October 19 local 0.14.9 rebuild above. Workspaces remain the
+daily-use priority. Broader interactive/provider/hardware acceptance is separate.
 
 The consolidation installer and live OpenSSH workflow is documented in
 [`installer-ssh-acceptance.md`](./installer-ssh-acceptance.md). It produces
@@ -49,8 +56,8 @@ The 0.14.7 build and native WebView2 profiling evidence is in
 [`workspace-release-0.14.7.md`](./workspace-release-0.14.7.md). It records the
 Workspace summary, missing-conversation zoom and Monitor concurrency fixes;
 all eleven full gates, fifteen OpenSSH cases and both installer builds passed.
-That run left 0.14.6 installed; the current installation is now 0.14.8 as
-recorded above. The real Claude test remains deferred at the user's request
+That run left 0.14.6 installed; later installation identities are recorded
+above and in the handoff. The real Claude test remains deferred at the user's request
 because of subscription cost; do not ask for a login refresh.
 
 Use these documents in order:
@@ -163,6 +170,23 @@ All document links in this file resolve as of 2026-08-27.
 
 ## Research and reference
 
+- [Agents/runtime implementation handoff](./agent-experience/README.md)
+  turns the October 19 review into proposed technical contracts, work packets,
+  ownership/dependencies, migrations, failure tests, future agent prompts and
+  local/SSH/native acceptance. It is documentation only. Composer research is
+  owned by a separate thread and excluded; existing-runtime evaluation remains.
+- [Composer research and experimental path](./composer-research-2026-10-19.md)
+  assesses current Composer 2.5 evidence, PacketBench's existing executor,
+  open-weight adaptation, evaluation/data requirements and operating economics.
+  The expanded shortlist recommends Qwen3.8-27B for a proposed owned main-model
+  study on rented GPUs under $1,000, with license/training/evaluation gates.
+  Implementation, paid evaluation and model training remain proposed, not approved.
+- [Agent harness, Cursor and desktop experience review](./agent-harness-and-experience-review-2026-10-19.md)
+  is the October 19 fresh runtime/GUI/journey assessment at `e5d31084`.
+  It verifies Cursor ownership/weekly plans and official ChatGPT-plan options,
+  separates owned-harness feasibility from model training, and documents
+  typography, Agents reliability and native/Mac evidence limits. Proposed work
+  is indexed in `../backlog.md`; it is not an implemented overhaul.
 - [Flight runtime and experience review](./flight-overhaul-review-2026-10-19.md)
   records separate runtime, GUI and journey reviews, the implemented overhaul,
   local/Docker SSH Stop/restart/repair/delivery/archive walkthroughs, final gates

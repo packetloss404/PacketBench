@@ -1,6 +1,6 @@
 # PacketBench Roadmap
 
-Last reconciled: 2026-09-24 (0.14.8 installed; owner dogfooding next)
+Last reconciled: 2026-10-19 (local 0.14.9 Flight rebuild; later review and responsiveness follow-up)
 
 PacketBench is a local-first Agent Development Environment and remains the
 flagship control surface. The desktop owns local providers, models, secrets,
@@ -10,12 +10,18 @@ Workspaces, MCP configuration, permissions, Memory, and execution.
 local/SSH CLI panes, keyboard focus, session recovery, saved arrangements and
 multi-pane performance. Agents, Flight Deck and Monitor support that workflow.
 
-**Current direction: no feature expansion.** The existing-code audit fixes are
-built into installed 0.14.8. The owner has pinned it to the desktop and plans
-to dogfood it; no results have been reported yet. Fix reported defects before
-resuming the expansion items below.
-The September 24 source audit is tracked in `backlog.md`; historical acceptance
-results do not validate this newer package.
+**Current direction: stabilize existing workflows.** The explicitly requested
+Flight overhaul is installed as a local 0.14.9 rebuild. Its scoped local/Docker
+SSH and installed smoke evidence is in `HANDOFF.md`; a later review encountered
+unresolved Windows unresponsiveness. Fix reported defects before expanding.
+The [agent/harness/experience review](dev/agent-harness-and-experience-review-2026-10-19.md)
+proposes readability, Agents continuity and measured harness improvements; it
+does not authorize implementation, model training or another installation.
+The [future-team handoff](dev/agent-experience/README.md) now specifies the
+technical work and acceptance. Composer research is separate and excluded;
+evaluation here serves the existing runtime rather than a new agent product.
+`backlog.md` is the task register. Historical acceptance validates only its
+recorded source/package and workflow.
 
 There is no shipped remote supervision surface today. Syndicate separated from
 the Packet\* product family on 2026-08-27 and its execution-target integration
@@ -32,7 +38,12 @@ only product direction and ordering.
 
 ## Current baseline
 
-- **0.14.8 is built, pushed to main, installed and launched**, with the September 24 audit and
+- **Current workstation: local 0.14.9 Flight rebuild**, runtime source contents
+  `0b6dbf52`, with the full identity and proof scope in `HANDOFF.md`. The tag
+  `v0.14.9` remains the October 6 published baseline. Later Windows navigation
+  unresponsiveness has an open P1 evidence/diagnosis item; daily-use readiness
+  is qualified until it is resolved. Mac experience parity remains unverified.
+- **Historical 0.14.8 was built, pushed to main, installed and launched**, with the September 24 audit and
   follow-up repairs. All eleven local gate categories passed, including the
   frozen rerun of 2,869 frontend tests and 14 browser cases. Both Windows
   installer hashes were verified. The NSIS upgrade from 0.14.6 verified all
@@ -59,7 +70,7 @@ only product direction and ordering.
   2026-09-05 from `cd276627`, hashed in
   `CHANGELOG.md`, and installed (`package.json`, `src-tauri/tauri.conf.json`,
   `src-tauri/Cargo.toml`). `v0.10.3` — packaged for Windows from release source
-  `61e0669` — is still the newest annotated tag, while `CHANGELOG.md` records
+  `61e0669` — is a historical annotated tag; `CHANGELOG.md` records
   0.10.4 and 0.10.5 as released, and 0.11.0 through 0.13.2 as built but
   unreleased.
 - **The renamed product has been packaged and installed.** The prior

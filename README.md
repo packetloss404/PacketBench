@@ -9,10 +9,16 @@ PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, is
 The local Windows **0.14.9 Flight overhaul** installed October 19 completed
 disposable local and pinned Docker SSH Stop/restart/Resume, review/repair,
 fresh review, delivery and archive/restore walkthroughs. The installed build
-passed payload, sidecar, UI and persisted-state smoke checks and is ready for
-workstation dogfooding. Exact source identity, installation hash and proof limits
+passed payload, sidecar, UI and persisted-state smoke checks and was prepared for
+workstation dogfooding, subject to the later responsiveness finding below.
+Exact source identity, installation hash and proof limits
 are in the [current handoff](./HANDOFF.md#workstation-dogfood-handoff--october-19-2026).
 This is a local rebuild; it does not replace the existing `v0.14.9` release tag.
+
+A later [agent and experience review](./dev/agent-harness-and-experience-review-2026-10-19.md)
+found a nonresponding condition during Windows navigation, whose cause remains
+unisolated, plus source-level Agents/readability gaps. The earlier smoke passed
+its scope; whole-app daily-use readiness now needs that responsiveness follow-up.
 
 The configured default remains **Sugar** and
 its `sugar/conduit` routing alias as the default for new API chats and workflow
@@ -53,6 +59,8 @@ there — not here, and never the generated HTML.
   current owner questions, build evidence, and guardrails.
 - [`ROADMAP.md`](./ROADMAP.md) — current product direction and release path.
 - [`backlog.md`](./backlog.md) — master ledger for outstanding work.
+- [Agent harness and experience review](./dev/agent-harness-and-experience-review-2026-10-19.md) — current Cursor/Composer/Codex research, Agents source review and proposed readability/reliability priorities; recommendations remain unimplemented.
+- [Future-team implementation handoff](./dev/agent-experience/README.md) — technical contracts, work order, agent ownership/prompts, migrations and acceptance for the review findings; Composer research is separate.
 - [`dev/provider-release-0.14.9.md`](./dev/provider-release-0.14.9.md) — the
   October 6 tagged release. The installed October 19 local rebuild is recorded
   in [`dev/flight-overhaul-review-2026-10-19.md`](./dev/flight-overhaul-review-2026-10-19.md).

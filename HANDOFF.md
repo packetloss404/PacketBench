@@ -1,11 +1,71 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-10-19 (Flight overhaul, local/Docker SSH walkthroughs and installed-app smoke complete; ready for workstation dogfooding)
+Last reconciled: 2026-10-19 (Flight closeout; later review and implementation handoff prepared, Composer research separate; native responsiveness unresolved)
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
 `docs/handoff.md` and `docs/audit-2026-09-04.md` describe the September audit;
 the current contracts below supersede their older protocol and queue details.
+
+## Future-team implementation handoff — October 19, 2026
+
+The owner requested further team research/design and documentation for agents
+to implement later. Start at [dev/agent-experience/README.md](dev/agent-experience/README.md).
+The package specifies shared contracts and sequencing, runtime safety, Agents
+flow, appearance/accessibility, bounded integrations, file leases, migrations,
+fault tests, native evidence and ready-to-use coordinator/worker prompts.
+The backlog remains the only task/status register. The plan is a proposed
+technical handoff; it does not claim application changes or passing new gates.
+
+**Composer research is moved to another thread and excluded.** Current-runtime
+evaluation verifies existing behavior; do not expand it into model training,
+adaptation or a competitor-agent product. Optional supported-plan/browser
+experiments are later bounded packets, not prerequisites for core repairs.
+
+Key choices: one local backend journal for launch/run/effect/checkpoint/budget
+authority, one immutable execution binding per root turn, preserved drafts and
+history, and one App scale multiplier for all nonterminal fonts. Terminal size
+gets a separate proposed preference/control; source did not establish one
+already shipped. The future team must refresh the baseline before implementing.
+This planning pass performed no desktop control, provider calls, product tests,
+builds, installation, commits or pushes. The later native hang remains unresolved.
+
+**Implementation status (uncommitted working tree).** A Wave 0 source inventory
+and a read-only review of tracks 01–04 were completed against `e5d31084`;
+rusqlite and the other cited seams exist, while the docs contain a few stale
+line claims and unresolved cross-track conflicts recorded in the review notes.
+The P1 F1 slice landed: worktree provisioning failure is fail-closed (no agent,
+no conversation, no root fallback) and the draft plus staged images survive for
+Retry or an explicit Local launch. F2A followed: staged images are scoped per
+conversation/launch draft in memory, late decodes are generation-fenced, and
+type/size/read rejections are visible with a session-only disclosure. Text
+persistence is unchanged. Focused Vitest, TypeScript and ESLint pass. No build
+or installation was run and native Windows acceptance remains open; F2B durable
+assets are not implemented.
+
+## Later agent and experience review — October 19, 2026
+
+The owner requested research, a subagent runtime/GUI/UX review, live Windows
+inspection and documentation. This follow-up changes documentation only.
+The [review](dev/agent-harness-and-experience-review-2026-10-19.md) records
+verified Cursor acquisition/weekly-plan changes, newly documented official
+ChatGPT-plan integration options, Composer feasibility and prioritized findings.
+No app implementation, credentials, build or installation changed.
+
+**New unresolved P1 observation:** installed PID 60916 showed the Flight Deck,
+then an automated Agents navigation click timed out. A subsequent capture
+showed `PacketBench (Not Responding)` and read-only process checks returned
+`Responding=False`. App versus accessibility/native-interaction cause is not
+isolated. The app was not killed/restarted and no agent prompt was sent;
+desktop control was reset/released after each short burst. This supersedes an
+unqualified current readiness claim, not the earlier passing Flight evidence.
+Diagnose responsiveness before treating the app as a verified daily driver.
+
+Source review also identifies Agents worktree fallback, unscoped attachment
+staging and misleading fork/restore behavior. These are separate from the
+completed Flight repairs. Typography defaults need size/contrast/scale work;
+Mac visual parity remains unverified. Open work is consolidated in `backlog.md`.
+Implementation recommendations require a subsequent execution request.
 
 ## Workstation dogfood handoff — October 19, 2026
 
