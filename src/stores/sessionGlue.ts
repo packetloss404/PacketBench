@@ -38,7 +38,7 @@ import {
 
 /**
  * Subscribe to `agentTaskStore` and prune referencing panes whenever a
- * conversation disappears (deleteConversation / forkAndResend never delete, so
+ * conversation disappears (deleteConversation / forkConversation never delete, so
  * only a real removal fires this). Direction is strictly conversation→panes:
  * `workspaceStore.removeConversationPanes` touches no conversation, so closing a
  * tile can never delete a conversation.

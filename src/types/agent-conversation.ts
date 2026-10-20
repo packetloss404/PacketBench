@@ -115,6 +115,25 @@ export interface DiffComment {
   createdAt: number;
 }
 
+export interface ConversationLineage {
+  parentConversationId: string;
+  forkedFromMessageId: string;
+  kind: "fork";
+  /** Semantic forks reuse the parent's current files, not historical state. */
+  contextMode: "semantic";
+  createdAt: number;
+}
+
+export interface TranscriptRevision {
+  revisionId: string;
+  conversationId: string;
+  operation: "initial" | "transcript_rewind";
+  throughMessageId?: string;
+  messageCount: number;
+  messages: AgentMessage[];
+  createdAt: number;
+}
+
 export interface AgentConversation {
   id: string;
   title: string;
@@ -194,6 +213,11 @@ export interface AgentConversation {
    * "← back to plan" link in the chat header. Undefined for normal
    * standalone conversations. */
   parentConversationId?: string;
+  /** F3: true fork lineage. Distinct from `parentConversationId`, which is the
+   * Workspace "hand off to Codex" link and does not imply a forked transcript. */
+  lineage?: ConversationLineage;
+  /** F3: saved transcripts moved aside by Rewind. Files are never restored. */
+  transcriptRevisions?: TranscriptRevision[];
   /** T3.F / tile-program D: worktree provenance for conversations launched in
    * worktree mode. Stamped at provisioning in `launchConversation` (the
    * `baseBranch` that was historically computed then discarded — the

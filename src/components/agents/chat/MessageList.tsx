@@ -8,8 +8,9 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { BookmarkPlus, Pencil, RotateCcw, RotateCw } from "lucide-react";
+import { BookmarkPlus, History, Pencil, RotateCcw, RotateCw } from "lucide-react";
 import { MarkdownRenderer } from "@/components/common/MarkdownRenderer";
+import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { buildTranscriptMemoryInput } from "@/lib/memoryCapture";
@@ -60,9 +61,9 @@ interface MessageListProps {
   onChangeEdit: (text: string) => void;
   onSubmitEdit: (msgId: string) => void;
   onCancelEdit: () => void;
-  /** Inline per-message Restore: truncates the transcript to before this
-   * message and re-runs it, via forkAndResend (subsumes checkpoints). */
-  onRestoreFrom: (msgId: string, content: string) => void;
+  /** Inline per-message Rewind: saves later messages as a revision and keeps
+   * this turn. Files are untouched and no turn is started. */
+  onRewindFrom: (msgId: string) => void;
   onRetryLastTurn: () => void;
   isActive: boolean;
   // Scroll container that owns the message viewport (from AgentChatPane).
@@ -88,13 +89,16 @@ export function MessageList({
   onChangeEdit,
   onSubmitEdit,
   onCancelEdit,
-  onRestoreFrom,
+  onRewindFrom,
   onRetryLastTurn,
   isActive,
   scrollContainerRef,
   approvals,
 }: MessageListProps) {
   const messages = conversation.messages;
+  const revisions = conversation.transcriptRevisions ?? [];
+  const [viewingHistory, setViewingHistory] = useState(false);
+  const canMutateHistory = !isActive;
   const lastMessage = messages[messages.length - 1];
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
   const showThinking =
@@ -183,6 +187,19 @@ export function MessageList({
 
   return (
     <>
+      {revisions.length > 0 && (
+        <div className="mb-2 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setViewingHistory(true)}
+            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-meta text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
+          >
+            <History size={10} />
+            View previous history ({revisions.length})
+          </button>
+        </div>
+      )}
+
       {messages.map((msg, index) => {
         const isLastAssistant = msg.id === lastAssistantMessage?.id;
         const ownedApprovals = placement.byMessage.get(msg.id);
@@ -206,9 +223,13 @@ export function MessageList({
               onRetry={isLastAssistant && !msg.isStreaming ? onRetryLastTurn : undefined}
               isEditing={editingMessageId === msg.id}
               editingText={editingText}
-              onStartEdit={msg.role === "user" ? () => onStartEdit(msg.id, msg.content) : undefined}
-              onRestoreFrom={
-                msg.role === "user" ? () => onRestoreFrom(msg.id, msg.content) : undefined
+              onStartEdit={
+                msg.role === "user" && canMutateHistory
+                  ? () => onStartEdit(msg.id, msg.content)
+                  : undefined
+              }
+              onRewindFrom={
+                msg.role === "user" && canMutateHistory ? () => onRewindFrom(msg.id) : undefined
               }
               onChangeEdit={onChangeEdit}
               onSubmitEdit={() => onSubmitEdit(msg.id)}
@@ -253,6 +274,42 @@ export function MessageList({
           <Spinner size={10} className="text-text-muted" label="Thinking" />
           Thinking...
         </div>
+      )}
+
+      {viewingHistory && (
+        <Modal title="Previous history" onClose={() => setViewingHistory(false)} width="w-[640px]">
+          <p className="mb-3 text-meta text-text-muted">
+            Rewind saves later messages here. Files were not changed.
+          </p>
+          <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
+            {[...revisions].reverse().map((revision) => (
+              <section
+                key={revision.revisionId}
+                className="rounded border border-bg-border bg-bg-secondary p-3"
+              >
+                <header className="mb-2 flex items-center justify-between text-meta text-text-muted">
+                  <span>{new Date(revision.createdAt).toLocaleString()}</span>
+                  <span>{revision.messageCount} messages</span>
+                </header>
+                <div className="flex flex-col gap-1.5">
+                  {revision.messages.map((message) => (
+                    <div key={message.id} className="text-meta text-text-secondary">
+                      <span className="mr-1 font-semibold text-text-primary">
+                        {message.role === "user"
+                          ? "You"
+                          : message.role === "assistant"
+                            ? "Agent"
+                            : "System"}
+                        :
+                      </span>
+                      <span className="whitespace-pre-wrap break-words">{message.content}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </Modal>
       )}
     </>
   );
@@ -333,7 +390,7 @@ function MessageBubble({
   isEditing,
   editingText,
   onStartEdit,
-  onRestoreFrom,
+  onRewindFrom,
   onChangeEdit,
   onSubmitEdit,
   onCancelEdit,
@@ -345,16 +402,15 @@ function MessageBubble({
   isEditing?: boolean;
   editingText?: string;
   onStartEdit?: () => void;
-  onRestoreFrom?: () => void;
+  onRewindFrom?: () => void;
   onChangeEdit?: (text: string) => void;
   onSubmitEdit?: () => void;
   onCancelEdit?: () => void;
 }) {
-  // Two-step confirm for the inline Restore action — it discards every
-  // later message (fork-and-resend truncates in place), so a single stray
-  // hover-click must not be destructive. Local state is safe here: rows
-  // are mount-once (LazyMessageRow never unmounts them).
-  const [confirmingRestore, setConfirmingRestore] = useState(false);
+  // Two-step confirm for Rewind: later messages move to a saved revision, so
+  // a single stray hover-click must not mutate the active transcript. Local
+  // state is safe here: rows are mount-once (LazyMessageRow never unmounts).
+  const [confirmingRewind, setConfirmingRewind] = useState(false);
   // M4: manual "+ Add to memory" on assistant turns. Both hooks read
   // unconditionally at the top so hook order stays stable across the role
   // early-returns below.
@@ -400,9 +456,9 @@ function MessageBubble({
               className="w-full resize-none bg-transparent text-body text-text-primary placeholder:text-text-muted focus:outline-none"
             />
             <div className="flex items-center justify-between gap-2">
-              <Tooltip content="Truncates the transcript to this point and re-runs from here">
+              <Tooltip content="Creates a new conversation from this turn; the original is kept">
                 <span className="text-meta text-text-muted">
-                  Forks the conversation from this turn
+                  New conversation from this turn. Original kept. Runs with current files.
                 </span>
               </Tooltip>
               <div className="flex items-center gap-1.5">
@@ -415,14 +471,14 @@ function MessageBubble({
                     Cancel
                   </button>
                 </Tooltip>
-                <Tooltip content="Send (Ctrl+Enter)">
+                <Tooltip content="Start the fork (Ctrl+Enter)">
                   <button
                     type="button"
                     onClick={onSubmitEdit}
                     disabled={!(editingText ?? "").trim()}
                     className="rounded bg-accent-green/20 px-2 py-0.5 text-ui font-medium text-accent-green transition-colors hover:bg-accent-green/30 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    Resend
+                    Start fork
                   </button>
                 </Tooltip>
               </div>
@@ -446,12 +502,13 @@ function MessageBubble({
           >
             <div className="selectable whitespace-pre-wrap break-words">{message.content}</div>
             {message.queued && <span className="ml-1 text-meta text-accent-amber">(queued)</span>}
-            {!message.queued && (onStartEdit || onRestoreFrom) && (
+            {!message.queued && (onStartEdit || onRewindFrom) && (
               <div className="absolute -left-6 top-1/2 flex -translate-y-1/2 flex-col gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
                 {onStartEdit && (
-                  <Tooltip content="Edit & resend — forks the conversation from this turn">
+                  <Tooltip content="Edit & fork — creates a new conversation from this turn">
                     <button
                       type="button"
+                      aria-label="Edit & fork from this turn"
                       onClick={onStartEdit}
                       className="rounded p-0.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
                     >
@@ -459,11 +516,12 @@ function MessageBubble({
                     </button>
                   </Tooltip>
                 )}
-                {onRestoreFrom && (
-                  <Tooltip content="Restore — rewind to this turn and re-run it">
+                {onRewindFrom && (
+                  <Tooltip content="Rewind conversation — later messages move to saved history">
                     <button
                       type="button"
-                      onClick={() => setConfirmingRestore(true)}
+                      aria-label="Rewind conversation from this turn"
+                      onClick={() => setConfirmingRewind(true)}
                       className="rounded p-0.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
                     >
                       <RotateCcw size={11} />
@@ -474,24 +532,25 @@ function MessageBubble({
             )}
           </div>
         </div>
-        {confirmingRestore && (
+        {confirmingRewind && (
           <div className="mt-1 flex items-center gap-2 rounded bg-accent-amber/10 px-2 py-1">
             <span className="text-meta text-accent-amber">
-              Restore from here? Later messages are discarded and this turn re-runs.
+              Rewind conversation? Later messages move to a saved history revision. Files stay as
+              they are.
             </span>
             <button
               type="button"
               onClick={() => {
-                setConfirmingRestore(false);
-                onRestoreFrom?.();
+                setConfirmingRewind(false);
+                onRewindFrom?.();
               }}
               className="rounded bg-accent-amber/20 px-1.5 py-0.5 text-ui font-medium text-accent-amber transition-colors hover:bg-accent-amber/30"
             >
-              Restore
+              Rewind
             </button>
             <button
               type="button"
-              onClick={() => setConfirmingRestore(false)}
+              onClick={() => setConfirmingRewind(false)}
               className="rounded px-1.5 py-0.5 text-ui text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
             >
               Cancel

@@ -83,7 +83,7 @@ function Tile({
         onChangeEdit={() => {}}
         onSubmitEdit={() => {}}
         onCancelEdit={() => {}}
-        onRestoreFrom={() => {}}
+        onRewindFrom={() => {}}
         onRetryLastTurn={() => {}}
         isActive
         approvals={{

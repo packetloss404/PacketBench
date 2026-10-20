@@ -351,7 +351,7 @@ describe("Two tiles mounted — protected stack stays isolated (P3-S2)", () => {
     return workspace;
   }
 
-  it("fork-and-resend on tile A does not touch tile B's conversation", async () => {
+  it("fork on tile A preserves both original conversations", async () => {
     const ws = seedTwoTiles();
     render(
       <>
@@ -359,19 +359,22 @@ describe("Two tiles mounted — protected stack stays isolated (P3-S2)", () => {
         <ConversationTile pane={ws.panes[1]} workspaceId="ws-1" />
       </>,
     );
-    const before = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-B")!.messages;
+    const beforeA = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A")!.messages;
+    const beforeB = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-B")!.messages;
 
+    let childId: string | null = null;
     await act(async () => {
-      await useAgentTaskStore.getState().forkAndResend("conv-A", "a3", "edited");
+      childId = await useAgentTaskStore.getState().forkConversation("conv-A", "a3", "edited");
     });
 
     const convA = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A")!;
-    // A truncated to before the edited message (a1, a2 survive at the front).
-    expect(convA.messages.slice(0, 2).map((m) => m.id)).toEqual(["a1", "a2"]);
-    // B is byte-identical.
-    const after = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-B")!.messages;
-    expect(after).toEqual(before);
-    // Both tiles remained mounted (no remount from the sibling's turn).
+    expect(convA.messages).toEqual(beforeA);
+    const convB = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-B")!;
+    expect(convB.messages).toEqual(beforeB);
+    const child = useAgentTaskStore.getState().conversations.find((c) => c.id === childId)!;
+    expect(child.messages.slice(0, 2).map((m) => m.id)).toEqual(["a1", "a2"]);
+    expect(child.lineage?.parentConversationId).toBe("conv-A");
+    // Both original tiles remained mounted (no remount from the sibling's turn).
     expect(chatMounts.filter((e) => e === "mount:conv-A")).toHaveLength(1);
     expect(chatMounts.filter((e) => e === "mount:conv-B")).toHaveLength(1);
     expect(chatMounts.filter((e) => e.startsWith("unmount:"))).toHaveLength(0);

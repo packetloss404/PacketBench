@@ -47,7 +47,7 @@ it("renders old cancelled tool cards as Interrupted while preserving real result
     onChangeEdit: vi.fn(),
     onSubmitEdit: vi.fn(),
     onCancelEdit: vi.fn(),
-    onRestoreFrom: vi.fn(),
+    onRewindFrom: vi.fn(),
     onRetryLastTurn: vi.fn(),
     isActive: false,
   };

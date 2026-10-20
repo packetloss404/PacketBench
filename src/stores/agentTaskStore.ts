@@ -674,13 +674,15 @@ interface AgentTaskStore {
   removeDiffComment: (id: string, commentId: string) => void;
   clearDiffComments: (id: string) => void;
   retryLastTurn: (id: string, newModel?: string) => Promise<void>;
-  /** M2.7 — Cursor-style "edit a prior user message and re-run from there."
-   * Truncates the transcript to before the target user message, cancels any
-   * active turn, and dispatches the new content as a fresh user turn. The
-   * model receives the truncated history on the next send and the agent runs
-   * forward from that fork point. File-state rewind isn't part of this v1
-   * pass — only the transcript forks. */
-  forkAndResend: (id: string, messageId: string, newContent: string) => Promise<void>;
+  /** F3: fork a new conversation from a prior user turn. The parent is never
+   * mutated; the child copies the prefix and records lineage. Only an explicit
+   * call starts a run. Returns the child id, or null when the parent is active
+   * or the target is missing. */
+  forkConversation: (id: string, messageId: string, newContent: string) => Promise<string | null>;
+  /** F3: save the later transcript as a revision and truncate through the
+   * target message. No files are changed and no turn is started. Returns false
+   * when the parent is active or the target is missing. */
+  rewindConversation: (id: string, messageId: string) => Promise<boolean>;
   exportConversation: (id: string) => Promise<string>;
   /** F1: re-establish a hydrated conversation that lost its live session
    * across an app restart. Re-attaches `api-agent:*` listeners and calls
@@ -704,7 +706,7 @@ interface AgentTaskStore {
  * lives in `./apiAgentListeners.ts`; this wrapper enforces
  * "one listener set per conversation id" via the `apiConversationCleanup`
  * map (the source of truth for which conversations have live listeners).
- * Callers that need to detach early (delete / forkAndResend) read directly
+ * Callers that need to detach early (delete / forkConversation) read directly
  * from `apiConversationCleanup`.
  */
 async function ensureApiAgentListeners(id: string): Promise<void> {
@@ -1046,26 +1048,12 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       get().clearDiffComments(conversationId);
     }
 
-    // F1: hydrated API conversations have no live listeners — route the
-    // first send-after-restart through the resume path so the Rust side
-    // re-creates the session before the message arrives. If a resume is
-    // already mid-flight, fall through to the isRunning queue below (the
-    // resume synchronously set status "active" + a streaming placeholder)
-    // instead of spawning a duplicate resume/session start.
-    if (
-      conv.mode === "api" &&
-      !apiConversationCleanup.has(conversationId) &&
-      !apiResumeInFlight.has(conversationId)
-    ) {
-      await get().resumeApiConversation(conversationId, effectiveContent, attachments, {
-        propagateErrors: true,
-      });
-      return;
-    }
     // Continue with the comment-augmented content from here on.
     content = effectiveContent;
 
-    // If the agent is still running (API mode), queue the message and show a queued bubble.
+    // If a turn is already streaming, queue instead of resuming. Checked
+    // BEFORE the resume branch so a live turn whose listener entry is missing
+    // (e.g. after a listener release) can never be double-started.
     const isRunning =
       conv.mode === "api" && conv.status === "active" && conv.messages.some((m) => m.isStreaming);
 
@@ -1093,6 +1081,20 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
         }),
       }));
       if (updated) scheduleSave(updated);
+      return;
+    }
+
+    // F1: hydrated API conversations have no live listeners — route the
+    // first send-after-restart through the resume path so the Rust side
+    // re-creates the session before the message arrives.
+    if (
+      conv.mode === "api" &&
+      !apiConversationCleanup.has(conversationId) &&
+      !apiResumeInFlight.has(conversationId)
+    ) {
+      await get().resumeApiConversation(conversationId, content, attachments, {
+        propagateErrors: true,
+      });
       return;
     }
 
@@ -1272,11 +1274,24 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
 
     // Worktree discard fan-out. Runs AFTER the record is gone and force-deletes
     // the branch: the user already confirmed a dialog that named this path, this
-    // branch, and (loudly) any uncommitted changes. No dirty-refusal here — the
+    // branch, and (loudly) any uncommitted changes. No dirty-refusal here - the
     // record no longer exists, so refusing would strand the tree with nothing in
     // the UI pointing at it. A failure is caught and REPORTED, never swallowed
     // and never allowed to undo the delete.
     if (!worktree) return Promise.resolve(null);
+    // A fork borrows the parent's checkout (F3). Do not remove a directory a
+    // live child still references; report the retained resource instead.
+    const dependentForks = get().conversations.filter(
+      (c) => c.id !== id && c.lineage?.parentConversationId === id,
+    );
+    if (dependentForks.length > 0) {
+      return Promise.resolve({
+        worktreePath: worktree.worktreePath,
+        branch: worktree.branch,
+        discarded: false,
+        error: `${dependentForks.length} fork(s) still reference this checkout; it was retained.`,
+      });
+    }
     return removeConversationWorktree(worktree.basePath, id, true).then(
       (): WorktreeDiscardOutcome => ({
         worktreePath: worktree.worktreePath,
@@ -1652,29 +1667,87 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     if (updated) scheduleSave(updated);
   },
 
-  forkAndResend: async (id, messageId, newContent) => {
+  forkConversation: async (id, messageId, newContent) => {
     const text = newContent.trim();
-    if (!text) return;
-    const state = get();
-    const conv = state.conversations.find((c) => c.id === id);
-    if (!conv) return;
-    const idx = conv.messages.findIndex((m) => m.id === messageId);
-    if (idx < 0) return;
+    if (!text) return null;
+    const parent = get().conversations.find((c) => c.id === id);
+    if (!parent || parent.mode !== "api") return null;
+    if (parent.status === "active" || parent.messages.some((m) => m.isStreaming)) {
+      return null;
+    }
+    const idx = parent.messages.findIndex((m) => m.id === messageId);
+    if (idx < 0 || parent.messages[idx].role !== "user") return null;
 
-    // Cancel any in-flight turn before truncating — leftover streams would
-    // append to a transcript that no longer matches the model's history.
-    if (conv.status === "active") {
+    const now = Date.now();
+    const childId = generateId("conv");
+    const child: AgentConversation = {
+      ...parent,
+      id: childId,
+      title: `${parent.title} (fork)`,
+      status: "idle",
+      // Prefix before the edited turn. The new content is sent as the next
+      // user turn so the provider receives the prefix as semantic context.
+      messages: parent.messages.slice(0, idx),
+      sessionId: null,
+      resumeToken: undefined,
+      queuedMessages: [],
+      pendingDiffComments: undefined,
+      archived: undefined,
+      transcriptRevisions: undefined,
+      parentConversationId: undefined,
+      lineage: {
+        parentConversationId: parent.id,
+        forkedFromMessageId: messageId,
+        kind: "fork",
+        contextMode: "semantic",
+        createdAt: now,
+      },
+      // The child borrows the parent's checkout; it is never a second owned
+      // worktree. Dropping these means child deletion cannot remove the
+      // parent's directory.
+      worktree: undefined,
+      mcpTrustSnapshot: undefined,
+      mcpSources: undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Persist the child before revealing it or starting work. A failure leaves
+    // the original conversation untouched.
+    await saveConversationNow(child);
+    set((s) => ({
+      conversations: [child, ...s.conversations],
+      selectedConversationId: childId,
+    }));
+    await get().sendMessageWithReceipt(childId, text, null, { requireIdle: true });
+    return childId;
+  },
+
+  rewindConversation: async (id, messageId) => {
+    let conv = get().conversations.find((c) => c.id === id);
+    if (!conv) return false;
+    const idx = conv.messages.findIndex((m) => m.id === messageId);
+    if (idx < 0) return false;
+
+    // Rewind is only available from a settled transcript. If Stop fails or
+    // the turn still streams, do not truncate under a live writer.
+    if (conv.status === "active" || conv.messages.some((m) => m.isStreaming)) {
       try {
-        await state.cancelActiveConversation(id);
+        await get().cancelActiveConversation(id);
       } catch {
-        // Best-effort; proceed even if cancel failed.
+        return false;
+      }
+      conv = get().conversations.find((c) => c.id === id);
+      if (!conv || conv.status === "active" || conv.messages.some((m) => m.isStreaming)) {
+        return false;
       }
     }
+
     if (conv.mode === "api") {
       try {
         await closeApiAgentSession(id);
       } catch {
-        // Best-effort; the next send will start a fresh session locally.
+        // The session may already be gone; the transcript rewrite is local.
       }
       const cleanup = apiConversationCleanup.get(id);
       if (cleanup) {
@@ -1683,43 +1756,43 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       }
     }
 
-    // Truncate locally to before the edited user message and detach any
-    // live session so sendMessage will spin up a fresh one with the
-    // truncated history as resume context.
-    let updated: AgentConversation | undefined;
+    const now = Date.now();
+    const next: AgentConversation = {
+      ...conv,
+      messages: conv.messages.slice(0, idx + 1),
+      transcriptRevisions: [
+        ...(conv.transcriptRevisions ?? []),
+        {
+          revisionId: generateId("rev"),
+          conversationId: id,
+          operation: "transcript_rewind" as const,
+          throughMessageId: messageId,
+          messageCount: conv.messages.length,
+          messages: conv.messages,
+          createdAt: now,
+        },
+      ].slice(-10),
+      sessionId: null,
+      resumeToken: undefined,
+      status: "idle",
+      queuedMessages: [],
+      updatedAt: now,
+    };
+
+    // Write the revision and the truncated active transcript together before
+    // the UI switches. No files are touched and no turn is started.
+    try {
+      await saveConversationNow(next);
+    } catch {
+      return false;
+    }
     set((s) => ({
-      conversations: s.conversations.map((c) => {
-        if (c.id !== id) return c;
-        const next: AgentConversation = {
-          ...c,
-          messages: c.messages.slice(0, idx),
-          sessionId: null,
-          resumeToken: undefined,
-          status: "idle",
-          updatedAt: Date.now(),
-        };
-        updated = next;
-        return next;
-      }),
+      conversations: s.conversations.map((c) => (c.id === id ? next : c)),
     }));
-    if (updated) scheduleSave(updated);
-    // Fork wipes parked prompts and transient stream state — also wipes any
-    // linked task approval since the Review queue would otherwise hang on a
-    // turn we just truncated away from. clearConversation on the approval
-    // store handles maybeResolveTaskApproval internally.
     useAgentApprovalStore.getState().clearConversation(id);
     useAgentStreamingStore.getState().clearThinking(id);
-    // The plan substore holds post-restore-point state (TodoWrite checklist,
-    // planApproved) that would otherwise survive the rewind as a stale
-    // phantom over the truncated transcript. Clear it — PlanPanel falls back
-    // to re-deriving any plan still present in the kept prefix from its
-    // tool calls.
     useAgentPlanStore.getState().clearConversation(id);
-
-    // Send the edited content as the next user turn — sendMessage handles
-    // session re-establishment for api-mode conversations that lost their
-    // live session.
-    await get().sendMessage(id, text);
+    return true;
   },
 
   retryLastTurn: async (id, newModel) => {

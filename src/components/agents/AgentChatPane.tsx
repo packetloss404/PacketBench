@@ -13,11 +13,7 @@ import {
   EMPTY_PENDING_PERMISSIONS,
   useAgentApprovalStore,
 } from "@/stores/agentApprovalStore";
-import {
-  hidePreview,
-  openMarkdownPreview,
-  useIsPreviewVisible,
-} from "@/lib/previewDock";
+import { hidePreview, openMarkdownPreview, useIsPreviewVisible } from "@/lib/previewDock";
 import { useRightDockStore } from "@/stores/rightDockStore";
 import { useMemoryStore, type MemoryBrief } from "@/stores/memoryStore";
 import { TileHeaderActions } from "./chat/TileHeaderActions";
@@ -134,7 +130,8 @@ export function AgentChatPane({
       removeDiffComment: s.removeDiffComment,
       clearDiffComments: s.clearDiffComments,
       retryLastTurn: s.retryLastTurn,
-      forkAndResend: s.forkAndResend,
+      forkConversation: s.forkConversation,
+      rewindConversation: s.rewindConversation,
     })),
   );
 
@@ -157,9 +154,7 @@ export function AgentChatPane({
   );
   // Canonical review surface (P1-8): expanded state lives in reviewStore so
   // transcript chips / MultiFileEditCard / the header chip can deep-link.
-  const reviewOpen = useReviewStore(
-    (s) => s.open && s.conversationId === conversationId,
-  );
+  const reviewOpen = useReviewStore((s) => s.open && s.conversationId === conversationId);
   const closeReview = useReviewStore((s) => s.close);
 
   // P0-3: preview visibility is the dock's, the target is conversation-scoped,
@@ -196,11 +191,19 @@ export function AgentChatPane({
 
   function updateSetting(change: Promise<void>) {
     setSettingsError(null);
-    void change.catch((error) => setSettingsError(`Could not update conversation settings: ${String(error)}`));
+    void change.catch((error) =>
+      setSettingsError(`Could not update conversation settings: ${String(error)}`),
+    );
   }
 
-  const { messagesContainerRef, messagesContentRef, messagesEndRef, isAtBottom, unreadCount, jumpToBottom } =
-    useScrollState(conversationId, conversation?.messages);
+  const {
+    messagesContainerRef,
+    messagesContentRef,
+    messagesEndRef,
+    isAtBottom,
+    unreadCount,
+    jumpToBottom,
+  } = useScrollState(conversationId, conversation?.messages);
 
   useLatestPlanPreview(conversation, conversationId);
 
@@ -410,11 +413,15 @@ export function AgentChatPane({
                 onSubmitEdit={(msgId) => {
                   const text = editState.text;
                   setEditState({ id: null, text: "" });
-                  void actions.forkAndResend(conversationId, msgId, text);
+                  void actions
+                    .forkConversation(conversationId, msgId, text)
+                    .catch((e) => console.warn("Fork failed; original conversation is intact:", e));
                 }}
                 onCancelEdit={() => setEditState({ id: null, text: "" })}
-                onRestoreFrom={(msgId, content) =>
-                  void actions.forkAndResend(conversationId, msgId, content)
+                onRewindFrom={(msgId) =>
+                  void actions
+                    .rewindConversation(conversationId, msgId)
+                    .catch((e) => console.warn("Rewind failed; transcript is intact:", e))
                 }
                 onRetryLastTurn={() => void actions.retryLastTurn(conversationId)}
                 isActive={isActive}
@@ -457,10 +464,7 @@ export function AgentChatPane({
               area (header/composer stay visible) until collapsed. */}
           {reviewOpen && (
             <div className="absolute inset-0 z-20 bg-bg-primary">
-              <ReviewSurface
-                conversationId={conversationId}
-                onClose={closeReview}
-              />
+              <ReviewSurface conversationId={conversationId} onClose={closeReview} />
             </div>
           )}
         </div>
@@ -485,7 +489,11 @@ export function AgentChatPane({
         />
       )}
 
-      {settingsError && <p role="alert" className="px-3 py-1 text-xs text-accent-red">{settingsError}</p>}
+      {settingsError && (
+        <p role="alert" className="px-3 py-1 text-xs text-accent-red">
+          {settingsError}
+        </p>
+      )}
       <Composer
         variant="chat"
         conversationId={conversationId}

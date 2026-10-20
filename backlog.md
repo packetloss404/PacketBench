@@ -34,12 +34,20 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       survive process exit. Focused Vitest (draft store, Composer) plus
       TypeScript/ESLint pass. Durable assets and native paste/drop restart checks
       remain open (F2B).
-- [ ] **P1 — Durable draft assets and Agents history (F2B, F3).** Add the
-      backend asset service/migration and submission pins; make Fork preserve
-      the original thread and distinguish transcript rewind from file
-      restoration. Add failed-send/restart/fork scenarios before promoting
-      source findings to native proof. These are not the completed Flight-runtime
-      fixes.
+- [x] **P1 — Fork and truthful transcript rewind (F3 core).** Edit & fork now
+      creates a real child conversation with lineage and leaves the parent
+      byte-identical. Rewind saves the later transcript as a revision, truncates
+      through the selected turn, changes no files and starts no turn; Stop
+      failure aborts it. A read-only **View previous history** surface exposes
+      saved revisions, and parent deletion retains a checkout still referenced by
+      a fork. Focused store/UI tests and TypeScript/ESLint pass.
+- [ ] **P1 — F3 residuals.** Prevent transcript mutation/fork on Flight-owned
+      builder/reviewer conversations; resolve old message links to saved
+      revisions; native local/SSH restart evidence for lineage and revisions.
+- [ ] **P1 — Durable draft assets (F2B).** Add the backend asset
+      service/migration and submission/checkpoint pins; verify failed-send,
+      restart and capacity behavior. No crash-durable attachment claim until
+      this lands.
 - [ ] **P1 — Comfortable, adjustable reading defaults (V1–V3).** Raise shared
       typography, repair informative-text contrast in both themes, and add
       persisted reading base/App scale plus a separately owned terminal size

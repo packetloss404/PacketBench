@@ -4,7 +4,6 @@ import type { AgentConversation, AgentMessage } from "@/types/agent-conversation
 const listenMock = vi.fn();
 const invokeMock = vi.fn();
 const closeApiAgentSessionMock = vi.fn();
-const cancelApiAgentSessionMock = vi.fn();
 const sendApiAgentMessageMock = vi.fn();
 const startApiAgentSessionMock = vi.fn();
 const loadConversationsMock = vi.fn();
@@ -23,8 +22,7 @@ vi.mock("@/lib/agentsMd", () => ({
 
 vi.mock("@/stores/memoryStore", () => ({
   useMemoryStore: {
-    getState: vi.fn(() => ({
-    })),
+    getState: vi.fn(() => ({})),
   },
 }));
 
@@ -47,12 +45,12 @@ vi.mock("@/lib/tauri", () => ({
   saveAgentsSlice: vi.fn().mockResolvedValue(undefined),
   startApiAgentSession: (...args: unknown[]) => startApiAgentSessionMock(...args),
   sendApiAgentMessage: (...args: unknown[]) => sendApiAgentMessageMock(...args),
-  cancelApiAgentSession: (...args: unknown[]) => cancelApiAgentSessionMock(...args),
+  cancelApiAgentSession: vi.fn().mockResolvedValue(undefined),
   cancelPendingTools: vi.fn(),
   closeApiAgentSession: (...args: unknown[]) => closeApiAgentSessionMock(...args),
   saveConversation: vi.fn().mockResolvedValue(undefined),
   loadConversations: (...args: unknown[]) => loadConversationsMock(...args),
-  deleteConversationFile: vi.fn(),
+  deleteConversationFile: vi.fn().mockResolvedValue(undefined),
   changeAgentModel: vi.fn(),
   setPlanMode: vi.fn(),
   setPermissionMode: vi.fn(),
@@ -62,6 +60,7 @@ vi.mock("@/lib/tauri", () => ({
   retryLastTurn: vi.fn(),
   exportConversationMarkdown: vi.fn(),
   saveWorkspacesSlice: vi.fn().mockResolvedValue(undefined),
+  removeConversationWorktree: vi.fn().mockResolvedValue(undefined),
 }));
 
 function makeMessage(overrides: Partial<AgentMessage> = {}): AgentMessage {
@@ -74,8 +73,35 @@ function makeMessage(overrides: Partial<AgentMessage> = {}): AgentMessage {
   };
 }
 
+function conversation(overrides: Partial<AgentConversation> = {}): AgentConversation {
+  return {
+    id: "conv-A",
+    title: "Test",
+    agent: "api-openai",
+    projectPath: "D:/projects/example",
+    status: "idle",
+    messages: [
+      makeMessage({ id: "msg-1", content: "user one" }),
+      makeMessage({ id: "msg-2", role: "assistant", content: "assistant one" }),
+      makeMessage({ id: "msg-3", content: "user two" }),
+      makeMessage({ id: "msg-4", role: "assistant", content: "assistant two" }),
+    ],
+    sessionId: "conv-A",
+    rawOutput: "",
+    createdAt: 1,
+    updatedAt: 1,
+    mode: "api",
+    provider: "openai",
+    model: "gpt-4o",
+    ...overrides,
+  };
+}
+
 function seedConversation(
-  store: { getState: () => { conversations: AgentConversation[] }; setState: (s: Partial<{ conversations: AgentConversation[] }>) => void },
+  store: {
+    getState: () => { conversations: AgentConversation[] };
+    setState: (s: Partial<{ conversations: AgentConversation[] }>) => void;
+  },
   conv: AgentConversation,
 ): void {
   store.setState({
@@ -83,7 +109,7 @@ function seedConversation(
   });
 }
 
-describe("agentTaskStore.forkAndResend — current behavior lock-down", () => {
+describe("agentTaskStore.forkConversation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
@@ -93,273 +119,232 @@ describe("agentTaskStore.forkAndResend — current behavior lock-down", () => {
     invokeMock.mockResolvedValue(undefined);
     loadConversationsMock.mockResolvedValue([]);
     closeApiAgentSessionMock.mockResolvedValue(undefined);
-    cancelApiAgentSessionMock.mockResolvedValue(undefined);
     sendApiAgentMessageMock.mockResolvedValue(undefined);
     startApiAgentSessionMock.mockResolvedValue(undefined);
   });
 
-  it("truncates the conversation transcript to before the edited message", async () => {
+  it("creates a child with lineage and leaves the parent byte-for-byte intact", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const m1 = makeMessage({ id: "msg-1", content: "user one" });
-    const m2 = makeMessage({ id: "msg-2", role: "assistant", content: "assistant one" });
-    const m3 = makeMessage({ id: "msg-3", content: "user two — to edit" });
-    const m4 = makeMessage({ id: "msg-4", role: "assistant", content: "assistant two" });
-    const conv: AgentConversation = {
-      id: "conv-A",
-      title: "Test",
-      agent: "api-openai",
-      projectPath: "D:/projects/example",
-      status: "idle",
-      messages: [m1, m2, m3, m4],
-      sessionId: "conv-A",
-      rawOutput: "",
-      createdAt: 1,
-      updatedAt: 1,
-      mode: "api",
-      provider: "openai",
-      model: "gpt-4o",
-    };
-    seedConversation(useAgentTaskStore, conv);
-
-    await useAgentTaskStore.getState().forkAndResend("conv-A", "msg-3", "user two — edited");
-
-    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
-    expect(updated).toBeDefined();
-    // The first two messages survive truncation. forkAndResend then calls
-    // sendMessage which itself appends the user turn + a streaming
-    // assistant shell, so the post-fork length is implementation-defined;
-    // assert only that the truncation prefix is preserved at the front.
-    const surviving = updated!.messages.slice(0, 2);
-    expect(surviving.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
-  });
-
-  it("clears the live session pointer + resume token so the next turn starts fresh", async () => {
-    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const conv: AgentConversation = {
-      id: "conv-A",
-      title: "Test",
-      agent: "api-openai",
-      projectPath: "D:/projects/example",
-      status: "idle",
-      messages: [
-        makeMessage({ id: "msg-1", content: "first" }),
-        makeMessage({ id: "msg-2", content: "edit me" }),
-      ],
-      sessionId: "conv-A",
-      rawOutput: "",
-      createdAt: 1,
-      updatedAt: 1,
-      mode: "api",
-      provider: "openai",
-      model: "gpt-4o",
+    const parent = conversation({
       resumeToken: "stale-token",
-    };
-    seedConversation(useAgentTaskStore, conv);
+      worktree: {
+        basePath: "D:/projects/example",
+        worktreePath: "D:/projects/example/.pkt-worktrees/conv-A",
+        branch: "pkt/conv-A",
+        createdAt: 1,
+        state: "active",
+      },
+    });
+    seedConversation(useAgentTaskStore, parent);
+    const before = JSON.stringify(parent);
 
-    await useAgentTaskStore.getState().forkAndResend("conv-A", "msg-2", "edited content");
+    const childId = await useAgentTaskStore
+      .getState()
+      .forkConversation("conv-A", "msg-3", "edited content");
 
-    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
-    expect(updated?.sessionId).toBeNull();
-    expect(updated?.resumeToken).toBeUndefined();
+    expect(childId).toBeTruthy();
+    expect(childId).not.toBe("conv-A");
+
+    const after = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
+    expect(JSON.stringify(after)).toBe(before);
+
+    const child = useAgentTaskStore.getState().conversations.find((c) => c.id === childId);
+    expect(child).toBeDefined();
+    // Prefix before the edited turn, then the explicitly sent new turn.
+    expect(child!.messages[0].id).toBe("msg-1");
+    expect(child!.messages[1].id).toBe("msg-2");
+    expect(child!.messages.some((m) => m.content === "edited content")).toBe(true);
+    expect(child!.messages.some((m) => m.id === "msg-3")).toBe(false);
+    expect(child!.lineage).toMatchObject({
+      parentConversationId: "conv-A",
+      forkedFromMessageId: "msg-3",
+      kind: "fork",
+      contextMode: "semantic",
+    });
+    // The child is not a second worktree owner and does not inherit live state.
+    expect(child!.worktree).toBeUndefined();
+    expect(child!.resumeToken).toBeUndefined();
+    expect(child!.sessionId).toBeNull();
   });
 
-  it("closes the live API session so a stale stream can't write into the new transcript", async () => {
+  it("does not start anything for whitespace-only content", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const conv: AgentConversation = {
-      id: "conv-A",
-      title: "Test",
-      agent: "api-openai",
-      projectPath: "D:/projects/example",
-      status: "idle",
-      messages: [makeMessage({ id: "msg-1", content: "edit me" })],
-      sessionId: "conv-A",
-      rawOutput: "",
-      createdAt: 1,
-      updatedAt: 1,
-      mode: "api",
-      provider: "openai",
-      model: "gpt-4o",
-    };
-    seedConversation(useAgentTaskStore, conv);
+    seedConversation(useAgentTaskStore, conversation());
 
-    await useAgentTaskStore.getState().forkAndResend("conv-A", "msg-1", "edited");
+    const childId = await useAgentTaskStore.getState().forkConversation("conv-A", "msg-3", "   ");
 
-    expect(closeApiAgentSessionMock).toHaveBeenCalledWith("conv-A");
+    expect(childId).toBeNull();
+    expect(useAgentTaskStore.getState().conversations).toHaveLength(1);
+    expect(startApiAgentSessionMock).not.toHaveBeenCalled();
   });
 
-  it("wipes parked approvals + transient thinking state for the forked conversation", async () => {
+  it("refuses to fork an active conversation", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    seedConversation(
+      useAgentTaskStore,
+      conversation({
+        status: "active",
+        messages: [
+          makeMessage({ id: "msg-1" }),
+          makeMessage({ id: "msg-2", isStreaming: true, role: "assistant" }),
+        ],
+      }),
+    );
+
+    const childId = await useAgentTaskStore
+      .getState()
+      .forkConversation("conv-A", "msg-1", "edited");
+
+    expect(childId).toBeNull();
+    expect(useAgentTaskStore.getState().conversations).toHaveLength(1);
+    expect(startApiAgentSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves the parent intact when child persistence fails", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const tauri = await import("@/lib/tauri");
+    vi.mocked(tauri.saveConversation).mockRejectedValueOnce(new Error("disk full"));
+    seedConversation(useAgentTaskStore, conversation());
+    const before = JSON.stringify(useAgentTaskStore.getState().conversations[0]);
+
+    await expect(
+      useAgentTaskStore.getState().forkConversation("conv-A", "msg-3", "edited"),
+    ).rejects.toThrow("disk full");
+
+    expect(useAgentTaskStore.getState().conversations).toHaveLength(1);
+    expect(JSON.stringify(useAgentTaskStore.getState().conversations[0])).toBe(before);
+  });
+
+  it("retains the parent checkout while a fork still references it", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const tauri = await import("@/lib/tauri");
+    const removeWorktree = vi.mocked(tauri.removeConversationWorktree);
+    seedConversation(
+      useAgentTaskStore,
+      conversation({
+        worktree: {
+          basePath: "D:/projects/example",
+          worktreePath: "D:/projects/example/.pkt-worktrees/conv-A",
+          branch: "pkt/conv-A",
+          createdAt: 1,
+          state: "active",
+        },
+      }),
+    );
+
+    const childId = await useAgentTaskStore
+      .getState()
+      .forkConversation("conv-A", "msg-3", "edited");
+    expect(childId).toBeTruthy();
+
+    const outcome = await useAgentTaskStore.getState().deleteConversation("conv-A");
+
+    expect(outcome?.discarded).toBe(false);
+    expect(outcome?.error).toContain("fork(s) still reference");
+    expect(removeWorktree).not.toHaveBeenCalled();
+  });
+});
+
+describe("agentTaskStore.rewindConversation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    vi.doUnmock("@/stores/agentTaskStore");
+    localStorage.clear();
+    listenMock.mockResolvedValue(() => {});
+    invokeMock.mockResolvedValue(undefined);
+    loadConversationsMock.mockResolvedValue([]);
+    closeApiAgentSessionMock.mockResolvedValue(undefined);
+    startApiAgentSessionMock.mockResolvedValue(undefined);
+  });
+
+  it("saves a revision and truncates through the selected turn without sending", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { useAgentApprovalStore } = await import("@/stores/agentApprovalStore");
     const { useAgentStreamingStore } = await import("@/stores/agentStreamingStore");
-
-    const conv: AgentConversation = {
-      id: "conv-A",
-      title: "Test",
-      agent: "api-openai",
-      projectPath: "D:/projects/example",
-      status: "idle",
-      messages: [makeMessage({ id: "msg-1", content: "edit me" })],
-      sessionId: "conv-A",
-      rawOutput: "",
-      createdAt: 1,
-      updatedAt: 1,
-      mode: "api",
-      provider: "openai",
-      model: "gpt-4o",
-    };
-    seedConversation(useAgentTaskStore, conv);
+    const { useAgentPlanStore } = await import("@/stores/agentPlanStore");
+    seedConversation(useAgentTaskStore, conversation());
     useAgentApprovalStore.getState().addPendingPermission("conv-A", {
       id: "perm-1",
       name: "bash",
       arguments: "{}",
     });
     useAgentStreamingStore.getState().appendThinking("conv-A", "midstream...");
+    useAgentPlanStore
+      .getState()
+      .setPlan("conv-A", [{ id: "task-1", content: "Discarded step", status: "completed" }]);
 
-    await useAgentTaskStore.getState().forkAndResend("conv-A", "msg-1", "edited");
+    const rewound = await useAgentTaskStore.getState().rewindConversation("conv-A", "msg-3");
 
+    expect(rewound).toBe(true);
+    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
+    expect(updated!.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2", "msg-3"]);
+    expect(updated!.sessionId).toBeNull();
+    expect(updated!.transcriptRevisions).toHaveLength(1);
+    expect(updated!.transcriptRevisions![0]).toMatchObject({
+      conversationId: "conv-A",
+      operation: "transcript_rewind",
+      throughMessageId: "msg-3",
+      messageCount: 4,
+    });
+    expect(updated!.transcriptRevisions![0].messages.map((m) => m.id)).toEqual([
+      "msg-1",
+      "msg-2",
+      "msg-3",
+      "msg-4",
+    ]);
+    // Transcript-only: no provider start and no filesystem claim.
+    expect(startApiAgentSessionMock).not.toHaveBeenCalled();
+    expect(sendApiAgentMessageMock).not.toHaveBeenCalled();
+    expect(closeApiAgentSessionMock).toHaveBeenCalledWith("conv-A");
     expect(useAgentApprovalStore.getState().permissions.has("conv-A")).toBe(false);
     expect(useAgentStreamingStore.getState().thinkingStream.has("conv-A")).toBe(false);
-  });
-
-  it("is a no-op when the new content is whitespace-only", async () => {
-    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const conv: AgentConversation = {
-      id: "conv-A",
-      title: "Test",
-      agent: "api-openai",
-      projectPath: "D:/projects/example",
-      status: "idle",
-      messages: [
-        makeMessage({ id: "msg-1", content: "first" }),
-        makeMessage({ id: "msg-2", content: "second" }),
-      ],
-      sessionId: "conv-A",
-      rawOutput: "",
-      createdAt: 1,
-      updatedAt: 1,
-      mode: "api",
-      provider: "openai",
-      model: "gpt-4o",
-    };
-    seedConversation(useAgentTaskStore, conv);
-
-    await useAgentTaskStore.getState().forkAndResend("conv-A", "msg-2", "   ");
-
-    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
-    expect(updated?.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
-    expect(closeApiAgentSessionMock).not.toHaveBeenCalled();
-  });
-
-  // Regression gate for the inline per-message Restore affordance (which
-  // replaced the CheckpointPanel side rail): restoring IS forkAndResend
-  // with the message's own unchanged content. Locks down that resending
-  // identical content truncates the tail and re-dispatches the turn.
-  it("restore: resending a message's own content truncates the tail and re-runs that turn", async () => {
-    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const { useAgentPlanStore } = await import("@/stores/agentPlanStore");
-    const m1 = makeMessage({ id: "msg-1", content: "user one" });
-    const m2 = makeMessage({ id: "msg-2", role: "assistant", content: "assistant one" });
-    const m3 = makeMessage({ id: "msg-3", content: "restore me" });
-    const m4 = makeMessage({ id: "msg-4", role: "assistant", content: "assistant two" });
-    const conv: AgentConversation = {
-      id: "conv-A",
-      title: "Test",
-      agent: "api-openai",
-      projectPath: "D:/projects/example",
-      status: "idle",
-      messages: [m1, m2, m3, m4],
-      sessionId: "conv-A",
-      rawOutput: "",
-      createdAt: 1,
-      updatedAt: 1,
-      mode: "api",
-      provider: "openai",
-      model: "gpt-4o",
-    };
-    seedConversation(useAgentTaskStore, conv);
-    // Simulate a plan proposed + approved on the timeline being discarded —
-    // the rewind must clear the plan substore or PlanPanel keeps rendering a
-    // stale checklist/approved state over a transcript that no longer
-    // contains it (it re-derives any plan in the kept prefix from tool calls).
-    useAgentPlanStore.getState().setPlan("conv-A", [
-      { id: "task-1", content: "Discarded-timeline step", status: "completed" },
-    ]);
-    useAgentPlanStore.getState().hydrateConversation("conv-A", { planApproved: true });
-
-    // Restore = fork with the original content, unedited.
-    await useAgentTaskStore.getState().forkAndResend("conv-A", "msg-3", m3.content);
-
-    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
-    expect(updated).toBeDefined();
-    // Prefix before the restore point survives untouched.
-    expect(updated!.messages.slice(0, 2).map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
-    // Everything at/after the restore point is discarded (new ids replace them).
-    expect(updated!.messages.some((m) => m.id === "msg-3")).toBe(false);
-    expect(updated!.messages.some((m) => m.id === "msg-4")).toBe(false);
-    // The restored turn is re-dispatched with the identical content.
-    const resent = updated!.messages.find(
-      (m) => m.role === "user" && m.content === "restore me",
-    );
-    expect(resent).toBeDefined();
-    expect(resent!.id).not.toBe("msg-3");
-    // Session detached so the resend starts a fresh backend session.
-    expect(closeApiAgentSessionMock).toHaveBeenCalledWith("conv-A");
-    // The plan substore was cleared with the discarded timeline — no stale
-    // TodoWrite checklist or planApproved phantom survives the rewind.
     expect(useAgentPlanStore.getState().plan.has("conv-A")).toBe(false);
-    expect(useAgentPlanStore.getState().getPlanApproved("conv-A")).toBe(false);
   });
 
-  // Audit suggested forkAndResend should fork into a brand-new
-  // conversation with a parent pointer; the implementation deliberately
-  // truncates in place to avoid multiplying conversations on every
-  // edit-resend. Lock that decision down so a future refactor toward
-  // "true fork" is a deliberate, test-driven change rather than a drift.
-  it("does NOT create a new conversation — truncates source in place and leaves parentConversationId unset", async () => {
+  it("refuses to rewind when Stop does not settle the turn", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const conv: AgentConversation = {
-      id: "conv-A",
-      title: "Test",
-      agent: "api-openai",
-      projectPath: "D:/projects/example",
-      status: "idle",
-      messages: [
-        makeMessage({ id: "msg-1", content: "user one" }),
-        makeMessage({ id: "msg-2", role: "assistant", content: "assistant one" }),
-        makeMessage({ id: "msg-3", content: "edit me" }),
-        makeMessage({ id: "msg-4", role: "assistant", content: "assistant two" }),
-      ],
-      sessionId: "conv-A",
-      rawOutput: "",
-      createdAt: 1,
-      updatedAt: 1,
-      mode: "api",
-      provider: "openai",
-      model: "gpt-4o",
-    };
-    seedConversation(useAgentTaskStore, conv);
-    const beforeIds = useAgentTaskStore
-      .getState()
-      .conversations.map((c) => c.id)
-      .sort();
+    invokeMock.mockRejectedValueOnce(new Error("cancel not acknowledged"));
+    seedConversation(
+      useAgentTaskStore,
+      conversation({
+        status: "active",
+        messages: [
+          makeMessage({ id: "msg-1" }),
+          makeMessage({ id: "msg-2", isStreaming: true, role: "assistant" }),
+        ],
+      }),
+    );
 
-    await useAgentTaskStore.getState().forkAndResend("conv-A", "msg-3", "edited content");
+    const rewound = await useAgentTaskStore.getState().rewindConversation("conv-A", "msg-1");
 
-    const afterIds = useAgentTaskStore
-      .getState()
-      .conversations.map((c) => c.id)
-      .sort();
-    // Same set of conversations — no new sibling created by the fork.
-    expect(afterIds).toEqual(beforeIds);
-
+    expect(rewound).toBe(false);
     const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
-    expect(updated).toBeDefined();
-    // No parent pointer is wired up — fork is in-place, not relational.
-    expect(updated?.parentConversationId).toBeUndefined();
-    // Truncation prefix preserved (msg-3 + msg-4 are dropped before sendMessage re-appends a user turn).
-    expect(updated!.messages.slice(0, 2).map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
-    // The original message id at the edit point is gone — confirms in-place truncation, not branching.
-    expect(updated!.messages.some((m) => m.id === "msg-3")).toBe(false);
-    expect(updated!.messages.some((m) => m.id === "msg-4")).toBe(false);
+    expect(updated!.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
+    expect(updated!.transcriptRevisions).toBeUndefined();
+  });
+
+  it("leaves the transcript intact when the revision cannot be persisted", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const tauri = await import("@/lib/tauri");
+    vi.mocked(tauri.saveConversation).mockRejectedValueOnce(new Error("disk full"));
+    seedConversation(useAgentTaskStore, conversation());
+
+    const rewound = await useAgentTaskStore.getState().rewindConversation("conv-A", "msg-3");
+
+    expect(rewound).toBe(false);
+    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
+    expect(updated!.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2", "msg-3", "msg-4"]);
+    expect(updated!.transcriptRevisions).toBeUndefined();
+  });
+
+  it("is a no-op for a missing message id", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    seedConversation(useAgentTaskStore, conversation());
+
+    const rewound = await useAgentTaskStore.getState().rewindConversation("conv-A", "missing");
+
+    expect(rewound).toBe(false);
+    expect(closeApiAgentSessionMock).not.toHaveBeenCalled();
   });
 });

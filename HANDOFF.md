@@ -41,10 +41,14 @@ conversation/launch draft in memory, late decodes are generation-fenced, and
 type/size/read rejections are visible with a session-only disclosure. Text
 persistence is unchanged. F8 landed next: IME composition now suppresses
 composer shortcuts, history recall restores the pre-recall draft, and a
-deliberate edit after recall is not overwritten. Focused Vitest, TypeScript and
-ESLint pass. No build or installation was run and native Windows acceptance
-(including real IME confirmation) remains open; F2B durable assets are not
-implemented.
+deliberate edit after recall is not overwritten. F3 core followed: Edit & fork
+creates a real child with lineage and leaves the parent intact; Rewind saves a
+read-only transcript revision, changes no files and starts no turn; parent
+deletion retains a checkout still referenced by a fork. Flight-owned mutation
+gating, old message-link resolution, native restart evidence and F2B durable
+assets remain open. Focused Vitest, TypeScript and ESLint pass. No build or
+installation was run and native Windows acceptance (including real IME
+confirmation) remains open.
 
 ## Later agent and experience review — October 19, 2026
 

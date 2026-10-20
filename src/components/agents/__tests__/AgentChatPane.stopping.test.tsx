@@ -39,7 +39,8 @@ const mocks = vi.hoisted(() => ({
     removeDiffComment: vi.fn(),
     clearDiffComments: vi.fn(),
     retryLastTurn: vi.fn(),
-    forkAndResend: vi.fn(),
+    forkConversation: vi.fn(),
+    rewindConversation: vi.fn(),
     selectConversation: vi.fn(),
   },
   approvalState: {
