@@ -152,4 +152,63 @@ describe("AgentSidebar", () => {
       .map((element) => element.textContent);
     expect(titles).toEqual(["Older pinned", "Newer unpinned"]);
   });
+
+  it("groups worktree and root conversations under one base project", () => {
+    agentStore.state.conversations = [
+      conversation({ id: "root", title: "Root thread" }),
+      conversation({
+        id: "wt-b",
+        title: "Worktree thread",
+        projectPath: "D:/projects/PacketBench/.pkt-worktrees/conv-b",
+        worktree: {
+          basePath: "D:/projects/PacketBench",
+          worktreePath: "D:/projects/PacketBench/.pkt-worktrees/conv-b",
+          branch: "pkt/conv-b",
+          createdAt: 1,
+          state: "active",
+        },
+      }),
+    ];
+
+    render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
+
+    // One stable group header for the base project, not per worktree path.
+    expect(screen.getAllByText("PacketBench")).toHaveLength(1);
+    expect(screen.getByText("Root thread")).toBeInTheDocument();
+    expect(screen.getByText("Worktree thread")).toBeInTheDocument();
+  });
+
+  it("distinguishes two repositories on the same SSH host", () => {
+    agentStore.state.conversations = [
+      conversation({
+        id: "s1",
+        title: "Repo A thread",
+        projectPath: "/srv/repoA",
+        sshTarget: {
+          id: "box",
+          name: "Box",
+          host: "box.example",
+          user: "ian",
+          remotePath: "/srv/repoA",
+        },
+      }),
+      conversation({
+        id: "s2",
+        title: "Repo B thread",
+        projectPath: "/srv/repoB",
+        sshTarget: {
+          id: "box",
+          name: "Box",
+          host: "box.example",
+          user: "ian",
+          remotePath: "/srv/repoB",
+        },
+      }),
+    ];
+
+    render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
+
+    expect(screen.getByText("repoA @ Box")).toBeInTheDocument();
+    expect(screen.getByText("repoB @ Box")).toBeInTheDocument();
+  });
 });

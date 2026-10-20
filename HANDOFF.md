@@ -50,8 +50,11 @@ slow launch no longer steals conversation selection; single-flight holds through
 settlement. F2B core landed: a backend draft-asset service (stage/read/release/
 gc) persists image bytes in app-data with type/size/digest validation, the
 frontend keeps only metadata refs in a versioned v2 envelope and re-reads
-previews after restart, and the legacy v1 text map still migrates. Flight-owned
-mutation gating, old message-link resolution, submission/checkpoint pins,
+previews after restart, and the legacy v1 text map still migrates. F5 core
+followed: worktree and root conversations group under their base project,
+two repositories on one SSH host are labelled repo @ server, and New opens
+against the selected conversation's base project. Flight-owned mutation
+gating, old message-link resolution, submission/checkpoint pins,
 scheduled GC/capacity, H2 typed-image replay, native restart evidence and the
 F4 phase surface remain open. Focused Vitest, Rust unit tests, TypeScript and
 ESLint pass. No build or installation was run and native Windows acceptance

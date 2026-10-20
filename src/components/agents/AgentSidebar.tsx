@@ -46,24 +46,49 @@ function providerLabel(agent: string): string {
   return agent;
 }
 
+/** Normalize separators + trailing slashes without touching case (Mac/SSH
+ * paths are case-sensitive; collapsing to a canonical base is done by the
+ * backend resolver when it exists). */
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+/** F5: the stable base checkout a conversation belongs to. A worktree
+ * conversation groups under its `worktree.basePath`, never under a path that
+ * changes per thread. */
+function baseProjectPath(conversation: AgentConversation): string {
+  return conversation.worktree?.basePath ?? conversation.projectPath;
+}
+
 function projectKey(conversation: AgentConversation): string {
-  return conversation.sshTarget
-    ? `ssh:${conversation.sshTarget.id}:${conversation.projectPath}`
-    : `local:${conversation.projectPath}`;
+  if (conversation.sshTarget) {
+    // Two repositories on one host stay distinguishable; `remotePath` is the
+    // stable remote checkout identity, not the display name.
+    return `ssh:${conversation.sshTarget.id}:${normalizePath(conversation.sshTarget.remotePath)}`;
+  }
+  return `local:${normalizePath(baseProjectPath(conversation))}`;
 }
 
 function projectLabel(conversation: AgentConversation, labels: Record<string, string>): string {
-  if (conversation.sshTarget) return conversation.sshTarget.name;
-  const custom = labels[conversation.projectPath];
+  if (conversation.sshTarget) {
+    const parts = conversation.sshTarget.remotePath.replace(/\\/g, "/").split("/").filter(Boolean);
+    const repo = parts[parts.length - 1] ?? conversation.sshTarget.remotePath;
+    return `${repo} @ ${conversation.sshTarget.name}`;
+  }
+  const base = baseProjectPath(conversation);
+  const custom = labels[base] ?? labels[conversation.projectPath];
   if (custom) return custom;
-  const parts = conversation.projectPath.replace(/\\/g, "/").split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? conversation.projectPath;
+  const parts = normalizePath(base).split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? base;
 }
 
 function matchesSearch(conversation: AgentConversation, query: string): boolean {
   const normalized = query.toLowerCase();
   if (conversation.title?.toLowerCase().includes(normalized)) return true;
+  const base = normalizePath(baseProjectPath(conversation)).toLowerCase();
+  if (base.includes(normalized)) return true;
   if (conversation.projectPath.toLowerCase().includes(normalized)) return true;
+  if (conversation.sshTarget?.remotePath.toLowerCase().includes(normalized)) return true;
   return conversation.messages.some((message) =>
     message.content?.toLowerCase().includes(normalized),
   );
@@ -128,11 +153,7 @@ function sortConversations(
   });
 }
 
-export function AgentSidebar({
-  selectedId,
-  onSelect,
-  onNewAgent,
-}: AgentSidebarProps) {
+export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarProps) {
   const conversations = useAgentTaskStore((state) => state.conversations);
   const archiveConversation = useAgentTaskStore((state) => state.archiveConversation);
   const unarchiveConversation = useAgentTaskStore((state) => state.unarchiveConversation);
@@ -242,9 +263,7 @@ export function AgentSidebar({
     // the method a rename is a control that undoes itself on the next listing.
     const busy = conversation.status === "active";
     const canRename = !busy && capabilitiesFor(conversation).canRename;
-    const rowShell = `group relative rounded-lg ${
-      selected ? "bg-bg-hover" : ""
-    }`;
+    const rowShell = `group relative rounded-lg ${selected ? "bg-bg-hover" : ""}`;
 
     if (editing?.id === conversation.id) {
       return (
@@ -314,9 +333,7 @@ export function AgentSidebar({
           aria-current={selected ? "page" : undefined}
         >
           <StatusDot state={dot} />
-          <span className="min-w-0 flex-1 truncate">
-            {conversation.title || "(untitled)"}
-          </span>
+          <span className="min-w-0 flex-1 truncate">{conversation.title || "(untitled)"}</span>
           {/* The hover actions sit ON this cell, so it fades rather than
               reflowing the row when the pointer arrives. */}
           <span className="shrink-0 font-mono text-meta text-text-faint transition-opacity group-focus-within:opacity-0 group-hover:opacity-0">
@@ -437,7 +454,7 @@ export function AgentSidebar({
                 <section key={key}>
                   <div
                     className="flex items-center gap-2 rounded-lg px-2 py-[4.5px] text-ui font-semibold text-text-primary"
-                    title={example.projectPath}
+                    title={baseProjectPath(example)}
                   >
                     {example.sshTarget ? (
                       <Server size={10} className="shrink-0 text-accent-green" />
@@ -459,7 +476,6 @@ export function AgentSidebar({
             })}
           </>
         )}
-
       </div>
 
       {/* Footer CTA — the ONE create control in this sidebar (the header "+"
@@ -469,7 +485,7 @@ export function AgentSidebar({
           type="button"
           onClick={onNewAgent}
           title="New agent — opens the launch composer"
-          className="bg-accent-green/15 hover:bg-accent-green/25 flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent-line px-2 py-1.5 text-ui font-medium text-accent-green transition-colors"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent-line bg-accent-green/15 px-2 py-1.5 text-ui font-medium text-accent-green transition-colors hover:bg-accent-green/25"
         >
           <Plus size={11} />
           New agent

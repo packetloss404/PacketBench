@@ -128,8 +128,17 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
   }, [pinnedAgent, selectedConversationId]);
 
   const handleNewAgent = useCallback(() => {
+    // F5: contextual New — open the launch composer against the selected
+    // conversation's stable base project, not the previous global repo.
+    const current = selectedConversationId
+      ? useAgentTaskStore.getState().conversations.find((c) => c.id === selectedConversationId)
+      : undefined;
+    if (current) {
+      const base = current.worktree?.basePath ?? current.projectPath;
+      useAgentTaskStore.getState().setSelectedRepo(base);
+    }
     selectConversation(null);
-  }, [selectConversation]);
+  }, [selectConversation, selectedConversationId]);
 
   const handleProfileChange = useCallback((profileId: string) => {
     userPickedProfile.current = true;

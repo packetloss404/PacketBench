@@ -71,11 +71,15 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       they were in flight, and a slow launch no longer steals conversation
       selection (`selectOnCreate: false` + guarded re-select). Single-flight
       holds through async settlement. Focused tests, TypeScript and ESLint pass.
-- [ ] **P2 — Preparation phase surface, cancel tombstones and continuity (F4
-      residual, F5–F7).** Expose Preparing → Starting → Running and reconcile
-      cancelled/unknown preparations at the backend; group stable base projects,
-      resolve exact attention blockers over review and retain search/reading
-      position.
+- [x] **P2 — Stable base-project grouping (F5 core).** Worktree and root
+      conversations now group under their `worktree.basePath`, two
+      repositories on one SSH host are labelled `repo @ server`, and New opens
+      against the selected conversation's base project. Focused sidebar/Agents
+      tests, TypeScript and ESLint pass.
+- [ ] **P2 — Preparation phase surface, cancel tombstones and remaining
+      continuity (F4 residual, F6–F7).** Expose Preparing → Starting → Running
+      and reconcile cancelled/unknown preparations at the backend; resolve exact
+      attention blockers over review and retain search/reading position.
 - [ ] **P2 — Shared GUI accessibility and layout (V4–V8).** Unify scalable
       theme-aware code, name icon actions, reveal keyboard focus, enlarge targets,
       resize/read sidebar titles and adapt narrow execution context. Use source
