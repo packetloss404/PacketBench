@@ -73,6 +73,7 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
   const composerMode = useAgentSettingsStore((state) => state.composerMode) as ComposerMode;
   const setComposerMode = useAgentSettingsStore((state) => state.setComposerMode);
   const userPickedProfile = useRef(false);
+  const userInteractedRef = useRef(false);
   const autoPickStarted = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const recordVisibleConversations = useWorkspaceAgentsDogfoodStore(
@@ -112,6 +113,9 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
       }),
     ).then((results) => {
       if (cancelled) return;
+      // F4: a late probe result must never overwrite an explicit choice the
+      // user made while it was in flight.
+      if (userInteractedRef.current) return;
       const ready = results.find((result) => result?.status.status === "ready");
       if (!ready) return;
       setSelectedAgent(ready.agent);
@@ -129,6 +133,7 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
 
   const handleProfileChange = useCallback((profileId: string) => {
     userPickedProfile.current = true;
+    userInteractedRef.current = true;
     setSelectedProfileId(profileId);
   }, []);
 
@@ -195,10 +200,16 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
             variant="launch"
             textareaRef={textareaRef}
             selectedAgent={selectedAgent}
-            onAgentChange={setSelectedAgent}
+            onAgentChange={(agent) => {
+              userInteractedRef.current = true;
+              setSelectedAgent(agent);
+            }}
             onLaunch={handleLaunch}
             selectedModel={selectedModel}
-            onModelChange={setSelectedModel}
+            onModelChange={(model) => {
+              userInteractedRef.current = true;
+              setSelectedModel(model);
+            }}
             agentMode={agentMode}
             onAgentModeChange={setAgentMode}
             selectedProfileId={selectedProfileId}

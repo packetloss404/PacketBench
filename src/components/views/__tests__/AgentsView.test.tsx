@@ -62,8 +62,20 @@ vi.mock("@/components/agents/AgentsOnboarding", () => ({
 }));
 
 vi.mock("@/components/agents/composer/Composer", () => ({
-  Composer: ({ onLaunch }: { onLaunch: (text: string, attachments: []) => boolean }) => (
-    <button onClick={() => onLaunch("Build the feature", [])}>Launch agent</button>
+  Composer: ({
+    onLaunch,
+    onAgentChange,
+    selectedAgent,
+  }: {
+    onLaunch: (text: string, attachments: []) => boolean;
+    onAgentChange?: (agent: AgentCli) => void;
+    selectedAgent?: AgentCli;
+  }) => (
+    <div>
+      <span data-testid="selected-agent">{selectedAgent}</span>
+      <button onClick={() => onLaunch("Build the feature", [])}>Launch agent</button>
+      <button onClick={() => onAgentChange?.("api-openai")}>Change provider</button>
+    </div>
   ),
 }));
 
@@ -159,6 +171,24 @@ describe("AgentsView", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not let a late auth probe overwrite an explicit provider choice", async () => {
+    let resolveAuth!: (v: Awaited<ReturnType<typeof getProviderAuthStatus>>) => void;
+    vi.mocked(getProviderAuthStatus).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAuth = resolve;
+        }),
+    );
+    render(<AgentsView />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Change provider" }));
+    await act(async () => {
+      resolveAuth({ status: "ready", hint: "" });
+    });
+
+    expect(screen.getByTestId("selected-agent")).toHaveTextContent("api-openai");
   });
 
   it("renders the selected conversation and inspector in the main window", () => {

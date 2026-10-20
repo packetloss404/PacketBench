@@ -44,11 +44,13 @@ composer shortcuts, history recall restores the pre-recall draft, and a
 deliberate edit after recall is not overwritten. F3 core followed: Edit & fork
 creates a real child with lineage and leaves the parent intact; Rewind saves a
 read-only transcript revision, changes no files and starts no turn; parent
-deletion retains a checkout still referenced by a fork. Flight-owned mutation
-gating, old message-link resolution, native restart evidence and F2B durable
-assets remain open. Focused Vitest, TypeScript and ESLint pass. No build or
-installation was run and native Windows acceptance (including real IME
-confirmation) remains open.
+deletion retains a checkout still referenced by a fork. F4 core followed: late
+auth probes no longer overwrite explicit provider/model/profile choices, and a
+slow launch no longer steals conversation selection; single-flight holds through
+settlement. Flight-owned mutation gating, old message-link resolution, native
+restart evidence, F2B durable assets and the F4 phase surface remain open.
+Focused Vitest, TypeScript and ESLint pass. No build or installation was run and
+native Windows acceptance (including real IME confirmation) remains open.
 
 ## Later agent and experience review — October 19, 2026
 

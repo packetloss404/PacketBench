@@ -563,6 +563,10 @@ export interface CreateApiConversationOptions {
    * post-create permission update. */
   permissionMode?: PermissionMode;
   approveWrites?: boolean;
+  /** F4: when false, this create does not change `selectedConversationId`.
+   * The caller (e.g. the launch flow) selects the new conversation itself
+   * only when the user hasn't navigated elsewhere meanwhile. Default true. */
+  selectOnCreate?: boolean;
 }
 
 /**
@@ -782,6 +786,7 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     enabledMcpServerIds,
     permissionMode,
     approveWrites,
+    selectOnCreate,
   }) => {
     // Retired-provider guard. Blocking the composer alone is not enough: a
     // profile, a flight relaunch, a "continue in" action, or a stale pane can
@@ -914,7 +919,7 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     await saveConversationNow(conversation);
     set((s) => ({
       conversations: [conversation, ...s.conversations],
-      selectedConversationId: id,
+      ...(selectOnCreate === false ? {} : { selectedConversationId: id }),
     }));
 
     // Hoisted above the try so the catch can clear streaming on this exact

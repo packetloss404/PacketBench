@@ -196,10 +196,16 @@ export function launchConversation({
           attachments: att,
           permissionMode: launchPermissionMode,
           approveWrites: launchApproveWrites,
+          selectOnCreate: false,
         });
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
+        // F4: only take the selection if the user didn't navigate to another
+        // conversation while this launch was preparing.
+        if (useAgentTaskStore.getState().selectedConversationId === null) {
+          useAgentTaskStore.getState().selectConversation(convId);
+        }
       } else {
         // T3.F: when worktree mode is on, provision a fresh worktree at
         // <projectPath>/.pkt-worktrees/<convId> on a new pkt/<convId>
@@ -263,6 +269,7 @@ export function launchConversation({
           attachments: att,
           permissionMode: launchPermissionMode,
           approveWrites: launchApproveWrites,
+          selectOnCreate: false,
         });
 
         // tile-program D: stamp the worktree provenance at provisioning.
@@ -282,6 +289,11 @@ export function launchConversation({
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
+        // F4: only take the selection if the user didn't navigate to another
+        // conversation while this launch was preparing.
+        if (useAgentTaskStore.getState().selectedConversationId === null) {
+          useAgentTaskStore.getState().selectConversation(convId);
+        }
       }
       // Clear the composer only once the launch actually succeeded, so a
       // failed launch keeps the user's typed prompt intact for a retry.

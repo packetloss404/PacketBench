@@ -59,10 +59,16 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       pre-recall draft; a deliberate edit after recall is never overwritten by
       ArrowDown; history resets on conversation switch. Focused handler and
       Composer tests pass; native IME confirmation remains unverified.
-- [ ] **P2 — Agents continuity and composition (F4–F7).** Preserve explicit
-      provider choices during probes, hold launch single-flight through startup,
-      group stable base projects, resolve exact attention blockers over review
-      and retain search/reading position.
+- [x] **P1 — Stable preparation and explicit choices (F4 core).** Late auth
+      probes no longer overwrite a provider/model/profile the user picked while
+      they were in flight, and a slow launch no longer steals conversation
+      selection (`selectOnCreate: false` + guarded re-select). Single-flight
+      holds through async settlement. Focused tests, TypeScript and ESLint pass.
+- [ ] **P2 — Preparation phase surface, cancel tombstones and continuity (F4
+      residual, F5–F7).** Expose Preparing → Starting → Running and reconcile
+      cancelled/unknown preparations at the backend; group stable base projects,
+      resolve exact attention blockers over review and retain search/reading
+      position.
 - [ ] **P2 — Shared GUI accessibility and layout (V4–V8).** Unify scalable
       theme-aware code, name icon actions, reveal keyboard focus, enlarge targets,
       resize/read sidebar titles and adapt narrow execution context. Use source
