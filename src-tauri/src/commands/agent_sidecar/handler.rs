@@ -329,6 +329,7 @@ impl SidecarManager {
                 );
             }
             "done" => {
+                crate::commands::flight_runtime::sidecar_active(&session_id, false);
                 if let Err(message) = crate::commands::usage::ensure_usage_accounting_healthy() {
                     let _ = crate::commands::flight_attempts::update_attempt_status_by_session(
                         &session_id,
@@ -375,7 +376,19 @@ impl SidecarManager {
                     .get("cancelled")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                if !cancelled {
+                if cancelled {
+                    if let Err(error) =
+                        crate::commands::flight_attempts::cancel_builder_attempt_for_session(
+                            &session_id,
+                        )
+                        .await
+                    {
+                        let _ = self
+                            .app_handle
+                            .emit(&error_event(&session_id), ErrorPayload { message: error });
+                        return;
+                    }
+                } else {
                     let _ = crate::commands::flight_attempts::update_attempt_status_by_session(
                         &session_id,
                         crate::core::flight::AttemptStatus::Reviewing,
@@ -805,6 +818,7 @@ impl SidecarManager {
                 }
             }
             "error" => {
+                crate::commands::flight_runtime::sidecar_active(&session_id, false);
                 let message = value
                     .get("message")
                     .and_then(|v| v.as_str())

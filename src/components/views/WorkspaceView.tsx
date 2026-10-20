@@ -12,15 +12,13 @@ import { REMOTE_UNSUPPORTED_TOOLTIP } from "@/lib/remoteConversation";
 import { isOnboardingComplete } from "@/lib/onboarding";
 import { pathIsDir } from "@/lib/tauri";
 import { useEffect, useState } from "react";
-import { Bot, LayoutGrid, GitBranch, FileText, FolderX, Plus, Zap } from "lucide-react";
+import { Bot, LayoutGrid, GitBranch, FileText, FolderX, Plus, Zap, Plane } from "lucide-react";
+import { flightContextFromWorkspace } from "@/lib/flightLaunchContext";
 import { GitDashboard } from "@/components/workspace/GitDashboard";
 import { workspacePaneSummaryIdentity } from "@/lib/workspacePaneSummary";
 import { AccountDot } from "@/components/session/AccountChip";
 import { useWorkspaceStatuses, attentionDot } from "@/lib/sessionStatus";
-import {
-  isLocalWorkspace,
-  isSshWorkspace,
-} from "@/types/workspace";
+import { isLocalWorkspace, isSshWorkspace } from "@/types/workspace";
 import { delegateWorkspaceToAgents } from "@/lib/agentHandoffs";
 import { bypassCaveat, bypassStatusLabel } from "@/lib/bypassFlags";
 import { useWorkspaceAgentsDogfoodStore } from "@/stores/workspaceAgentsDogfoodStore";
@@ -47,9 +45,7 @@ export function WorkspaceView({ surfaceActive = true }: WorkspaceViewProps) {
   // Commit…" CTA (openGitPanelForConversation).
   const gitPanelConversationId = useAppStore((s) => s.gitPanelConversationId);
   const gitPanelWorkspaceId = useAppStore((s) => s.gitPanelWorkspaceId);
-  const gitPanelVisible = useRightDockStore((s) =>
-    isPanelVisible(s.surfaces, "workspace", "git"),
-  );
+  const gitPanelVisible = useRightDockStore((s) => isPanelVisible(s.surfaces, "workspace", "git"));
   const toggleDockPanel = useRightDockStore((s) => s.togglePanel);
   const [showCreate, setShowCreate] = useState(false);
   // Global creation entry points (Toolbar "+ New", Ctrl+K palette) publish a
@@ -260,6 +256,20 @@ export function WorkspaceView({ surfaceActive = true }: WorkspaceViewProps) {
               {activeWorkspace && (
                 <button
                   type="button"
+                  onClick={() =>
+                    useAppStore
+                      .getState()
+                      .openFlightBrief(flightContextFromWorkspace(activeWorkspace))
+                  }
+                  className="flex items-center gap-1 rounded border border-accent-line bg-accent-soft px-2 py-1 text-[10px] text-accent-green hover:bg-bg-hover"
+                  title="Prepare a scoped change on an isolated branch"
+                >
+                  <Plane size={11} /> Send to Flight
+                </button>
+              )}
+              {activeWorkspace && (
+                <button
+                  type="button"
                   onClick={() => delegateWorkspaceToAgents(activeWorkspace.id)}
                   className="flex items-center gap-1 rounded border border-bg-border bg-bg-secondary px-2 py-0.5 text-[10px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
                   title="Delegate work on this project to a GUI agent"
@@ -345,9 +355,9 @@ export function WorkspaceView({ surfaceActive = true }: WorkspaceViewProps) {
                           {projectPathMissing}
                         </p>
                         <p className="mt-3 max-w-md text-[11px]">
-                          Its sessions are still saved and nothing has been deleted. Restore
-                          the folder at that path, or create a new workspace pointing
-                          somewhere that exists.
+                          Its sessions are still saved and nothing has been deleted. Restore the
+                          folder at that path, or create a new workspace pointing somewhere that
+                          exists.
                         </p>
                       </div>
                     ) : (
@@ -365,11 +375,7 @@ export function WorkspaceView({ surfaceActive = true }: WorkspaceViewProps) {
           {/* D2 — one dock, one visible panel, one resizer, one width budget.
               The Editor and the Git Dashboard used to render as independent
               480px + 280px columns that could stack (P0-2). */}
-          <RightDock
-            surface="workspace"
-            panels={dockPanels}
-            ariaLabel="Workspace panels"
-          />
+          <RightDock surface="workspace" panels={dockPanels} ariaLabel="Workspace panels" />
         </div>
 
         {/* No workspace selected */}

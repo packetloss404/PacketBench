@@ -66,4 +66,16 @@ describe("flightPlanning", () => {
     expect(prompt).toContain("Do not edit files or run commands");
     expect(prompt).toContain(FLIGHT_PLAN_FENCE);
   });
+  it("keeps stable task and milestone identity when the same plan is applied again", () => {
+    const parsed = parseLatestFlightPlan([assistant(planBlock)]);
+    const first = materializeFlightPlan("flight-1", parsed, 1);
+    const second = materializeFlightPlan("flight-1", parsed, 2);
+    expect(second.milestones.map((milestone) => milestone.id)).toEqual(
+      first.milestones.map((milestone) => milestone.id),
+    );
+    expect(second.milestones[0].tasks.map((task) => task.id)).toEqual(
+      first.milestones[0].tasks.map((task) => task.id),
+    );
+    expect(second.milestones[0].tasks[1].dependsOn).toEqual(first.milestones[0].tasks[1].dependsOn);
+  });
 });

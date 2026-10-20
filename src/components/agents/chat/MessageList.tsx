@@ -13,6 +13,7 @@ import { MarkdownRenderer } from "@/components/common/MarkdownRenderer";
 import { Spinner } from "@/components/ui/Spinner";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { buildTranscriptMemoryInput } from "@/lib/memoryCapture";
+import { interruptRunningToolCalls } from "@/lib/toolCallSettlement";
 import { useAgentSettingsStore } from "@/stores/agentSettingsStore";
 import { useMemoryStore } from "@/stores/memoryStore";
 import { ExplorationRollupCard } from "../ExplorationRollupCard";
@@ -20,10 +21,7 @@ import { PlanModeApprovalMenu } from "../PlanModeApprovalMenu";
 import { ThinkingBlock } from "../ThinkingBlock";
 import { looksLikePlan } from "../planDetection";
 import { ToolCallRenderer } from "./ToolCallRenderer";
-import {
-  InlineApprovals,
-  type InlineApprovalsBinding,
-} from "./InlineApprovals";
+import { InlineApprovals, type InlineApprovalsBinding } from "./InlineApprovals";
 import type {
   AgentConversation,
   AgentMessage,
@@ -98,13 +96,9 @@ export function MessageList({
 }: MessageListProps) {
   const messages = conversation.messages;
   const lastMessage = messages[messages.length - 1];
-  const lastAssistantMessage = [...messages]
-    .reverse()
-    .find((m) => m.role === "assistant");
+  const lastAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
   const showThinking =
-    isActive &&
-    (!lastMessage || lastMessage.role === "user") &&
-    messages.length > 0;
+    isActive && (!lastMessage || lastMessage.role === "user") && messages.length > 0;
 
   // Shared IntersectionObserver for lazy row mounting. One observer per list
   // instance watches every placeholder row; when a row nears the viewport it
@@ -209,20 +203,12 @@ export function MessageList({
               message={msg}
               conversation={conversation}
               isLastAssistant={isLastAssistant}
-              onRetry={
-                isLastAssistant && !msg.isStreaming ? onRetryLastTurn : undefined
-              }
+              onRetry={isLastAssistant && !msg.isStreaming ? onRetryLastTurn : undefined}
               isEditing={editingMessageId === msg.id}
               editingText={editingText}
-              onStartEdit={
-                msg.role === "user"
-                  ? () => onStartEdit(msg.id, msg.content)
-                  : undefined
-              }
+              onStartEdit={msg.role === "user" ? () => onStartEdit(msg.id, msg.content) : undefined}
               onRestoreFrom={
-                msg.role === "user"
-                  ? () => onRestoreFrom(msg.id, msg.content)
-                  : undefined
+                msg.role === "user" ? () => onRestoreFrom(msg.id, msg.content) : undefined
               }
               onChangeEdit={onChangeEdit}
               onSubmitEdit={() => onSubmitEdit(msg.id)}
@@ -259,10 +245,7 @@ export function MessageList({
         lastMessage?.role === "assistant" &&
         !lastMessage.isStreaming &&
         looksLikePlan(lastMessage.content) && (
-          <PlanModeApprovalMenu
-            conversationId={conversationId}
-            planText={lastMessage.content}
-          />
+          <PlanModeApprovalMenu conversationId={conversationId} planText={lastMessage.content} />
         )}
 
       {showThinking && (
@@ -388,10 +371,7 @@ function MessageBubble({
       <div className="flex items-center gap-2 py-0.5">
         <span className="h-px flex-1 bg-line-soft" />
         <div className="max-w-[80%] text-center text-meta text-text-faint">
-          <MarkdownRenderer
-            content={message.content}
-            className="text-meta leading-relaxed"
-          />
+          <MarkdownRenderer content={message.content} className="text-meta leading-relaxed" />
         </div>
         <span className="h-px flex-1 bg-line-soft" />
       </div>
@@ -402,7 +382,7 @@ function MessageBubble({
     if (isEditing) {
       return (
         <div className="flex justify-end">
-          <div className="max-w-[85%] w-full px-3.5 py-2.5 rounded-[14px_14px_4px_14px] text-body bg-bg-tertiary border border-accent-line flex flex-col gap-1.5">
+          <div className="flex w-full max-w-[85%] flex-col gap-1.5 rounded-[14px_14px_4px_14px] border border-accent-line bg-bg-tertiary px-3.5 py-2.5 text-body">
             <textarea
               autoFocus
               value={editingText ?? ""}
@@ -416,11 +396,8 @@ function MessageBubble({
                   onCancelEdit?.();
                 }
               }}
-              rows={Math.min(
-                8,
-                Math.max(2, (editingText ?? "").split("\n").length),
-              )}
-              className="w-full bg-transparent text-body text-text-primary placeholder:text-text-muted focus:outline-none resize-none"
+              rows={Math.min(8, Math.max(2, (editingText ?? "").split("\n").length))}
+              className="w-full resize-none bg-transparent text-body text-text-primary placeholder:text-text-muted focus:outline-none"
             />
             <div className="flex items-center justify-between gap-2">
               <Tooltip content="Truncates the transcript to this point and re-runs from here">
@@ -433,7 +410,7 @@ function MessageBubble({
                   <button
                     type="button"
                     onClick={onCancelEdit}
-                    className="text-ui px-2 py-0.5 rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                    className="rounded px-2 py-0.5 text-ui text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
                   >
                     Cancel
                   </button>
@@ -443,7 +420,7 @@ function MessageBubble({
                     type="button"
                     onClick={onSubmitEdit}
                     disabled={!(editingText ?? "").trim()}
-                    className="text-ui px-2 py-0.5 rounded bg-accent-green/20 hover:bg-accent-green/30 text-accent-green font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="rounded bg-accent-green/20 px-2 py-0.5 text-ui font-medium text-accent-green transition-colors hover:bg-accent-green/30 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Resend
                   </button>
@@ -461,28 +438,22 @@ function MessageBubble({
               messenger app. The asymmetric radius (square bottom-right) is
               what marks the turn as the user's, not the hue. */}
           <div
-            className={`max-w-[85%] px-3.5 py-2.5 rounded-[14px_14px_4px_14px] border text-body text-text-primary relative ${
+            className={`relative max-w-[85%] rounded-[14px_14px_4px_14px] border px-3.5 py-2.5 text-body text-text-primary ${
               message.queued
                 ? "border-accent-amber/40 bg-accent-amber/10"
                 : "border-bg-border bg-bg-tertiary"
             }`}
           >
-            <div className="selectable whitespace-pre-wrap break-words">
-              {message.content}
-            </div>
-            {message.queued && (
-              <span className="text-meta text-accent-amber ml-1">
-                (queued)
-              </span>
-            )}
+            <div className="selectable whitespace-pre-wrap break-words">{message.content}</div>
+            {message.queued && <span className="ml-1 text-meta text-accent-amber">(queued)</span>}
             {!message.queued && (onStartEdit || onRestoreFrom) && (
-              <div className="absolute -left-6 top-1/2 flex -translate-y-1/2 flex-col gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              <div className="absolute -left-6 top-1/2 flex -translate-y-1/2 flex-col gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
                 {onStartEdit && (
                   <Tooltip content="Edit & resend — forks the conversation from this turn">
                     <button
                       type="button"
                       onClick={onStartEdit}
-                      className="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+                      className="rounded p-0.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
                     >
                       <Pencil size={11} />
                     </button>
@@ -493,7 +464,7 @@ function MessageBubble({
                     <button
                       type="button"
                       onClick={() => setConfirmingRestore(true)}
-                      className="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+                      className="rounded p-0.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary"
                     >
                       <RotateCcw size={11} />
                     </button>
@@ -506,8 +477,7 @@ function MessageBubble({
         {confirmingRestore && (
           <div className="mt-1 flex items-center gap-2 rounded bg-accent-amber/10 px-2 py-1">
             <span className="text-meta text-accent-amber">
-              Restore from here? Later messages are discarded and this turn
-              re-runs.
+              Restore from here? Later messages are discarded and this turn re-runs.
             </span>
             <button
               type="button"
@@ -515,14 +485,14 @@ function MessageBubble({
                 setConfirmingRestore(false);
                 onRestoreFrom?.();
               }}
-              className="text-ui px-1.5 py-0.5 rounded bg-accent-amber/20 hover:bg-accent-amber/30 text-accent-amber font-medium transition-colors"
+              className="rounded bg-accent-amber/20 px-1.5 py-0.5 text-ui font-medium text-accent-amber transition-colors hover:bg-accent-amber/30"
             >
               Restore
             </button>
             <button
               type="button"
               onClick={() => setConfirmingRestore(false)}
-              className="text-ui px-1.5 py-0.5 rounded text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              className="rounded px-1.5 py-0.5 text-ui text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
             >
               Cancel
             </button>
@@ -536,17 +506,15 @@ function MessageBubble({
   // `bg-bg-secondary` panel. The turn IS the page — markdown renders directly
   // on the background at the body type scale, and the reading measure comes
   // from the centered transcript column, not from a per-bubble max-width.
-  const toolCalls = message.toolCalls ?? [];
+  const toolCalls =
+    message.turnOutcome === "cancelled" && !message.isStreaming
+      ? interruptRunningToolCalls(message.toolCalls ?? [])
+      : (message.toolCalls ?? []);
   return (
     <div className="group/turn space-y-1.5">
-      {verbosity !== "summary" &&
-        message.thinking &&
-        message.thinking.length > 0 && (
-          <ThinkingBlock
-            text={message.thinking}
-            streaming={message.isStreaming}
-          />
-        )}
+      {verbosity !== "summary" && message.thinking && message.thinking.length > 0 && (
+        <ThinkingBlock text={message.thinking} streaming={message.isStreaming} />
+      )}
 
       {/* Rollup XOR individual cards, per tool call: ExplorationRollupCard is
           the sole representation of read/search/list calls (live AND settled),
@@ -557,10 +525,7 @@ function MessageBubble({
           how the transcript ends up showing a call twice. */}
       {toolCalls.length > 0 && (
         <>
-          <ExplorationRollupCard
-            toolCalls={toolCalls}
-            isStreaming={message.isStreaming}
-          />
+          <ExplorationRollupCard toolCalls={toolCalls} isStreaming={message.isStreaming} />
           <ToolCallRenderer
             toolCalls={toolCalls}
             conversationId={conversation.id}
@@ -576,7 +541,7 @@ function MessageBubble({
             className="markdown-doc text-body text-text-primary"
           />
           {message.isStreaming && (
-            <span className="inline-block w-1.5 h-3.5 bg-accent-green/70 rounded-sm animate-pulse motion-reduce:animate-none ml-1 align-text-bottom" />
+            <span className="ml-1 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-accent-green/70 align-text-bottom motion-reduce:animate-none" />
           )}
         </div>
       )}
@@ -593,13 +558,13 @@ function MessageBubble({
           revealing it never changes the row height the virtualizer measured. */}
       <div className="flex items-center gap-2">
         <AssistantTokenPill message={message} />
-        <div className="flex items-center gap-2 opacity-0 transition-opacity motion-reduce:transition-none group-hover/turn:opacity-100 group-focus-within/turn:opacity-100">
+        <div className="flex items-center gap-2 opacity-0 transition-opacity group-focus-within/turn:opacity-100 group-hover/turn:opacity-100 motion-reduce:transition-none">
           {isLastAssistant && !message.isStreaming && onRetry && (
             <Tooltip content="Retry this turn">
               <button
                 type="button"
                 onClick={onRetry}
-                className="text-text-muted hover:text-text-primary text-meta p-0.5 rounded transition-colors"
+                className="rounded p-0.5 text-meta text-text-muted transition-colors hover:text-text-primary"
               >
                 <RotateCw size={11} />
               </button>
@@ -614,7 +579,7 @@ function MessageBubble({
                   captureManually(buildTranscriptMemoryInput(message, conversation));
                   setCaptured(true);
                 }}
-                className="text-text-muted hover:text-accent-green text-meta p-0.5 rounded transition-colors disabled:text-accent-green"
+                className="rounded p-0.5 text-meta text-text-muted transition-colors hover:text-accent-green disabled:text-accent-green"
               >
                 <BookmarkPlus size={11} />
               </button>
@@ -633,6 +598,7 @@ function MessageBubble({
 function AssistantTokenPill({ message }: { message: AgentMessage }) {
   const { inputTokens, outputTokens } = message;
   if (inputTokens == null || outputTokens == null) return null;
-  return <div className="text-meta text-text-muted font-mono">{inputTokens + outputTokens} tok</div>;
+  return (
+    <div className="font-mono text-meta text-text-muted">{inputTokens + outputTokens} tok</div>
+  );
 }
-

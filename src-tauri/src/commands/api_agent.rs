@@ -151,6 +151,38 @@ struct SessionConfig {
 }
 
 impl ApiAgentState {
+    pub(crate) async fn has_active_turn(&self, session_id: &str) -> bool {
+        self.active_turns
+            .lock()
+            .await
+            .get(session_id)
+            .is_some_and(|turn| !*turn.finished.borrow())
+    }
+
+    pub(crate) async fn wait_for_session_stop(&self, session_id: &str) -> Result<(), String> {
+        let finished = self
+            .active_turns
+            .lock()
+            .await
+            .get(session_id)
+            .map(|turn| turn.finished.subscribe());
+        if let Some(mut finished) = finished {
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                while !*finished.borrow() {
+                    if finished.changed().await.is_err() {
+                        break;
+                    }
+                }
+            })
+            .await
+            .map_err(|_| {
+                "An agent turn did not confirm Stop; its worktree was preserved.".to_string()
+            })?;
+        }
+        // A dropped SSH tool keeps its transport alive until remote group
+        // cleanup is acknowledged. Stop must include that owned cleanup too.
+        crate::core::tool_runtime_ssh::drain_session(session_id).await
+    }
     pub fn new() -> Self {
         Self {
             active_turns: Mutex::new(HashMap::new()),
@@ -586,6 +618,48 @@ mod tests {
         assert!(!tool_is_advertised("bash", &[]));
     }
 
+    #[tokio::test]
+    async fn native_ssh_catalogue_hides_edit_file_while_local_keeps_it() {
+        let catalogue = tool_runtime::tool_definitions_for_session(Some(&[]), Some(&[]), &[]).await;
+        let mut local_tools = catalogue.clone();
+        filter_tools_for_execution(
+            &mut local_tools,
+            &ExecutionTarget::Local {
+                project_path: "/fixture".into(),
+            },
+        );
+        assert!(tool_is_advertised("edit_file", &local_tools));
+        assert_eq!(local_tools.len(), catalogue.len());
+
+        let mut ssh_tools = catalogue;
+        filter_tools_for_execution(
+            &mut ssh_tools,
+            &ExecutionTarget::Ssh {
+                config: crate::core::execution::SshConfig {
+                    host: "example.invalid".into(),
+                    port: 22,
+                    user: "nobody".into(),
+                    remote_path: "/fixture".into(),
+                    key_path: None,
+                    auth_method: None,
+                    target_id: None,
+                    host_fingerprint: None,
+                },
+            },
+        );
+        assert!(!tool_is_advertised("edit_file", &ssh_tools));
+        assert!(tool_is_advertised("read_file", &ssh_tools));
+        assert!(tool_is_advertised("write_file", &ssh_tools));
+        assert_eq!(
+            ssh_tools.iter().map(|tool| &tool.name).collect::<Vec<_>>(),
+            local_tools
+                .iter()
+                .filter(|tool| tool.name != "edit_file")
+                .map(|tool| &tool.name)
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn child_usage_keeps_actual_model_and_parent_session_attribution() {
         let entry = child_usage_entry(
@@ -912,6 +986,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovery_observes_live_turns_until_their_owner_finishes() {
+        let state = ApiAgentState::new();
+        assert!(!state.has_active_turn("recovery-owner").await);
+        let (turn, _cancel) = state.begin_turn("recovery-owner").await.unwrap();
+        assert!(state.has_active_turn("recovery-owner").await);
+        assert!(state.cancel_turn("recovery-owner").await);
+        assert!(state.has_active_turn("recovery-owner").await);
+        state.finish_turn("recovery-owner", turn).await;
+        assert!(!state.has_active_turn("recovery-owner").await);
+    }
+
+    #[tokio::test]
     async fn cancelled_turn_stays_owned_until_its_task_finishes() {
         let state = ApiAgentState::new();
         let (turn_id, receiver) = state.begin_turn("session-1").await.unwrap();
@@ -1204,7 +1290,65 @@ pub async fn start_api_agent_session(
     command_path: Option<String>,
     workspace: Option<ApiAgentWorkspaceInput>,
 ) -> Result<(), String> {
+    let id = session_id.clone();
+    let result = start_api_agent_session_inner(
+        app_handle,
+        state,
+        sidecar,
+        session_id,
+        provider,
+        model,
+        project_path,
+        initial_message,
+        system_prompt_override,
+        thinking_enabled,
+        attachments,
+        plan_mode,
+        ssh_config,
+        allowed_tools,
+        resume_token,
+        enabled_mcp_server_ids,
+        mcp_trust_snapshot,
+        resume_messages,
+        permission_mode,
+        approve_writes,
+        command_path,
+        workspace,
+    )
+    .await;
+    if let Err(error) = &result {
+        super::flight_runtime::retain_failed_start(&id, error).await?;
+    }
+    result
+}
+
+async fn start_api_agent_session_inner(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<ApiAgentState>>,
+    sidecar: tauri::State<'_, Arc<SidecarManager>>,
+    session_id: String,
+    provider: String,
+    model: String,
+    project_path: String,
+    initial_message: String,
+    system_prompt_override: Option<String>,
+    thinking_enabled: Option<bool>,
+    attachments: Option<Vec<ImageAttachment>>,
+    plan_mode: Option<bool>,
+    ssh_config: Option<SshConfig>,
+    allowed_tools: Option<Vec<String>>,
+    resume_token: Option<String>,
+    enabled_mcp_server_ids: Option<Vec<String>>,
+    mcp_trust_snapshot: Option<Vec<crate::core::mcp_bridge::McpTrustSnapshot>>,
+    resume_messages: Option<Vec<ResumeMessage>>,
+    permission_mode: Option<String>,
+    approve_writes: Option<bool>,
+    command_path: Option<String>,
+    workspace: Option<ApiAgentWorkspaceInput>,
+) -> Result<(), String> {
     // v2 Tier 4 slice B: bump the local-only per-provider launch counter
+    let admission = super::flight_runtime::session_admission(&session_id)?;
+    super::flight_runtime::begin_builder_turn(&session_id).await?;
     // before any routing decision so both sidecar and in-process launches are
     // counted. Best-effort — disk-write failures are logged to stderr and
     // never block the session start.
@@ -1294,58 +1438,65 @@ pub async fn start_api_agent_session(
             Some(snapshot) => serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null),
             None => serde_json::Value::Null,
         };
-        let result = if let Some(ssh_config) = ssh_config.clone() {
-            sidecar
-                .forward_start_ssh_with_mcp_trust(
-                    session_id.clone(),
-                    provider.clone(),
-                    model.clone(),
-                    sys_prompt,
-                    tools,
-                    mcp_servers,
-                    source_mcp_from_fs,
-                    sidecar_project_path,
-                    initial_message.clone(),
-                    api_key,
-                    resume_token.clone(),
-                    thinking_enabled,
-                    plan_mode,
-                    attachments_json,
-                    resume_messages_json,
-                    permission_mode.clone(),
-                    approve_writes,
-                    sidecar_command_path,
-                    Some(sidecar_workspace),
-                    mcp_trust_snapshot_json,
-                    ssh_config,
-                )
-                .await
-        } else {
-            sidecar
-                .forward_start_with_mcp_trust(
-                    session_id.clone(),
-                    provider.clone(),
-                    model.clone(),
-                    sys_prompt,
-                    tools,
-                    mcp_servers,
-                    source_mcp_from_fs,
-                    sidecar_project_path,
-                    initial_message.clone(),
-                    api_key,
-                    resume_token.clone(),
-                    thinking_enabled,
-                    plan_mode,
-                    attachments_json,
-                    resume_messages_json,
-                    permission_mode.clone(),
-                    approve_writes,
-                    sidecar_command_path,
-                    Some(sidecar_workspace),
-                    mcp_trust_snapshot_json,
-                )
-                .await
+        let forward = async {
+            if let Some(ssh_config) = ssh_config.clone() {
+                sidecar
+                    .forward_start_ssh_with_mcp_trust(
+                        session_id.clone(),
+                        provider.clone(),
+                        model.clone(),
+                        sys_prompt,
+                        tools,
+                        mcp_servers,
+                        source_mcp_from_fs,
+                        sidecar_project_path,
+                        initial_message.clone(),
+                        api_key,
+                        resume_token.clone(),
+                        thinking_enabled,
+                        plan_mode,
+                        attachments_json,
+                        resume_messages_json,
+                        permission_mode.clone(),
+                        approve_writes,
+                        sidecar_command_path,
+                        Some(sidecar_workspace),
+                        mcp_trust_snapshot_json,
+                        ssh_config,
+                    )
+                    .await
+            } else {
+                sidecar
+                    .forward_start_with_mcp_trust(
+                        session_id.clone(),
+                        provider.clone(),
+                        model.clone(),
+                        sys_prompt,
+                        tools,
+                        mcp_servers,
+                        source_mcp_from_fs,
+                        sidecar_project_path,
+                        initial_message.clone(),
+                        api_key,
+                        resume_token.clone(),
+                        thinking_enabled,
+                        plan_mode,
+                        attachments_json,
+                        resume_messages_json,
+                        permission_mode.clone(),
+                        approve_writes,
+                        sidecar_command_path,
+                        Some(sidecar_workspace),
+                        mcp_trust_snapshot_json,
+                    )
+                    .await
+            }
         };
+        let result = forward.await;
+        if admission.cancel.is_cancelled() {
+            let _ = sidecar.forward_close(session_id.clone()).await;
+            return Err("Session startup was stopped.".into());
+        }
         if let Err(e) = result {
             warn!(session_id = %session_id, error = %e, "Sidecar forward_start failed");
             let _ = app_handle.emit(
@@ -1354,6 +1505,12 @@ pub async fn start_api_agent_session(
             );
             return Err(e);
         }
+        let _ = super::flight_attempts::update_attempt_status_by_session(
+            &session_id,
+            crate::core::flight::AttemptStatus::Running,
+            None,
+        )
+        .await;
         return Ok(());
     }
 
@@ -1435,7 +1592,7 @@ pub async fn start_api_agent_session(
 
     // Claim the session before mutating its config/history. A duplicate start
     // cannot overwrite a live turn and inherit the old task's eventual cleanup.
-    let (turn_id, cancel_rx) = state.begin_turn(&session_id).await?;
+    let (turn_id, cancel_rx) = tokio::select! { biased; _ = admission.cancel.cancelled() => return Err("Session startup was stopped.".into()), result = state.begin_turn(&session_id) => result? };
 
     // Store session config and history
     {
@@ -1466,6 +1623,24 @@ pub async fn start_api_agent_session(
         histories.insert(session_id.clone(), messages.clone());
     }
 
+    if admission.cancel.is_cancelled() {
+        state.cancel_turn(&session_id).await;
+        state.finish_turn(&session_id, turn_id).await;
+        state.configs.lock().await.remove(&session_id);
+        state.histories.lock().await.remove(&session_id);
+        return Err("Session startup was stopped.".into());
+    }
+    let _ = super::flight_attempts::update_attempt_status_by_session(
+        &session_id,
+        crate::core::flight::AttemptStatus::Running,
+        None,
+    )
+    .await;
+    if admission.cancel.is_cancelled() {
+        state.cancel_turn(&session_id).await;
+        state.finish_turn(&session_id, turn_id).await;
+        return Err("Session startup was stopped.".into());
+    }
     let state_clone = Arc::clone(&state.inner());
     let session_id_clone = session_id.clone();
 
@@ -1505,20 +1680,35 @@ pub async fn send_api_agent_message(
     message: String,
     attachments: Option<Vec<ImageAttachment>>,
 ) -> Result<(), String> {
+    let admission = super::flight_runtime::session_admission(&session_id)?;
     // Phase 3 slice C: forward to sidecar if it owns this session.
     if sidecar.owns_session(&session_id).await {
+        tokio::select! { biased; _ = admission.cancel.cancelled() => return Err("The Flight follow-up was stopped.".into()), result = super::flight_runtime::wait_sidecar_idle(&session_id) => result? };
+        super::flight_runtime::begin_builder_turn(&session_id).await?;
         let attachments_json = match &attachments {
             Some(a) => serde_json::to_value(a).unwrap_or(serde_json::Value::Null),
             None => serde_json::Value::Null,
         };
-        return sidecar
-            .forward_send(session_id, message, attachments_json)
+        if admission.cancel.is_cancelled() {
+            return Err("The Flight was stopped before its follow-up started.".into());
+        }
+        let result = sidecar
+            .forward_send(session_id.clone(), message, attachments_json)
             .await;
+        if admission.cancel.is_cancelled() {
+            let _ = sidecar.forward_close(session_id).await;
+            return Err("The Flight follow-up was stopped.".into());
+        }
+        return result;
     }
 
     // Claim the turn before appending the user message. A rapid follow-up waits
     // for the current owner without leaving a transcript entry that never ran.
-    let (turn_id, cancel_rx) = state.begin_turn(&session_id).await?;
+    let (turn_id, cancel_rx) = tokio::select! { biased; _ = admission.cancel.cancelled() => return Err("The Flight follow-up was stopped.".into()), result = state.begin_turn(&session_id) => result? };
+    if let Err(error) = super::flight_runtime::begin_builder_turn(&session_id).await {
+        state.finish_turn(&session_id, turn_id).await;
+        return Err(error);
+    }
     let append_result = {
         let mut histories = state.histories.lock().await;
         match histories.get_mut(&session_id) {
@@ -1545,6 +1735,11 @@ pub async fn send_api_agent_message(
         }
     }
 
+    if admission.cancel.is_cancelled() {
+        state.cancel_turn(&session_id).await;
+        state.finish_turn(&session_id, turn_id).await;
+        return Err("The Flight follow-up was stopped.".into());
+    }
     let state_clone = Arc::clone(&state.inner());
     let session_id_clone = session_id.clone();
 
@@ -1878,6 +2073,7 @@ pub async fn close_api_agent_session(
     sidecar: tauri::State<'_, Arc<SidecarManager>>,
     session_id: String,
 ) -> Result<(), String> {
+    super::flight_runtime::cancel_session_start(&session_id);
     // Phase 3 slice C: forward to sidecar if it owns this session.
     if sidecar.owns_session(&session_id).await {
         return sidecar.forward_close(session_id).await;
@@ -2085,6 +2281,14 @@ fn tool_is_advertised(name: &str, tools: &[ToolDefinition]) -> bool {
     tools.iter().any(|tool| tool.name == name)
 }
 
+fn filter_tools_for_execution(tools: &mut Vec<ToolDefinition>, execution: &ExecutionTarget) {
+    if matches!(execution, ExecutionTarget::Ssh { .. }) {
+        // Remote editing has no supported preview/apply implementation. Offer
+        // read_file + write_file, which use the pinned SSH execution target.
+        tools.retain(|tool| tool.name != "edit_file");
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn finish_cancelled_agent_turn(
     app_handle: &tauri::AppHandle,
@@ -2111,8 +2315,21 @@ async fn finish_cancelled_agent_turn(
         let _ = sender.send(EditDecision::Reject);
     }
 
+    if let Err(error) = crate::core::tool_runtime_ssh::drain_session(session_id).await {
+        mark_attempt_failed_for_session(session_id, error.clone()).await;
+        let _ = app_handle.emit(&error_event(session_id), ErrorPayload { message: error });
+        fire_session_end_hooks(hooks_list, session_id).await;
+        return;
+    }
     if let Err(error) = crate::commands::usage::ensure_usage_accounting_healthy() {
         mark_attempt_failed_for_session(session_id, error.clone()).await;
+        let _ = app_handle.emit(&error_event(session_id), ErrorPayload { message: error });
+        fire_session_end_hooks(hooks_list, session_id).await;
+        return;
+    }
+    if let Err(error) =
+        crate::commands::flight_attempts::cancel_builder_attempt_for_session(session_id).await
+    {
         let _ = app_handle.emit(&error_event(session_id), ErrorPayload { message: error });
         fire_session_end_hooks(hooks_list, session_id).await;
         return;
@@ -2202,6 +2419,7 @@ async fn run_agent_loop(
             }
         };
         all.extend(mcp_tools);
+        filter_tools_for_execution(&mut all, &execution);
         match allowed_tools.as_ref() {
             Some(allow) => all
                 .into_iter()
@@ -2970,11 +3188,14 @@ async fn run_agent_loop(
                     let result = crate::core::tool_subagent::PARENT_LLM
                         .scope(
                             parent_llm,
-                            tool_runtime::execute_tool_with_mcp_trust(
-                                &tc,
-                                &execution,
-                                enabled_mcp_server_ids.as_deref(),
-                                mcp_trust_snapshot.as_deref(),
+                            crate::core::tool_runtime_ssh::SSH_TOOL_OWNER.scope(
+                                session_id.clone(),
+                                tool_runtime::execute_tool_with_mcp_trust(
+                                    &tc,
+                                    &execution,
+                                    enabled_mcp_server_ids.as_deref(),
+                                    mcp_trust_snapshot.as_deref(),
+                                ),
                             ),
                         )
                         .await;

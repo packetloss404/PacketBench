@@ -147,4 +147,31 @@ describe("cooperative Flight graph", () => {
     expect(prompt).toContain("Tests pass");
     expect(prompt).toContain("commit all changes");
   });
+  it("allows overlapping paths only for tasks ordered by a valid dependency path", () => {
+    const ordered = flight([
+      task("a", [], { ownedPaths: ["src"] }),
+      task("b", ["a"], { ownedPaths: ["src/file.ts"] }),
+      task("c", ["b"], { ownedPaths: ["src/file.ts"] }),
+    ]);
+    expect(validateCooperativeAssignments(ordered)).toEqual([]);
+    const concurrent = flight([
+      task("a", [], { ownedPaths: ["src"] }),
+      task("b", [], { ownedPaths: ["src/file.ts"] }),
+    ]);
+    expect(
+      validateCooperativeAssignments(concurrent).some(
+        (issue) => issue.kind === "ownership_conflict",
+      ),
+    ).toBe(true);
+    const cyclic = flight([
+      task("a", ["b"], { ownedPaths: ["src"] }),
+      task("b", ["a"], { ownedPaths: ["src"] }),
+    ]);
+    expect(
+      validateCooperativeGraph(cyclic).some((issue) => issue.kind === "dependency_cycle"),
+    ).toBe(true);
+    expect(
+      validateCooperativeAssignments(cyclic).some((issue) => issue.kind === "ownership_conflict"),
+    ).toBe(true);
+  });
 });

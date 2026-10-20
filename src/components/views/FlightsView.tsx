@@ -8,10 +8,12 @@ import {
   Sparkles,
   Brain,
   Trash2,
-  FileCheck2,
-  GitCommit,
-  ShieldCheck,
   BookmarkPlus,
+  Archive,
+  ArchiveRestore,
+  Square,
+  Loader2,
+  Rocket,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useFlightStore } from "@/stores/flightStore";
@@ -28,21 +30,24 @@ import { reassignTargetFromEscalation } from "@/lib/flightCoordination";
 import { buildCoordinationMemoryInput } from "@/lib/memoryCapture";
 import { memoryScopeForWorkspace } from "@/lib/memoryWriteScope";
 import { getProviderForAgent } from "@/lib/api-models";
-import type { AgentCli } from "@/stores/agentTaskStore";
+import { useAgentTaskStore, type AgentCli } from "@/stores/agentTaskStore";
 import { useMemoryStore } from "@/stores/memoryStore";
 import { useAppStore } from "@/stores/appStore";
-import { LaunchAsyncFlightModal } from "@/components/flights/LaunchAsyncFlightModal";
 import { AsyncFlightGrid } from "@/components/flights/AsyncFlightGrid";
 import { FlightPlanningCard } from "@/components/flights/FlightPlanningCard";
+import { FlightIntegrationEvidence } from "@/components/flights/FlightIntegrationEvidence";
 import { CooperativeFlightCard } from "@/components/flights/CooperativeFlightCard";
 import { FlightCoordinationInbox } from "@/components/flights/FlightCoordinationInbox";
 import { FlightAutonomyCard } from "@/components/flights/FlightAutonomyCard";
 import { PacketAgentHandoffCard } from "@/components/flights/PacketAgentHandoffCard";
 import { usePacketAgentStore } from "@/stores/packetAgentStore";
+import { useAgentApprovalStore } from "@/stores/agentApprovalStore";
+import { openConversationInAgents } from "@/stores/sessionGlue";
 import { IssueFlightMirrorCard } from "@/components/flights/IssueFlightMirrorCard";
 import { openMonitorWindow } from "@/lib/monitorWindows";
 import { relativeTime } from "@/lib/time";
-import { summarizeFlightAttention, summarizeFlightReview } from "@/lib/flightReview";
+import { summarizeFlightAttention } from "@/lib/flightReview";
+import { flightOwnedSessionIds, projectFlightLifecycle } from "@/lib/flightLifecycle";
 import {
   FLIGHT_STATUS_CONFIG,
   FLIGHT_PRIORITY_COLORS,
@@ -57,25 +62,9 @@ import type {
   TaskRole,
 } from "@/types/flight";
 
-type ModalKind = null | "async";
-// When set alongside modal === "async", the launch modal targets this
-// existing flight instead of minting a new one.
-type GroupKey = "drafting" | "attention" | "active" | "recent";
+type GroupKey = "drafting" | "attention" | "active" | "ready" | "recent" | "archived";
 
 type DesignDot = "green" | "blue" | "amber" | "red" | "muted" | "accent" | "purple";
-
-const STATUS_LABEL: Record<FlightStatus, string> = {
-  spec: "spec",
-  draft: "draft",
-  planning: "planning",
-  ready: "ready",
-  active: "running",
-  paused: "paused",
-  review: "review",
-  done: "done",
-  failed: "failed",
-  cancelled: "cancelled",
-};
 
 const PRIORITY_LABEL: Record<FlightPriority, string> = {
   critical: "P0",
@@ -92,13 +81,6 @@ const DOT_BG: Record<DesignDot, string> = {
   muted: "bg-text-muted",
   accent: "bg-accent-green",
   purple: "bg-accent-purple",
-};
-
-const PRIORITY_PILL_BG: Record<FlightPriority, string> = {
-  critical: "bg-accent-red/10 border-accent-red/30",
-  high: "bg-accent-amber/10 border-accent-amber/30",
-  medium: "bg-bg-tertiary border-bg-border",
-  low: "bg-bg-tertiary border-bg-border",
 };
 
 const EVENT_DOT: Record<CoordinationEventType, DesignDot> = {
@@ -152,14 +134,54 @@ function flightTasks(flight: Flight): {
   return { done, total, approvals, hasInProgress };
 }
 
-function classifyGroup(flight: Flight, status: FlightStatus): GroupKey {
-  if (status === "spec") return "drafting";
-  const hasApproval = flight.milestones.some((m) =>
-    m.tasks.some((t) => t.status === "approval_needed"),
+function pendingApprovalCount(
+  flight: Flight,
+  permissions: ReadonlyMap<string, readonly unknown[]>,
+  edits: ReadonlyMap<string, readonly unknown[]>,
+) {
+  return flightOwnedSessionIds(flight).reduce(
+    (sum, sessionId) =>
+      sum + (permissions.get(sessionId)?.length ?? 0) + (edits.get(sessionId)?.length ?? 0),
+    0,
   );
-  if (status === "failed" || status === "paused" || hasApproval) return "attention";
-  if (status === "active" || status === "review") return "active";
-  return "recent";
+}
+
+function useFlightLifecycle(flight: Flight) {
+  const permissions = useAgentApprovalStore((state) => state.permissions);
+  const edits = useAgentApprovalStore((state) => state.edits);
+  const conversations = useAgentTaskStore((state) => state.conversations);
+  return projectFlightLifecycle(flight, {
+    pendingApprovalCount: pendingApprovalCount(flight, permissions, edits),
+    activeSessionCount: activeOwnedSessionCount(flight, conversations),
+  });
+}
+
+function activeOwnedSessionCount(
+  flight: Flight,
+  conversations: readonly { id: string; status: string }[],
+): number {
+  const owned = new Set(flightOwnedSessionIds(flight));
+  return conversations.filter(
+    (conversation) => owned.has(conversation.id) && conversation.status === "active",
+  ).length;
+}
+
+function classifyGroup(
+  flight: Flight,
+  status: FlightStatus,
+  approvals: number,
+  activeSessionCount: number,
+): GroupKey {
+  const phase = projectFlightLifecycle(flight, {
+    pendingApprovalCount: approvals,
+    activeSessionCount,
+  }).phase;
+  if (phase === "archived") return "archived";
+  if (phase === "draft") return "drafting";
+  if (phase === "needs_attention" || phase === "review") return "attention";
+  if (phase === "ready_to_deliver") return "ready";
+  if (phase === "delivered") return "recent";
+  return status === "active" || phase === "running" ? "active" : "attention";
 }
 
 function formatCost(cost: number): string {
@@ -194,27 +216,51 @@ export function FlightsView() {
       computeFlightStatus: s.computeFlightStatus,
     })),
   );
-  const [modal, setModal] = useState<ModalKind>(null);
-  const [launchTargetFlightId, setLaunchTargetFlightId] = useState<string | null>(null);
+  const openFlightBrief = useAppStore((state) => state.openFlightBrief);
+  const permissions = useAgentApprovalStore((state) => state.permissions);
+  const edits = useAgentApprovalStore((state) => state.edits);
+  const conversations = useAgentTaskStore((state) => state.conversations);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   function handleStartFlight() {
-    setLaunchTargetFlightId(null);
-    setModal("async");
+    openFlightBrief();
   }
 
   function handleLaunchIntoFlight(flightId: string) {
-    setLaunchTargetFlightId(flightId);
-    setModal("async");
+    const target = flights.find((flight) => flight.id === flightId);
+    if (!target) return;
+    const attempt = target.attempts?.slice(-1)[0];
+    openFlightBrief({
+      flightId: target.delivery || target.archivedAt ? undefined : flightId,
+      title: target.title,
+      objective: target.objective,
+      projectPath:
+        attempt?.target.basePath ?? target.executionTarget?.basePath ?? target.projectPath,
+      workspaceId: target.workspaceId,
+      serverId: attempt
+        ? attempt.target.kind === "ssh"
+          ? attempt.target.serverId
+          : undefined
+        : target.executionTarget?.serverId,
+      baseBranch: attempt?.baseBranch ?? target.gitBranch,
+      agent: attempt?.agentConfigId as AgentCli | undefined,
+      model: attempt?.model,
+      acceptanceCriteria: target.reviewGatePolicy?.acceptanceCriteria,
+      sourceLabel: target.title,
+    });
   }
 
   const selectedId = useMemo(() => {
-    if (activeFlightId && flights.some((f) => f.id === activeFlightId)) {
+    if (
+      activeFlightId &&
+      flights.some((f) => f.id === activeFlightId && (showArchived || !f.archivedAt))
+    ) {
       return activeFlightId;
     }
-    return flights[0]?.id ?? null;
-  }, [flights, activeFlightId]);
+    return flights.find((flight) => showArchived || !flight.archivedAt)?.id ?? null;
+  }, [flights, activeFlightId, showArchived]);
 
   useEffect(() => {
     if (selectedId && selectedId !== activeFlightId) {
@@ -233,23 +279,28 @@ export function FlightsView() {
       drafting: [],
       attention: [],
       active: [],
+      ready: [],
       recent: [],
+      archived: [],
     };
     for (const f of flights) {
+      if (!showArchived && f.archivedAt) continue;
       if (filter) {
         const hay = `${f.title} ${f.objective ?? ""} ${f.id}`.toLowerCase();
         if (!hay.includes(filter)) continue;
       }
       const status = computeFlightStatus(f.id);
-      buckets[classifyGroup(f, status)].push(f);
+      buckets[
+        classifyGroup(
+          f,
+          status,
+          pendingApprovalCount(f, permissions, edits),
+          activeOwnedSessionCount(f, conversations),
+        )
+      ].push(f);
     }
     return buckets;
-  }, [flights, query, computeFlightStatus]);
-
-  const closeModal = () => {
-    setModal(null);
-    setLaunchTargetFlightId(null);
-  };
+  }, [flights, query, computeFlightStatus, showArchived, permissions, edits, conversations]);
 
   if (flights.length === 0) {
     return (
@@ -258,33 +309,26 @@ export function FlightsView() {
           <Plane size={32} />
           <span className="text-sm font-medium text-text-primary">No flights yet</span>
           <span className="max-w-md text-center text-xs">
-            Launch a worktree attempt against a target agent and branch — track progress, review the
-            diff, and accept or reject the result.
+            Give an agent a scoped change on an isolated branch. Review its changes and checks, then
+            land the result or open a PR.
           </span>
           <div className="mt-2 flex flex-col items-center gap-2">
             <button
               onClick={handleStartFlight}
-              className="hover:bg-accent-green/15 flex items-center gap-2 rounded border border-accent-line bg-accent-soft px-4 py-2 text-sm font-medium text-accent-green transition-colors"
+              className="flex items-center gap-2 rounded border border-accent-line bg-accent-soft px-4 py-2 text-sm font-medium text-accent-green transition-colors hover:bg-accent-green/15"
             >
               <Sparkles size={14} />
               New flight
             </button>
           </div>
         </div>
-        {modal === "async" && (
-          <LaunchAsyncFlightModal
-            flightId={launchTargetFlightId ?? undefined}
-            onLaunched={(id) => setActiveFlight(id)}
-            onClose={closeModal}
-          />
-        )}
       </>
     );
   }
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 bg-bg-primary">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-primary md:flex-row">
         <FlightSidebar
           flights={flights}
           grouped={grouped}
@@ -296,10 +340,13 @@ export function FlightsView() {
           onToggleSearch={() => setSearchOpen((v) => !v)}
           onCreate={handleStartFlight}
           computeStatus={computeFlightStatus}
+          showArchived={showArchived}
+          onToggleArchived={() => setShowArchived((value) => !value)}
         />
         <div className="flex min-w-0 flex-1 flex-col">
           {selectedFlight ? (
             <FlightDetailPane
+              key={selectedFlight.id}
               flight={selectedFlight}
               status={computeFlightStatus(selectedFlight.id)}
               onLaunchAttempt={() => handleLaunchIntoFlight(selectedFlight.id)}
@@ -309,13 +356,6 @@ export function FlightsView() {
           )}
         </div>
       </div>
-      {modal === "async" && (
-        <LaunchAsyncFlightModal
-          flightId={launchTargetFlightId ?? undefined}
-          onLaunched={(id) => setActiveFlight(id)}
-          onClose={closeModal}
-        />
-      )}
     </>
   );
 }
@@ -342,6 +382,8 @@ interface SidebarProps {
   onToggleSearch: () => void;
   onCreate: () => void;
   computeStatus: (id: string) => FlightStatus;
+  showArchived: boolean;
+  onToggleArchived: () => void;
 }
 
 function FlightSidebar({
@@ -355,16 +397,23 @@ function FlightSidebar({
   onToggleSearch,
   onCreate,
   computeStatus,
+  showArchived,
+  onToggleArchived,
 }: SidebarProps) {
   const groups: { key: GroupKey; label: string }[] = [
-    { key: "drafting", label: "Drafting" },
-    { key: "attention", label: "Attention" },
-    { key: "active", label: "Active" },
-    { key: "recent", label: "Recent" },
+    { key: "attention", label: "Needs you" },
+    { key: "active", label: "Running" },
+    { key: "ready", label: "Ready to deliver" },
+    { key: "drafting", label: "Drafts" },
+    { key: "recent", label: "Delivered" },
+    { key: "archived", label: "Archived" },
   ];
 
   return (
-    <div className="flex min-h-0 w-[320px] flex-shrink-0 flex-col border-r border-bg-border bg-bg-secondary">
+    <nav
+      aria-label="Flights"
+      className="flex max-h-56 min-h-0 w-full shrink-0 flex-col border-b border-bg-border bg-bg-secondary md:max-h-none md:w-56 md:border-b-0 md:border-r lg:w-64"
+    >
       <div className="flex items-center gap-1.5 border-b border-line-soft px-2.5 py-2">
         <span className="text-[11px] font-semibold text-text-primary">Flights</span>
         <span className="rounded bg-bg-tertiary px-1.5 py-px font-mono text-[10px] text-text-muted">
@@ -377,6 +426,8 @@ function FlightSidebar({
             searchOpen ? "bg-bg-hover text-text-primary" : "text-text-muted"
           }`}
           title="Search flights"
+          aria-label="Search flights"
+          aria-expanded={searchOpen}
         >
           <Search size={12} />
         </button>
@@ -384,6 +435,7 @@ function FlightSidebar({
           onClick={onCreate}
           className="rounded p-1 text-text-muted transition-colors hover:bg-bg-hover hover:text-accent-green"
           title="New flight"
+          aria-label="New flight"
         >
           <Plus size={12} />
         </button>
@@ -397,12 +449,16 @@ function FlightSidebar({
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Filter by title, objective, id…"
+            aria-label="Filter flights"
             className="w-full rounded border border-bg-border bg-bg-primary px-2 py-1 text-[11px] text-text-primary outline-none placeholder:text-text-faint focus:border-accent-line"
           />
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <label className="flex items-center gap-2 border-b border-bg-border px-3 py-2 text-[11px] text-text-secondary">
+        <input type="checkbox" checked={showArchived} onChange={onToggleArchived} /> Show archived
+      </label>
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {groups.map((g) => {
           const items = grouped[g.key];
           if (items.length === 0) return null;
@@ -424,14 +480,11 @@ function FlightSidebar({
             </div>
           );
         })}
-        {grouped.drafting.length === 0 &&
-          grouped.attention.length === 0 &&
-          grouped.active.length === 0 &&
-          grouped.recent.length === 0 && (
-            <div className="px-3 py-4 text-[10px] text-text-muted">No flights match.</div>
-          )}
+        {Object.values(grouped).every((items) => items.length === 0) && (
+          <div className="px-3 py-4 text-[10px] text-text-muted">No flights match.</div>
+        )}
       </div>
-    </div>
+    </nav>
   );
 }
 
@@ -454,7 +507,7 @@ function FlightRow({
   const agents = flightAgentCount(flight);
   const cost = formatCost(flight.totalCost);
   const priorityClass = FLIGHT_PRIORITY_COLORS[flight.priority];
-  const statusLabel = STATUS_LABEL[status];
+  const statusLabel = useFlightLifecycle(flight).label;
   const toast = useToast();
 
   // Delete confirm. The old idiom here was a 3-second armed inline button;
@@ -576,9 +629,12 @@ function FlightRow({
     <>
       <div
         role="button"
+        aria-label={`${flight.title || "Untitled flight"} — ${statusLabel}`}
+        aria-pressed={selected}
         tabIndex={0}
         onClick={onSelect}
         onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelect();
@@ -610,7 +666,7 @@ function FlightRow({
               e.stopPropagation();
               setConfirming(true);
             }}
-            className="hover:bg-accent-red/10 rounded p-0.5 text-text-muted opacity-0 transition-colors hover:text-accent-red focus:opacity-100 group-hover:opacity-100"
+            className="rounded p-0.5 text-text-muted opacity-0 transition-colors hover:bg-accent-red/10 hover:text-accent-red focus:opacity-100 group-hover:opacity-100"
             title={deleteTitle}
             aria-label="Delete flight"
           >
@@ -644,7 +700,7 @@ function FlightRow({
                   openMemoryView({ flightId: flight.id });
                 }
               }}
-              className="hover:text-accent-green/80 hover:bg-accent-green/10 -mx-1 inline-flex cursor-pointer items-center gap-1 rounded px-1 text-accent-green transition-colors"
+              className="-mx-1 inline-flex cursor-pointer items-center gap-1 rounded px-1 text-accent-green transition-colors hover:bg-accent-green/10 hover:text-accent-green/80"
               title={`${memoryHits} memory entr${memoryHits === 1 ? "y" : "ies"} extracted from this flight. Click to view in Memory.`}
             >
               <Brain size={9} />
@@ -680,240 +736,391 @@ interface DetailProps {
 
 function FlightDetailPane({ flight, status, onLaunchAttempt }: DetailProps) {
   const toast = useToast();
+  const lifecycle = useFlightLifecycle(flight);
   const cfg = FLIGHT_STATUS_CONFIG[status];
   const tasks = flightTasks(flight);
-  const sessions = flight.linkedSessionIds.length;
-
-  return (
-    <div className="flex-1 overflow-y-auto bg-bg-primary">
-      <div className="flex min-h-full flex-col gap-3 p-3.5">
-        <div className="flex items-start gap-3">
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-[11px] text-text-muted">{shortId(flight.id)}</span>
-              <span
-                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${cfg.bg} ${cfg.text}`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-                {STATUS_LABEL[status]}
-              </span>
-              <span
-                className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${PRIORITY_PILL_BG[flight.priority]} ${FLIGHT_PRIORITY_COLORS[flight.priority]}`}
-              >
-                {PRIORITY_LABEL[flight.priority]}
-              </span>
-            </div>
-            <h2 className="text-[18px] font-semibold leading-tight tracking-tight text-text-primary">
-              {flight.title || "Untitled flight"}
-            </h2>
-            {flight.objective && (
-              <p className="max-w-[600px] text-[11.5px] leading-relaxed text-text-secondary">
-                {flight.objective}
-              </p>
-            )}
-          </div>
-          <button
-            onClick={() =>
-              void openMonitorWindow({ kind: "flight", flightId: flight.id }).catch((error) => {
-                const message = error instanceof Error ? error.message : String(error);
-                toast.error(`Monitor could not be opened: ${message}`);
-              })
-            }
-            className="rounded border border-bg-border px-2.5 py-1.5 text-[10px] text-text-secondary hover:bg-bg-hover"
-          >
-            Send to Monitor
-          </button>
-        </div>
-
-        <StatGrid flight={flight} tasks={tasks} sessions={sessions} />
-
-        <FlightPlanningCard flight={flight} />
-
-        <FlightAutonomyCard flight={flight} />
-
-        <PacketAgentHandoffCard flight={flight} />
-
-        <IssueFlightMirrorCard flight={flight} />
-
-        <CooperativeFlightCard flight={flight} />
-
-        <FlightCoordinationInbox flight={flight} />
-
-        <AsyncFlightGrid
-          flight={flight}
-          onLaunch={flight.executionMode === "cooperative" ? undefined : onLaunchAttempt}
-        />
-
-        <AttentionCard flight={flight} />
-
-        <OutputReviewCard flight={flight} />
-
-        <div className="grid min-h-[260px] flex-1 grid-cols-1 gap-3 lg:[grid-template-columns:1.4fr_1fr]">
-          <MilestonesCard flight={flight} tasks={tasks} />
-          <TimelineCard flight={flight} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// E6: single "needs a human" strip — attempts awaiting review or failed.
-// PH9: the flight's PacketAgent deployment contributes when it has open
-// attention or ended in a terminal failure; its chip focuses the card below.
-function AttentionCard({ flight }: { flight: Flight }) {
-  const packetAgentProjection = usePacketAgentStore((state) => state.deployments[flight.id]);
-  const attention = summarizeFlightAttention(flight, packetAgentProjection);
-  if (attention.total === 0) return null;
-  return (
-    <div className="border-accent-amber/30 bg-accent-amber/10 rounded border px-3 py-2">
-      <div className="flex items-center gap-2 text-[11px] font-semibold text-accent-amber">
-        <span>Needs attention</span>
-        <span className="bg-accent-amber/20 rounded-full px-1.5 text-[10px]">
-          {attention.total}
-        </span>
-        {attention.packetAgent && (
-          <button
-            type="button"
-            onClick={() =>
-              document
-                .getElementById(`packetagent-card-${flight.id}`)
-                ?.scrollIntoView({ behavior: "smooth", block: "center" })
-            }
-            className="bg-accent-amber/20 hover:bg-accent-amber/30 rounded-full px-1.5 text-[10px] font-medium"
-            title={
-              attention.packetAgent.terminalFailure
-                ? "PacketAgent worker ended without success — open the card"
-                : `${attention.packetAgent.attentionCount} PacketAgent approval event(s) — open the card`
-            }
-          >
-            PacketAgent
-          </button>
-        )}
-      </div>
-      <div className="mt-1 flex flex-col gap-0.5 text-[11px] text-text-secondary">
-        {attention.reviewing.length > 0 && (
-          <span>
-            {attention.reviewing.length} attempt{attention.reviewing.length === 1 ? "" : "s"}{" "}
-            awaiting review — accept or reject below.
-          </span>
-        )}
-        {attention.failed.map((a) => (
-          <span key={a.id} className="text-text-muted">
-            {a.provider} failed
-            {a.failureCategory ? ` (${a.failureCategory.replace(/_/g, " ")})` : ""} — review the
-            diff, or reassign from the timeline when a suggestion appears.
-          </span>
-        ))}
-        {attention.packetAgent && (
-          <span className="text-text-muted">
-            {attention.packetAgent.terminalFailure
-              ? "PacketAgent worker ended without success — review its card."
-              : `PacketAgent worker has ${attention.packetAgent.attentionCount} approval event(s) waiting.`}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function OutputReviewCard({ flight }: { flight: Flight }) {
-  const summary = useMemo(() => summarizeFlightReview(flight), [flight]);
-  const rows = useMemo(() => {
-    const seen = new Set<string>();
-    const out: typeof summary.files = [];
-    for (const ref of summary.files) {
-      const key = `${ref.taskId}:${ref.filePath}:${ref.relation}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(ref);
-      if (out.length >= 8) break;
+  const archiveFlight = useFlightStore((state) => state.archiveFlight);
+  const unarchiveFlight = useFlightStore((state) => state.unarchiveFlight);
+  const stopFlight = useAsyncFlightStore((state) => state.stopFlight);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [archiveConfirm, setArchiveConfirm] = useState(false);
+  const candidates = [...(flight.attempts ?? [])].reverse();
+  const attemptToReview =
+    lifecycle.nextAction === "deliver"
+      ? candidates.find((attempt) => attempt.status === "completed" && !attempt.delivery)
+      : (candidates.find((attempt) => attempt.recovery?.state === "retained") ??
+        candidates.find((attempt) => attempt.status === "reviewing") ??
+        candidates.find((attempt) => attempt.status === "failed"));
+  const primaryLabel: Record<typeof lifecycle.nextAction, string> = {
+    brief: flight.executionMode === "cooperative" ? "Open tasks" : "Review brief & run",
+    stop: "Stop Flight",
+    attention: "Resolve attention",
+    review: "Review result",
+    deliver: flight.executionMode === "cooperative" ? "Review & land Flight" : "Deliver result",
+    archive: "Archive Flight",
+    unarchive: "Restore Flight",
+  };
+  function focusResult() {
+    const element = document.getElementById(
+      flight.executionMode === "cooperative" && lifecycle.nextAction === "deliver"
+        ? `flight-tasks-${flight.id}`
+        : attemptToReview
+          ? `flight-attempt-${attemptToReview.id}`
+          : `flight-attention-${flight.id}`,
+    );
+    element?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    element?.focus();
+  }
+  async function primaryAction() {
+    if (busy) return;
+    setError(null);
+    if (lifecycle.nextAction === "brief") {
+      if (flight.executionMode === "cooperative") {
+        const tasks = document.getElementById(`flight-tasks-${flight.id}`);
+        tasks?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        tasks?.focus();
+        return;
+      }
+      onLaunchAttempt();
+      return;
     }
-    return out;
-  }, [summary]);
-
-  const shouldRender =
-    summary.taskCount > 0 || flight.status === "review" || summary.pendingApprovalCount > 0;
-
-  if (!shouldRender) return null;
-
-  const reported = summary.reportedFileCount;
-  const owned = summary.ownedFileCount;
-  const hasFiles = rows.length > 0;
+    if (["attention", "review", "deliver"].includes(lifecycle.nextAction)) {
+      focusResult();
+      return;
+    }
+    if (lifecycle.nextAction === "archive") {
+      setArchiveConfirm(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      if (lifecycle.nextAction === "stop") await stopFlight(flight.id);
+      else unarchiveFlight(flight.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function stopNow() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await stopFlight(flight.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const step =
+    lifecycle.phase === "draft"
+      ? 0
+      : lifecycle.phase === "running" || lifecycle.phase === "needs_attention"
+        ? 1
+        : lifecycle.phase === "review"
+          ? 2
+          : 3;
 
   return (
-    <div className="flex flex-col overflow-hidden rounded border border-bg-border bg-bg-secondary">
-      <div className="flex items-center gap-1.5 border-b border-line-soft px-2.5 py-2">
-        <ShieldCheck size={11} className="text-accent-amber" />
-        <span className="text-[11px] font-semibold text-text-primary">Output review</span>
-        <span className="flex-1" />
-        {summary.pendingApprovalCount > 0 ? (
-          <span className="bg-accent-amber/10 rounded px-1.5 py-0.5 text-[10px] text-accent-amber">
-            {summary.pendingApprovalCount} approval
-            {summary.pendingApprovalCount === 1 ? "" : "s"}
-          </span>
-        ) : (
-          <span className="bg-accent-green/10 rounded px-1.5 py-0.5 text-[10px] text-accent-green">
-            ready
-          </span>
-        )}
-      </div>
-      <div className="px-2.5 py-2">
-        <div className="flex flex-wrap items-center gap-2 text-[10px] text-text-muted">
-          <span className="inline-flex items-center gap-1">
-            <FileCheck2 size={10} className="text-accent-amber" />
-            {reported} reported file{reported === 1 ? "" : "s"}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <GitCommit size={10} className="text-accent-green" />
-            {owned} owned path{owned === 1 ? "" : "s"}
-          </span>
-          <span className="text-text-faint">
-            Review task output before approve/merge or commit.
-          </span>
-        </div>
-
-        {!hasFiles ? (
-          <div className="mt-2 rounded border border-dashed border-bg-border px-2 py-2 text-[11px] text-text-muted">
-            No task file output has been reported yet.
-          </div>
-        ) : (
-          <div className="mt-2 grid grid-cols-1 gap-1.5 md:grid-cols-2">
-            {rows.map((ref) => (
-              <div
-                key={`${ref.taskId}-${ref.filePath}-${ref.relation}`}
-                className="flex min-w-0 items-center gap-1.5 rounded border border-bg-border bg-bg-primary px-2 py-1"
-                title={`${ref.taskTitle} / ${ref.filePath}`}
-              >
-                <FileCheck2
-                  size={10}
-                  className={
-                    ref.relation === "reported"
-                      ? "shrink-0 text-accent-amber"
-                      : "shrink-0 text-text-muted"
-                  }
-                />
-                <span className="truncate font-mono text-[10px] text-text-secondary">
-                  {ref.filePath}
-                </span>
-                <span className="ml-auto max-w-[160px] truncate rounded bg-bg-tertiary px-1.5 py-0.5 text-[9px] text-text-muted">
-                  {ref.taskTitle}
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg-primary">
+      <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-4 p-3 md:p-4">
+        <header className="space-y-3 rounded-lg border border-bg-border bg-bg-secondary p-4">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="font-mono text-text-muted">{shortId(flight.id)}</span>
+                <span className={`rounded px-2 py-0.5 font-medium ${cfg.bg} ${cfg.text}`}>
+                  {lifecycle.label}
                 </span>
               </div>
+              <h1 className="break-words text-lg font-semibold text-text-primary">
+                {flight.title || "Untitled flight"}
+              </h1>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void primaryAction()}
+              className="inline-flex items-center gap-1.5 rounded border border-accent-green/30 bg-accent-green/10 px-3 py-2 text-xs font-medium text-accent-green disabled:opacity-40"
+            >
+              {busy ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : lifecycle.nextAction === "stop" ? (
+                <Square size={12} />
+              ) : lifecycle.nextAction === "archive" ? (
+                <Archive size={12} />
+              ) : lifecycle.nextAction === "unarchive" ? (
+                <ArchiveRestore size={12} />
+              ) : (
+                <Rocket size={12} />
+              )}
+              {primaryLabel[lifecycle.nextAction]}
+            </button>
+            {lifecycle.activeCount > 0 && lifecycle.nextAction !== "stop" && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void stopNow()}
+                className="inline-flex items-center gap-1.5 rounded border border-bg-border px-3 py-2 text-xs text-text-secondary disabled:opacity-40"
+              >
+                <Square size={12} /> Stop Flight
+              </button>
+            )}
+          </div>
+          <p className="text-xs leading-relaxed text-text-secondary">{lifecycle.summary}</p>
+          <ol aria-label="Flight progress" className="flex flex-wrap gap-2 text-[11px]">
+            {["Brief", "Run", "Review", "Deliver"].map((label, index) => (
+              <li
+                key={label}
+                aria-current={index === step ? "step" : undefined}
+                className={`rounded border px-2 py-1 ${index === step ? "border-accent-green/40 text-accent-green" : "border-bg-border text-text-muted"}`}
+              >
+                {index + 1}. {label}
+              </li>
             ))}
+          </ol>
+          <div className="border-t border-bg-border pt-3">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+              Outcome
+            </h2>
+            <p className="mt-1 whitespace-pre-wrap break-words text-xs text-text-primary">
+              {flight.objective ||
+                flight.prompt ||
+                "Add a concrete outcome in the brief before running."}
+            </p>
           </div>
-        )}
+          <p className="break-all font-mono text-[11px] text-text-muted">
+            {flight.projectPath || "Project not selected"}
+          </p>
+          {(flight.reviewGatePolicy?.acceptanceCriteria.length ?? 0) > 0 && (
+            <details>
+              <summary className="cursor-pointer text-xs text-text-secondary">
+                Acceptance checks ({flight.reviewGatePolicy!.acceptanceCriteria.length})
+              </summary>
+              <ul className="mt-2 list-disc space-y-1 break-words pl-4 text-xs text-text-secondary">
+                {flight.reviewGatePolicy!.acceptanceCriteria.map((criterion, index) => (
+                  <li key={index}>{criterion}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
+            <span>
+              Usage {formatCost(flight.totalCost)} · {formatTokens(flight.totalTokens)} tokens
+            </span>
+            <span>
+              {flight.executionMode === "cooperative" ? "Cooperative tasks" : "Isolated attempts"} ·{" "}
+              {flight.autonomyPolicy ? "Bounded automatic actions" : "Assisted"}
+            </span>
+            <span>Updated {relativeTime(flight.updatedAt)}</span>
+          </div>
+          {error && (
+            <p role="alert" className="text-xs text-accent-red">
+              {error}
+            </p>
+          )}
+          {busy && (
+            <p role="status" className="text-xs text-text-muted">
+              Applying Flight action…
+            </p>
+          )}
+        </header>
 
-        {summary.files.length > rows.length && (
-          <div className="mt-1.5 text-[10px] text-text-muted">
-            +{summary.files.length - rows.length} more file reference
-            {summary.files.length - rows.length === 1 ? "" : "s"}
+        <AttentionCard flight={flight} />
+        <FlightPlanningCard flight={flight} />
+        {flight.executionMode === "cooperative" && (
+          <section id={`flight-tasks-${flight.id}`} tabIndex={-1} className="min-w-0 space-y-3">
+            {lifecycle.phase === "ready_to_deliver" && (
+              <FlightIntegrationEvidence flight={flight} />
+            )}
+            <CooperativeFlightCard flight={flight} />
+          </section>
+        )}
+        <AsyncFlightGrid
+          flight={flight}
+          onLaunch={
+            flight.archivedAt || flight.executionMode === "cooperative"
+              ? undefined
+              : onLaunchAttempt
+          }
+        />
+
+        <details className="rounded border border-bg-border bg-bg-secondary p-3">
+          <summary className="cursor-pointer text-xs font-medium text-text-secondary">
+            Coordination and messages
+          </summary>
+          <div className="mt-3">
+            <FlightCoordinationInbox flight={flight} />
           </div>
+        </details>
+        <details className="rounded border border-bg-border bg-bg-secondary p-3">
+          <summary className="cursor-pointer text-xs font-medium text-text-secondary">
+            Execution settings and integrations
+          </summary>
+          <div className="mt-3 space-y-3">
+            <FlightAutonomyCard flight={flight} />
+            {flight.executionMode !== "cooperative" && <CooperativeFlightCard flight={flight} />}
+            <PacketAgentHandoffCard flight={flight} />
+            <IssueFlightMirrorCard flight={flight} />
+            <button
+              type="button"
+              onClick={() =>
+                void openMonitorWindow({ kind: "flight", flightId: flight.id }).catch((reason) =>
+                  toast.error(`Monitor could not be opened: ${String(reason)}`),
+                )
+              }
+              className="rounded border border-bg-border px-3 py-1.5 text-xs text-text-secondary"
+            >
+              Open Flight Monitor
+            </button>
+          </div>
+        </details>
+        <details className="rounded border border-bg-border bg-bg-secondary p-3">
+          <summary className="cursor-pointer text-xs font-medium text-text-secondary">
+            Plan record, usage and activity history
+          </summary>
+          <div className="mt-3 space-y-3">
+            <StatGrid flight={flight} tasks={tasks} sessions={flight.linkedSessionIds.length} />
+            {flight.executionMode !== "cooperative" && (
+              <MilestonesCard flight={flight} tasks={tasks} />
+            )}
+            <TimelineCard flight={flight} />
+          </div>
+        </details>
+        {!flight.archivedAt && lifecycle.nextAction !== "archive" && (
+          <button
+            type="button"
+            disabled={lifecycle.activeCount > 0 || tasks.hasInProgress}
+            onClick={() => setArchiveConfirm(true)}
+            className="self-start rounded px-2 py-1 text-[11px] text-text-muted hover:text-text-primary disabled:opacity-40"
+          >
+            {lifecycle.activeCount > 0 || tasks.hasInProgress
+              ? "Stop active work before archiving"
+              : "Archive without deleting history…"}
+          </button>
         )}
       </div>
+      {archiveConfirm && (
+        <ConfirmDeleteModal
+          title="Archive Flight?"
+          entityName={flight.title}
+          description="is hidden from the active list. Its results, branches and history are retained. Restore it from Show archived."
+          confirmLabel="Archive Flight"
+          warnings={
+            lifecycle.phase === "running"
+              ? ["Stop this Flight before archiving so all active work is settled."]
+              : []
+          }
+          undoNote={null}
+          onClose={() => setArchiveConfirm(false)}
+          onConfirm={() => {
+            try {
+              archiveFlight(flight.id);
+              setArchiveConfirm(false);
+            } catch (reason) {
+              setArchiveConfirm(false);
+              setError(reason instanceof Error ? reason.message : String(reason));
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
 
+function AttentionCard({ flight }: { flight: Flight }) {
+  const permissions = useAgentApprovalStore((state) => state.permissions);
+  const edits = useAgentApprovalStore((state) => state.edits);
+  const packetAgentProjection = usePacketAgentStore((state) => state.deployments[flight.id]);
+  const attention = summarizeFlightAttention(flight, packetAgentProjection);
+  const lifecycle = useFlightLifecycle(flight);
+  const sessions = new Set(flightOwnedSessionIds(flight));
+  const pending = [...sessions]
+    .map((sessionId) => ({
+      sessionId,
+      count: (permissions.get(sessionId)?.length ?? 0) + (edits.get(sessionId)?.length ?? 0),
+    }))
+    .filter((item) => item.count > 0);
+  if (["delivered", "archived"].includes(lifecycle.phase) && pending.length === 0) return null;
+  const attempts = (flight.attempts ?? []).filter(
+    (attempt) =>
+      attempt.recovery?.state === "retained" ||
+      attempt.status === "reviewing" ||
+      attempt.status === "failed" ||
+      attempt.reviewGate?.status === "error",
+  );
+  if (
+    lifecycle.attentionCount === 0 &&
+    attention.total === 0 &&
+    attempts.length === 0 &&
+    pending.length === 0
+  )
+    return null;
+  return (
+    <section
+      id={`flight-attention-${flight.id}`}
+      tabIndex={-1}
+      aria-label="Flight attention"
+      className="space-y-2 rounded border border-accent-amber/30 bg-accent-amber/5 p-3"
+    >
+      <h2 className="text-xs font-semibold text-accent-amber">Needs you</h2>
+      {pending.map(({ sessionId, count }) => (
+        <div
+          key={sessionId}
+          className="flex flex-wrap items-center gap-2 text-xs text-text-secondary"
+        >
+          <p className="min-w-0 flex-1">
+            {count} tool or file approval{count === 1 ? "" : "s"} waiting for your decision.
+          </p>
+          <button
+            type="button"
+            onClick={() => openConversationInAgents(sessionId)}
+            className="rounded border border-accent-amber/30 px-2 py-1 text-[11px] text-accent-amber"
+          >
+            Review approvals
+          </button>
+        </div>
+      ))}
+      {attempts.map((attempt) => (
+        <div
+          key={attempt.id}
+          className="flex flex-wrap items-start gap-2 text-xs text-text-secondary"
+        >
+          <p className="min-w-0 flex-1 break-words">
+            {attempt.recovery?.state === "retained"
+              ? "Preserved work needs a recovery decision."
+              : (attempt.errorMessage ??
+                attempt.reviewGate?.errorMessage ??
+                (attempt.reviewGate?.status === "running"
+                  ? "Independent reviewer is checking this result."
+                  : "Review this result and its evidence before accepting."))}
+          </p>
+          <button
+            type="button"
+            className="rounded border border-accent-amber/30 px-2 py-1 text-[11px] text-accent-amber"
+            onClick={() => {
+              const target = document.getElementById(`flight-attempt-${attempt.id}`);
+              target?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+              target?.focus();
+            }}
+          >
+            Open result
+          </button>
+        </div>
+      ))}
+      {attempts.length === 0 && <p className="text-xs text-text-secondary">{lifecycle.summary}</p>}
+      {attention.packetAgent && (
+        <p className="text-xs text-text-secondary">
+          PacketAgent needs attention. Open Execution settings and integrations to inspect its
+          handoff.
+        </p>
+      )}
+    </section>
+  );
+}
 interface StatGridProps {
   flight: Flight;
   tasks: { done: number; total: number; approvals: number; hasInProgress: boolean };
@@ -1167,7 +1374,7 @@ function TimelineRow({ event, flight }: { event: CoordinationEvent; flight: Flig
               type="button"
               disabled={busy}
               onClick={doReassign}
-              className="border-accent-green/40 bg-accent-green/10 hover:bg-accent-green/20 rounded border px-1.5 py-0.5 text-[10px] text-accent-green disabled:opacity-50"
+              className="rounded border border-accent-green/40 bg-accent-green/10 px-1.5 py-0.5 text-[10px] text-accent-green hover:bg-accent-green/20 disabled:opacity-50"
             >
               {busy
                 ? "Reassigning…"

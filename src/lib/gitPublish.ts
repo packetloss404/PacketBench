@@ -55,6 +55,8 @@ export type PublishBranchAsPrResult =
        * persist a number, but do not retry either).
        */
       prNumber: number | null;
+      /** Actual human-facing URL returned by the configured Git host. */
+      prUrl?: string;
     }
   | {
       ok: false;
@@ -92,6 +94,7 @@ export async function publishBranchAsPr(
 
   // 2. Open the PR.
   let prNumber: number | null = null;
+  let prUrl: string | undefined;
   try {
     const json = await githubCreatePr(
       input.owner,
@@ -103,22 +106,44 @@ export async function publishBranchAsPr(
       input.draft ?? true,
       ...(input.connectionId ? [input.connectionId] : []),
     );
-    const pr = JSON.parse(json) as { number?: number };
+    const pr = JSON.parse(json) as { number?: number; html_url?: unknown; web_url?: unknown };
     if (typeof pr.number === "number") prNumber = pr.number;
+    for (const candidate of [pr.html_url, pr.web_url]) {
+      if (typeof candidate !== "string") continue;
+      try {
+        const url = new URL(candidate);
+        if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) {
+          prUrl = url.href;
+          break;
+        }
+      } catch {
+        // A malformed optional link must not turn an opened PR into a retry.
+      }
+    }
   } catch (err) {
     return { ok: false, stage: "create_pr", message: errMessage(err, "create_pr failed") };
   }
 
-  return { ok: true, prNumber };
+  return { ok: true, prNumber, ...(prUrl ? { prUrl } : {}) };
+}
+
+export interface WorktreePrOriginOptions {
+  /** Read on the worktree's execution host; errors never fall back to local Git. */
+  readOrigin?: () => Promise<string | null>;
 }
 
 /** Resolve the worktree's actual origin before any publication side effect. */
-export async function resolveWorktreePrTarget(worktreePath: string): Promise<{
+export async function resolveWorktreePrTarget(
+  worktreePath: string,
+  options: WorktreePrOriginOptions = {},
+): Promise<{
   owner: string;
   repo: string;
   connectionId: string;
 }> {
-  const origin = (await gitGetOriginUrl(worktreePath))?.trim() ?? "";
+  const origin =
+    (await (options.readOrigin ? options.readOrigin() : gitGetOriginUrl(worktreePath)))?.trim() ??
+    "";
   const connections = await gitHostListConnections();
   const resolved = resolveConnectionForRemote(origin, connections);
   if (!resolved.connectionId || resolved.ambiguous) {

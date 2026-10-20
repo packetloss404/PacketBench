@@ -8,7 +8,9 @@
  *
  *   - every non-terminal attempt is cancelled through the normal cancel path
  *     (which is what closes the session and removes the worktree);
- *   - terminal attempts — completed / failed / cancelled — are not touched;
+ *   - terminal attempts with retained worktrees are explicitly cleaned up;
+ *   - preserving Stop fences startup before destructive cleanup; Stop failure
+ *     keeps the Flight record and prevents destructive cleanup;
  *   - cleanup is best-effort: a failing attempt is REPORTED, never allowed to
  *     abort the delete;
  *   - the confirm's counts (attempts, worktrees, dirty worktrees) are derived
@@ -20,6 +22,8 @@ import type { WorktreeCleanupOutcome } from "@/lib/tauri";
 
 const mocks = vi.hoisted(() => ({
   cancelFlightAttempt: vi.fn(),
+  stopFlightSessions: vi.fn(),
+  loadPersistedState: vi.fn(),
   cleanupAttemptWorktreeSsh: vi.fn(),
   cleanupFlightIntegrationWorktree: vi.fn(),
   getGitStatus: vi.fn(),
@@ -29,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   adjustConfidenceForFlight: vi.fn(),
   clearInjectedPatterns: vi.fn(),
   assignToFlight: vi.fn(),
+  issues: [] as { id: string; flightId: string | null }[],
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -38,6 +43,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@/lib/tauri", () => ({
   launchFlightAsync: vi.fn(),
   cancelFlightAttempt: mocks.cancelFlightAttempt,
+  stopFlightSessions: mocks.stopFlightSessions,
   cleanupAttemptWorktreeSsh: mocks.cleanupAttemptWorktreeSsh,
   cleanupFlightIntegrationWorktree: mocks.cleanupFlightIntegrationWorktree,
   // Real implementation — the whole point is that a reported failure is
@@ -57,7 +63,7 @@ vi.mock("@/lib/tauri", () => ({
   landFlightIntegration: vi.fn(),
   prepareFlightIntegrationBranch: vi.fn(),
   toGitServerConfigInput: (server: { id: string }) => ({ id: server.id }),
-  loadPersistedState: vi.fn(),
+  loadPersistedState: mocks.loadPersistedState,
   saveFlightsSlice: vi.fn().mockResolvedValue(undefined),
   saveUiSlice: vi.fn().mockResolvedValue(undefined),
 }));
@@ -99,7 +105,7 @@ vi.mock("@/stores/memoryStore", () => ({
 
 vi.mock("@/stores/issueStore", () => ({
   useIssueStore: {
-    getState: () => ({ issues: [], assignToFlight: mocks.assignToFlight }),
+    getState: () => ({ issues: mocks.issues, assignToFlight: mocks.assignToFlight }),
   },
 }));
 
@@ -111,6 +117,8 @@ import {
   useAsyncFlightStore,
 } from "@/stores/asyncFlightStore";
 import { useFlightStore } from "@/stores/flightStore";
+import { useAgentApprovalStore } from "@/stores/agentApprovalStore";
+import { registerFlightStartup } from "@/lib/flightRunControl";
 
 function attempt(overrides: Partial<Attempt> = {}): Attempt {
   const id = overrides.id ?? "att-running";
@@ -172,6 +180,7 @@ function flight(overrides: Partial<Flight> = {}): Flight {
 }
 
 function seed(f: Flight) {
+  mocks.issues = f.issueIds.map((id) => ({ id, flightId: f.id }));
   useFlightStore.setState({ flights: [f], activeFlightId: f.id });
 }
 
@@ -203,6 +212,12 @@ const INTEGRATION: NonNullable<Flight["integrationBranch"]> = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.cancelFlightAttempt.mockResolvedValue(outcome());
+  mocks.stopFlightSessions.mockResolvedValue(undefined);
+  mocks.loadPersistedState.mockImplementation(async () => ({
+    flights: useFlightStore.getState().flights,
+    ui: { selectedFlightId: useFlightStore.getState().activeFlightId },
+  }));
+  mocks.issues = [];
   mocks.cleanupAttemptWorktreeSsh.mockResolvedValue(undefined);
   mocks.cleanupFlightIntegrationWorktree.mockResolvedValue(
     outcome({ worktreePath: INTEGRATION.worktreePath, branch: INTEGRATION.branch }),
@@ -220,10 +235,54 @@ beforeEach(() => {
     hostFingerprint: "SHA256:abc",
   });
   useFlightStore.setState({ flights: [], activeFlightId: null });
+  useAgentApprovalStore.setState({ permissions: new Map(), edits: new Map() });
+});
+
+describe("Stop approval recovery", () => {
+  it("clears current and historical owned approval queues after preserving Stop, keeping unrelated prompts", async () => {
+    const owned = ["builder", "previous-builder", "reviewer", "planner"];
+    seed(
+      flight({
+        planningConversationId: "planner",
+        attempts: [
+          attempt({
+            sessionId: "builder",
+            sessionHistory: [{ sessionId: "previous-builder", provider: "openai", model: "old" }],
+            reviewGate: { status: "running", reviewerConversationId: "reviewer" },
+          }),
+        ],
+      }),
+    );
+    useAgentApprovalStore.setState({
+      permissions: new Map(
+        [...owned, "unrelated"].map((id) => [id, [{ id: "tool", name: "bash", arguments: "{}" }]]),
+      ),
+      edits: new Map(owned.map((id) => [id, [{ id: "edit", path: "file", content: "change" }]])),
+    });
+    await useAsyncFlightStore.getState().stopFlight("flight-1");
+    for (const id of owned) {
+      expect(useAgentApprovalStore.getState().permissions.has(id)).toBe(false);
+      expect(useAgentApprovalStore.getState().edits.has(id)).toBe(false);
+    }
+    expect(useAgentApprovalStore.getState().permissions.has("unrelated")).toBe(true);
+    expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+  });
+
+  it("keeps still-live permission prompts when native Stop fails", async () => {
+    seed(flight({ attempts: [attempt({ sessionId: "builder" })] }));
+    useAgentApprovalStore.setState({
+      permissions: new Map([["builder", [{ id: "tool", name: "bash", arguments: "{}" }]]]),
+    });
+    mocks.stopFlightSessions.mockRejectedValueOnce(new Error("host unreachable"));
+    await expect(useAsyncFlightStore.getState().stopFlight("flight-1")).rejects.toThrow(
+      "host unreachable",
+    );
+    expect(useAgentApprovalStore.getState().permissions.get("builder")).toHaveLength(1);
+  });
 });
 
 describe("attemptsNeedingCleanup", () => {
-  it("selects every non-terminal status and no terminal one", () => {
+  it("selects every non-terminal status and excludes terminal records without retained work", () => {
     const f = flight({
       attempts: [
         attempt({ id: "a-queued", status: "queued" }),
@@ -244,6 +303,18 @@ describe("attemptsNeedingCleanup", () => {
     ]);
   });
 
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "includes a %s attempt whose worktree was retained",
+    (status) => {
+      const kept = attempt({
+        id: "retained",
+        status,
+        recovery: { state: "retained", reason: "Work preserved", retainedAt: 1 },
+      });
+      expect(attemptsNeedingCleanup(flight({ attempts: [kept] }))).toEqual([kept]);
+    },
+  );
+
   it("tolerates a missing flight and an attempt-less flight", () => {
     expect(attemptsNeedingCleanup(undefined)).toEqual([]);
     expect(attemptsNeedingCleanup(flight({ attempts: undefined }))).toEqual([]);
@@ -251,6 +322,94 @@ describe("attemptsNeedingCleanup", () => {
 });
 
 describe("deleteFlightWithAttemptCleanup", () => {
+  it("preserves Stop before cleanup and recomputes retained attempts from the hydrated result", async () => {
+    seed(flight({ attempts: [attempt({ id: "a-running", status: "running" })] }));
+    mocks.stopFlightSessions.mockImplementation(async () => {
+      expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+      const current = useFlightStore.getState().flights[0];
+      useFlightStore.setState({
+        flights: [
+          {
+            ...current,
+            attempts: [
+              attempt({
+                id: "a-running",
+                status: "cancelled",
+                recovery: { state: "retained", reason: "Stopped", retainedAt: 1 },
+              }),
+              attempt({
+                id: "late-startup",
+                status: "cancelled",
+                recovery: { state: "retained", reason: "Startup stopped", retainedAt: 1 },
+              }),
+            ],
+          },
+        ],
+      });
+    });
+    await expect(
+      useAsyncFlightStore.getState().deleteFlightWithAttemptCleanup("flight-1"),
+    ).resolves.toEqual([]);
+    expect(mocks.stopFlightSessions).toHaveBeenCalledWith("flight-1");
+    expect(mocks.loadPersistedState).toHaveBeenCalled();
+    expect(mocks.cancelFlightAttempt.mock.calls.map((call) => call[1])).toEqual([
+      "a-running",
+      "late-startup",
+    ]);
+    expect(useFlightStore.getState().flights).toEqual([]);
+  });
+
+  it("cleans up a previously stopped cancelled attempt's retained worktree on explicit delete", async () => {
+    seed(
+      flight({
+        attempts: [
+          attempt({
+            id: "stopped-work",
+            status: "cancelled",
+            recovery: { state: "retained", reason: "User stopped the Flight", retainedAt: 1 },
+          }),
+        ],
+      }),
+    );
+    await useAsyncFlightStore.getState().deleteFlightWithAttemptCleanup("flight-1");
+    expect(mocks.cancelFlightAttempt).toHaveBeenCalledWith("flight-1", "stopped-work");
+    expect(useFlightStore.getState().flights).toEqual([]);
+  });
+
+  it("waits for pending startup to settle before destructive cleanup", async () => {
+    seed(flight({ attempts: [attempt({ id: "pending", status: "provisioning" })] }));
+    const startup = registerFlightStartup("flight-1");
+    const deletion = useAsyncFlightStore.getState().deleteFlightWithAttemptCleanup("flight-1");
+    try {
+      await vi.waitFor(() => expect(mocks.stopFlightSessions).toHaveBeenCalledOnce());
+      expect(startup.isCurrent()).toBe(false);
+      expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+      expect(useFlightStore.getState().flights).toHaveLength(1);
+    } finally {
+      startup.finish();
+    }
+    await expect(deletion).resolves.toEqual([]);
+    expect(mocks.cancelFlightAttempt).toHaveBeenCalledWith("flight-1", "pending");
+  });
+
+  it("keeps the Flight record when preserving Stop fails", async () => {
+    mocks.stopFlightSessions.mockRejectedValueOnce(new Error("Stop could not reach the SSH host"));
+    seed(
+      flight({
+        attempts: [sshAttempt()],
+        executionMode: "cooperative",
+        integrationBranch: INTEGRATION,
+      }),
+    );
+    await expect(
+      useAsyncFlightStore.getState().deleteFlightWithAttemptCleanup("flight-1"),
+    ).rejects.toThrow("Stop could not reach the SSH host");
+    expect(useFlightStore.getState().flights.map((item) => item.id)).toEqual(["flight-1"]);
+    expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+    expect(mocks.cleanupAttemptWorktreeSsh).not.toHaveBeenCalled();
+    expect(mocks.cleanupFlightIntegrationWorktree).not.toHaveBeenCalled();
+  });
+
   it("cancels every non-terminal attempt and removes their worktrees", async () => {
     seed(
       flight({
@@ -283,7 +442,7 @@ describe("deleteFlightWithAttemptCleanup", () => {
     expect(useFlightStore.getState().flights).toEqual([]);
   });
 
-  it("leaves terminal attempts alone", async () => {
+  it("leaves terminal attempts without retained work alone", async () => {
     seed(
       flight({
         attempts: [
@@ -534,6 +693,33 @@ describe("deleteFlightWithAttemptCleanup", () => {
 });
 
 describe("inspectFlightDeleteImpact", () => {
+  it("includes retained terminal work in the destructive delete warning", async () => {
+    mocks.getGitStatus.mockResolvedValue("?? kept.txt");
+    seed(
+      flight({
+        attempts: [
+          attempt({
+            id: "stopped-work",
+            status: "cancelled",
+            recovery: { state: "retained", reason: "Stopped", retainedAt: 1 },
+          }),
+        ],
+      }),
+    );
+    const impact = await inspectFlightDeleteImpact("flight-1");
+    expect(impact).toMatchObject({ attemptCount: 1, worktreeCount: 1, dirtyCount: 1 });
+    expect(impact.entries[0]).toMatchObject({
+      attemptId: "stopped-work",
+      status: "cancelled",
+      cleanliness: "dirty",
+    });
+    expect(
+      describeFlightDeleteImpact(impact).some((line) =>
+        line.includes("uncommitted changes that will be lost"),
+      ),
+    ).toBe(true);
+  });
+
   it("counts non-terminal attempts and dirty-checks each worktree", async () => {
     mocks.getGitStatus.mockImplementation(async (path: string) =>
       path.endsWith("a-dirty") ? " M src/foo.ts\n?? new.txt" : "",

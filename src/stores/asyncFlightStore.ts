@@ -9,10 +9,19 @@ import {
   getGitStatus,
   getGitStatusRemote,
   markAttemptStatus,
-  mergeConversationBranch,
+  traceFlightAction,
+  validateAttemptReviewGate,
+  validateAttemptDelivery,
+  landReviewedAttempt,
+  pushReviewedAttempt,
+  beginFlightExecution,
+  stopFlightSessions,
+  resumeFlightAttempt,
+  failPreparedFlightAttempt,
+  getFlightAttemptOrigin,
+  recordAttemptDelivery,
   setAttemptDraftPr,
   summarizeFlight,
-  gitPushRemote,
   integrateFlightAttempt,
   landFlightIntegration,
   prepareFlightIntegrationBranch,
@@ -25,8 +34,9 @@ import {
   buildAttemptSessionLogs,
   parseFlightRetrospective,
 } from "@/lib/flightRetrospective";
-import { publishBranchAsPr } from "@/lib/gitPublish";
+import { publishBranchAsPr, resolveWorktreePrTarget } from "@/lib/gitPublish";
 import { useFlightStore } from "@/stores/flightStore";
+import { useAgentApprovalStore } from "@/stores/agentApprovalStore";
 import {
   useAgentTaskStore,
   type AgentCli,
@@ -34,13 +44,12 @@ import {
 } from "@/stores/agentTaskStore";
 import { useServerStore } from "@/stores/serverStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useGitHubStore } from "@/stores/githubStore";
 import { assertCostGuardrailsAllowLaunch } from "@/stores/costGuardrailStore";
 import { useMemoryStore, type MemoryBriefScope } from "@/stores/memoryStore";
 import { memoryScopeForWorkspace } from "@/lib/memoryWriteScope";
 import { getMemorySettings } from "@/stores/memorySettingsStore";
 import type { FlightCompletedPayload } from "@/types/memory";
-import type { Attempt, AttemptStatus, Flight } from "@/types/flight";
+import type { Attempt, AttemptStatus, Flight, FlightDelivery } from "@/types/flight";
 import { claimedPathsOverlap, normalizeClaimedPath } from "@/lib/pathCollisions";
 import {
   detachAttemptTerminalListeners,
@@ -59,14 +68,24 @@ import {
 import {
   buildCooperativeTaskPrompt,
   selectReadyCooperativeTasks,
+  selectCooperativeTaskViews,
   validateCooperativeAssignments,
   validateCooperativeGraph,
 } from "@/lib/cooperativeFlight";
 import type { Task } from "@/types/flight";
 import { APP_NAME } from "@/lib/brand";
+import { attemptHasActiveWork, flightOwnedSessionIds } from "@/lib/flightLifecycle";
+import {
+  registerFlightStartup,
+  revokeFlightStarts,
+  drainFlightStartups,
+} from "@/lib/flightRunControl";
 
 export interface AsyncLaunchOptions {
   allowPathCollisions?: boolean;
+  /** Only an explicit user Run/Run again may reopen a stopped Flight. */
+  explicitResume?: boolean;
+  canStart?: () => boolean;
 }
 
 export type AsyncLaunchPathCollision =
@@ -112,7 +131,8 @@ const TERMINAL_ATTEMPT_STATUSES: ReadonlySet<AttemptStatus> = new Set([
  */
 export function attemptsNeedingCleanup(flight: Flight | undefined): Attempt[] {
   return (flight?.attempts ?? []).filter(
-    (attempt) => !TERMINAL_ATTEMPT_STATUSES.has(attempt.status),
+    (attempt) =>
+      !TERMINAL_ATTEMPT_STATUSES.has(attempt.status) || attempt.recovery?.state === "retained",
   );
 }
 
@@ -198,6 +218,12 @@ interface AsyncFlightStore {
    * worktree was indistinguishable from a clean cancel.
    */
   cancelAttempt: (flightId: string, attemptId: string) => Promise<string | null>;
+  stopFlight: (
+    flightId: string,
+    options?: { reason?: string; needsAttention?: boolean },
+  ) => Promise<void>;
+  resumeRetainedAttempt: (flightId: string, attemptId: string) => Promise<void>;
+  discardRetainedWorktree: (flightId: string, attemptId: string) => Promise<void>;
 
   /**
    * Delete a Flight and take its live work down with it: every non-terminal
@@ -225,7 +251,12 @@ interface AsyncFlightStore {
    * model), records a `handoff` coordination event, and appends a fresh attempt
    * via `launchAsync`. The failed record is kept for history.
    */
-  reassignAttempt: (flightId: string, attemptId: string, newAgentConfigId: string) => Promise<void>;
+  reassignAttempt: (
+    flightId: string,
+    attemptId: string,
+    newAgentConfigId: string,
+    canStart?: () => boolean,
+  ) => Promise<void>;
 
   /**
    * F2: land an accepted attempt's branch into the base checkout by
@@ -244,11 +275,15 @@ interface AsyncFlightStore {
    */
   publishAttemptPr: (flightId: string, attemptId: string) => Promise<void>;
 
-  retryReviewGate: (flightId: string, attemptId: string) => Promise<void>;
+  retryReviewGate: (flightId: string, attemptId: string, canStart?: () => boolean) => Promise<void>;
   overrideReviewGate: (flightId: string, attemptId: string, reason: string) => Promise<void>;
   sendReviewFindingsToBuilder: (flightId: string, attemptId: string) => Promise<void>;
   prepareCooperativeFlight: (flightId: string) => Promise<void>;
-  launchReadyTasks: (flightId: string, taskIds?: string[]) => Promise<void>;
+  launchReadyTasks: (
+    flightId: string,
+    taskIds?: string[],
+    options?: AsyncLaunchOptions,
+  ) => Promise<void>;
   landCooperativeFlight: (flightId: string) => Promise<void>;
 }
 
@@ -267,8 +302,13 @@ export function buildReassignSpec(
   // Canonical `get_provider` id via the shared map — never a prefix-strip;
   // `api-claude` is `anthropic`, not `claude` (see `attemptProviderFor`).
   const provider = attemptProviderFor(newAgentConfigId);
-  const model = (failed.agentConfigId === newAgentConfigId ? failed.model?.trim() : "") || getDefaultModel(newAgentConfigId as AgentCli);
-  if (!model) throw new Error("Select this provider and a model in the Flight launch dialog before retrying.");
+  const model =
+    (failed.agentConfigId === newAgentConfigId ? failed.model?.trim() : "") ||
+    getDefaultModel(newAgentConfigId as AgentCli);
+  if (!model)
+    throw new Error(
+      "Select this provider and a model in the Flight launch dialog before retrying.",
+    );
   if (failed.target.kind === "local") {
     return {
       kind: "local",
@@ -277,6 +317,7 @@ export function buildReassignSpec(
       agentConfigId: newAgentConfigId,
       provider,
       model,
+      taskId: failed.taskId,
     };
   }
   const server = lookupServer(failed.target.serverId);
@@ -295,10 +336,16 @@ export function buildReassignSpec(
     agentConfigId: newAgentConfigId,
     provider,
     model,
+    taskId: failed.taskId,
   };
 }
 
-function applyAttemptsToFlightLocal(flightId: string, attempts: Attempt[], prompt: string) {
+function applyAttemptsToFlightLocal(
+  flightId: string,
+  attempts: Attempt[],
+  prompt: string,
+  clearStopped = false,
+) {
   useFlightStore.setState((state) => ({
     flights: state.flights.map((flight) => {
       if (flight.id !== flightId) return flight;
@@ -309,6 +356,7 @@ function applyAttemptsToFlightLocal(flightId: string, attempts: Attempt[], promp
       return {
         ...flight,
         attempts: Array.from(attemptsById.values()),
+        ...(clearStopped ? { stoppedAt: undefined } : {}),
         prompt: flight.prompt ?? prompt,
         updatedAt: Date.now(),
       };
@@ -321,6 +369,13 @@ function patchAttempt(flightId: string, attemptId: string, patch: Partial<Attemp
   if (!flight || !flight.attempts) return;
   const next = flight.attempts.map((a) => (a.id === attemptId ? { ...a, ...patch } : a));
   useFlightStore.getState().updateFlight(flightId, { attempts: next });
+}
+
+function applyDelivery(flightId: string, attemptId: string, delivery: FlightDelivery): void {
+  patchAttempt(flightId, attemptId, { delivery });
+  useFlightStore
+    .getState()
+    .updateFlight(flightId, { delivery, completedAt: delivery.deliveredAt, status: "done" });
 }
 
 function patchTask(flightId: string, taskId: string, patch: Partial<Task>) {
@@ -338,6 +393,16 @@ function cooperativeTarget(flight: Flight): {
   projectPath: string;
   server?: ServerConfig;
 } {
+  const saved = flight.executionTarget;
+  if (saved) {
+    if (!saved.basePath.trim()) throw new Error("The Flight has no saved execution path.");
+    if (saved.kind === "local") return { projectPath: saved.basePath };
+    const server = saved.serverId ? useServerStore.getState().getServer(saved.serverId) : undefined;
+    if (!server) throw new Error("The cooperative Flight's SSH server is no longer configured.");
+    if (!server.hostFingerprint)
+      throw new Error("Verify and pin the cooperative Flight's SSH host key before launching.");
+    return { projectPath: saved.basePath, server };
+  }
   const workspace = flight.workspaceId
     ? useWorkspaceStore
         .getState()
@@ -350,7 +415,7 @@ function cooperativeTarget(flight: Flight): {
     throw new Error("Verify and pin the cooperative Flight's SSH host key before launching.");
   }
   return {
-    projectPath: workspace.remoteProjectPath || flight.projectPath,
+    projectPath: flight.projectPath,
     server,
   };
 }
@@ -383,6 +448,22 @@ async function ensureCooperativeIntegration(flightId: string): Promise<Flight> {
 
 async function integrateCooperativeAttempt(flight: Flight, attempt: Attempt): Promise<void> {
   if (!attempt.taskId) return;
+  const task = flight.milestones
+    .flatMap((milestone) => milestone.tasks)
+    .find((candidate) => candidate.id === attempt.taskId);
+  if (!task)
+    throw new Error(
+      "This attempt no longer belongs to the current task plan. Create a new Flight for changed work.",
+    );
+  if (
+    task.dependsOn.some(
+      (id) =>
+        !flight.milestones
+          .flatMap((milestone) => milestone.tasks)
+          .some((dependency) => dependency.id === id && dependency.status === "done"),
+    )
+  )
+    throw new Error("Integrate this task's dependencies before accepting it.");
   const integration = flight.integrationBranch;
   if (!integration) throw new Error("Prepare the Flight integration branch before acceptance.");
   const gate = reviewerGateAllowsAcceptance(flight, attempt);
@@ -506,47 +587,30 @@ export function attemptPushPath(attempt: Attempt): string {
  * out of its earned terminal status.
  */
 async function publishAttemptAsDraftPr(flight: Flight, attempt: Attempt): Promise<void> {
-  // Resolve the GitHub repo target from the user's currently-selected
-  // repo. The PRModal already uses this same source-of-truth; for
-  // async-Flight publish we follow the same UX contract.
-  const selectedRepo = useGitHubStore.getState().config.selectedRepo;
-  if (!selectedRepo) {
-    console.warn(
-      "publishAttemptAsDraftPr: no GitHub repo selected; skipping for attempt",
-      attempt.id,
-    );
+  // Resolve the effective push origin on the registered execution host before
+  // either publication side effect. The GitHub pane's selection is unrelated.
+  const worktreePath = attemptPushPath(attempt);
+  let destination: Awaited<ReturnType<typeof resolveWorktreePrTarget>>;
+  let pushOrigin: string;
+  try {
+    pushOrigin = await getFlightAttemptOrigin(flight.id, attempt.id);
+    destination = await resolveWorktreePrTarget(worktreePath, {
+      readOrigin: async () => pushOrigin,
+    });
+  } catch (error) {
     patchAttempt(flight.id, attempt.id, {
-      errorMessage:
-        "Draft-PR publish skipped: no GitHub repo selected. Connect a repo in the GitHub pane to enable publishing.",
+      errorMessage: `Draft-PR destination could not be verified: ${cleanupErrorMessage(error)}`,
     });
     return;
   }
 
-  // GP5: pick the push transport. Local pushes from the app's checkout; SSH
-  // pushes from the remote worktree host (`git_push_remote`) so origin has the
-  // branch before we open the PR via the GitHub API — no remote `gh` needed.
-  // NOTE: this assumes the remote worktree's `origin` resolves to the same repo
-  // the GitHub pane has selected. If a user points the SSH host's origin at a
-  // different repo/host than `selectedRepo`, the push lands on one repo and the
-  // PR create runs against another (surfaced as a push/create-stage error, not
-  // silent). Cross-repo publish is out of scope for GP5.
-  const worktreePath = attemptPushPath(attempt);
-  let remotePush: (() => Promise<void>) | undefined;
-  if (attempt.target.kind === "ssh") {
-    const server = useServerStore.getState().getServer(attempt.target.serverId);
-    if (!server) {
-      patchAttempt(flight.id, attempt.id, {
-        errorMessage: "Draft-PR publish skipped: the SSH server for this attempt no longer exists.",
-      });
-      return;
-    }
-    // Use the shared converter so hostFingerprint is always forwarded (avoids a
-    // silent TOFU downgrade) — don't hand-roll the shape here.
-    const serverConfig = toGitServerConfigInput(server);
-    remotePush = async () => {
-      await gitPushRemote(serverConfig, worktreePath);
-    };
-  }
+  // Push from the same registered host whose origin was resolved above.
+  // The backend pushes the selected attempt's explicit commit/refspec for both
+  // gated and ungated results, locally or over pinned SSH. A removed worktree's
+  // base checkout may be on an entirely different branch.
+  const remotePush = async () => {
+    await pushReviewedAttempt(flight.id, attempt.id, pushOrigin);
+  };
 
   const branchName = attempt.branch;
   const baseBranch = attempt.baseBranch || "main";
@@ -567,8 +631,7 @@ async function publishAttemptAsDraftPr(flight: Flight, attempt: Attempt): Promis
     worktreePath,
     branch: branchName,
     baseBranch,
-    owner: selectedRepo.owner,
-    repo: selectedRepo.repo,
+    ...destination,
     title,
     body,
     draft: true,
@@ -600,21 +663,30 @@ async function publishAttemptAsDraftPr(flight: Flight, attempt: Attempt): Promis
     return;
   }
 
-  // 4. Record the PR number on the attempt + persist.
-  //
-  // v0.8 race-fix: roll back the optimistic in-memory write if the backend
-  // persist fails. Without the rollback, the store would still claim the
-  // PR was set; on app restart the publish guard (`!attempt.draftPrNumber`)
-  // would re-publish a fresh duplicate PR.
+  // Keep the external artifact's identity even if recording delivery fails.
+  // A retry must record that PR, rather than creating another one.
   patchAttempt(flight.id, attempt.id, { draftPrNumber: prNumber });
+  const delivery: FlightDelivery = {
+    kind: "pull_request",
+    deliveredAt: Date.now(),
+    branch: attempt.branch,
+    baseBranch,
+    prNumber,
+    prUrl: result.prUrl,
+    attemptId: attempt.id,
+    commitSha: attempt.reviewGate?.evidence?.headSha,
+  };
   try {
-    await setAttemptDraftPr(flight.id, attempt.id, prNumber);
+    await setAttemptDraftPr(flight.id, attempt.id, prNumber, delivery);
+    applyDelivery(flight.id, attempt.id, delivery);
+    patchAttempt(flight.id, attempt.id, { errorMessage: undefined });
   } catch (err) {
     const msg = typeof err === "string" ? err : ((err as Error)?.message ?? "unknown error");
     console.warn("publishAttemptAsDraftPr: failed to persist draft PR number", attempt.id, err);
+    await setAttemptDraftPr(flight.id, attempt.id, prNumber).catch(() => undefined);
     patchAttempt(flight.id, attempt.id, {
-      draftPrNumber: undefined,
-      errorMessage: `Failed to persist draft PR #${prNumber}: ${msg}`,
+      draftPrNumber: prNumber,
+      errorMessage: `PR #${prNumber} was opened, but delivery could not be recorded: ${msg}. Use Record PR delivery to retry.`,
     });
   }
 }
@@ -855,10 +927,25 @@ function composeAsyncLaunchPrompt(
   return `${brief.text}\n\n---\n\n${prompt}`;
 }
 
-async function attachAttemptConversation(attempt: Attempt, prompt: string): Promise<void> {
+async function attachAttemptConversation(
+  attempt: Attempt,
+  prompt: string,
+  skipBackendStart = true,
+): Promise<void> {
+  if (skipBackendStart && !["queued", "provisioning", "running"].includes(attempt.status)) return;
+  if (!attempt.sessionId || !attempt.agentConfigId || !attempt.target.worktreePath) {
+    throw new Error(
+      "The Flight attempt is missing its conversation or worktree identity. Inspect its retained files and restart with a matching app build.",
+    );
+  }
   let sshTarget: CreateApiConversationOptions["sshTarget"] = null;
   if (attempt.target.kind === "ssh") {
     const server = useServerStore.getState().getServer(attempt.target.serverId);
+    if (!skipBackendStart && (!server || !server.hostFingerprint?.trim())) {
+      const error =
+        "The saved SSH server is missing or has no verified host key. Restore it before resuming this attempt.";
+      throw new Error(error);
+    }
     if (server) {
       sshTarget = {
         serverId: server.id,
@@ -866,7 +953,7 @@ async function attachAttemptConversation(attempt: Attempt, prompt: string): Prom
         host: server.host,
         port: server.port,
         user: server.username,
-        remotePath: attempt.target.basePath,
+        remotePath: attempt.target.worktreePath,
         keyPath: server.keyPath ?? null,
         authMethod: server.authMethod,
         hostFingerprint: server.hostFingerprint ?? null,
@@ -882,10 +969,40 @@ async function attachAttemptConversation(attempt: Attempt, prompt: string): Prom
     systemPromptOverride: null,
     thinkingEnabled: false,
     planMode: false,
+    permissionMode: "ask_for_risky",
+    // Flight attempts use the built-in worktree tools. Do not inherit the
+    // Workspace/Settings MCP selection (null means every enabled server).
+    enabledMcpServerIds: [],
     sshTarget,
     explicitId: attempt.sessionId,
-    skipBackendStart: true,
+    skipBackendStart,
   });
+  const conversation = useAgentTaskStore
+    .getState()
+    .conversations.find((candidate) => candidate.id === attempt.sessionId);
+  if (!skipBackendStart && conversation?.status === "failed") {
+    const message = [...conversation.messages]
+      .reverse()
+      .find(
+        (entry) => (entry.role === "system" || entry.role === "assistant") && entry.content.trim(),
+      )?.content;
+    throw new Error(
+      message ||
+        "The attempt conversation could not start. Inspect the conversation for the admission error.",
+    );
+  }
+}
+
+async function retainPreparedStartupFailures(attempts: Attempt[], error: unknown): Promise<void> {
+  for (const attempt of attempts) {
+    if (attempt.status !== "provisioning" && attempt.status !== "queued") continue;
+    await failPreparedFlightAttempt(
+      attempt.flightId,
+      attempt.id,
+      attempt.sessionId,
+      String(error),
+    ).catch((failure) => console.warn("Failed to retain prepared Flight startup:", failure));
+  }
 }
 
 /**
@@ -951,18 +1068,19 @@ const TERMINAL_FLIGHT_STATUSES = new Set(["done", "failed", "paused"]);
  *  cancels must not be read as the Flight *finishing* — no memory capture, no
  *  retrospective, no confidence rerating for a record the user is discarding. */
 const flightsBeingDeleted = new Set<string>();
+const stoppingFlights = new Map<string, Promise<void>>();
 
 function captureFlightCompletionOnTransition(flightId: string, statusBefore: string): void {
   if (flightsBeingDeleted.has(flightId)) return;
   // Fire once, on the transition from a non-terminal status into any terminal
   // one — not just `done`, so the M5 decay path is reachable and provenance is
   // always cleaned up.
-  if (TERMINAL_FLIGHT_STATUSES.has(statusBefore)) return;
   const flightStore = useFlightStore.getState();
   const status = flightStore.computeFlightStatus(flightId);
   if (!TERMINAL_FLIGHT_STATUSES.has(status)) return;
   const flight = flightStore.flights.find((f) => f.id === flightId);
   if (!flight) return;
+  if (status === statusBefore) return;
   const memory = useMemoryStore.getState();
 
   // M5: rerate the patterns injected into this flight's launch brief. `done`
@@ -978,6 +1096,7 @@ function captureFlightCompletionOnTransition(flightId: string, statusBefore: str
   // Memory capture + the LLM retrospective are only meaningful for a flight
   // that actually landed work — keep those gated on `done`.
   if (status !== "done") return;
+  if (!flight.delivery && flight.integrationBranch?.status !== "landed") return;
   memory.captureFlightCompleted(
     buildFlightCompletedPayload(flight),
     memoryScopeForWorkspace(flight.workspaceId, flight.projectPath),
@@ -1198,9 +1317,8 @@ export function describeFlightDeleteImpact(impact: FlightDeleteImpact | null): s
 export type AttemptDecision = "accept" | "reject";
 
 /**
- * F2: what Accept / Reject actually destroy. Both transitions are terminal, and
- * both reach `git worktree remove --force` in `mark_attempt_status` — so both
- * are owed the same up-front accounting the Flight delete confirm already gives.
+ * Accept verifies committed, clean work and only attempts non-force cleanup.
+ * Reject preserves the worktree and branch for inspection or explicit Discard.
  *
  * Pure, so the wording is testable without a git repo. `cleanliness === null`
  * means the dirty probe is still running and says so rather than rendering a
@@ -1214,56 +1332,96 @@ export function describeAttemptDecisionImpact(
 ): string[] {
   if (cleanliness === null) return ["Checking this attempt's worktree for uncommitted work…"];
 
-  const lines: string[] = [];
   if (decision === "accept") {
-    lines.push("The attempt is marked completed and its agent session is closed.");
-  } else {
-    lines.push("The attempt is marked failed and its agent session is closed.");
-  }
-  lines.push(`Its git worktree ${attempt.target.worktreePath} is force-removed.`);
-
-  if (cleanliness === "dirty") {
-    lines.push(
-      `That worktree has uncommitted changes right now — they are destroyed, and a later Land only takes what is committed on ${attempt.branch}.`,
-    );
-  } else if (cleanliness === "unknown") {
-    lines.push(
-      "The worktree could not be checked for uncommitted changes, so anything unsaved there may be destroyed.",
-    );
-  }
-
-  if (decision === "accept") {
-    if (flight?.publishAttemptsAsPrs && !attempt.draftPrNumber) {
-      lines.push(`A draft PR for ${attempt.branch} is opened before the worktree is removed.`);
+    const lines = [
+      "Acceptance requires committed changes and a clean worktree. The backend verifies this again before accepting.",
+    ];
+    if (cleanliness === "dirty") {
+      lines.push(
+        `This worktree has uncommitted or untracked files. Commit the intended changes on ${attempt.branch}, then retry acceptance. Refusal retains your files and branch.`,
+      );
+    } else if (cleanliness === "unknown") {
+      lines.push(
+        "The worktree could not be checked. If the backend cannot verify it is clean, acceptance is refused and your files and branch are retained.",
+      );
     }
     lines.push(
-      `Branch ${attempt.branch} is kept — use Land or Open PR on this tile afterwards to merge it.`,
+      "After verification, the attempt is marked completed and its agent session is closed.",
     );
-  } else {
-    lines.push(`Branch ${attempt.branch} is kept, so the work is still recoverable from git.`);
+    lines.push(
+      `Cleanup of ${attempt.target.worktreePath} uses non-force removal. If cleanup is refused, the worktree and branch are retained.`,
+    );
+    if (flight?.executionMode === "cooperative") {
+      lines.push(
+        `Branch ${attempt.branch} is kept. Review and land the combined Flight integration branch after all tasks are integrated; individual task PRs are not opened.`,
+      );
+    } else {
+      if (flight?.publishAttemptsAsPrs && !attempt.draftPrNumber) {
+        lines.push(
+          `After acceptance, publishing attempts to open a draft PR for ${attempt.branch}. A publish failure is reported on the attempt.`,
+        );
+      }
+      lines.push(
+        `Branch ${attempt.branch} is kept — use Land or Open PR on this tile afterwards to deliver it.`,
+      );
+    }
+    return lines;
   }
+
+  const lines = [
+    "The attempt is marked failed and its agent session is closed.",
+    `Its git worktree ${attempt.target.worktreePath} and branch ${attempt.branch} are retained for inspection or recovery.`,
+  ];
+  if (cleanliness === "dirty") {
+    lines.push("Uncommitted and untracked files are kept in the retained worktree.");
+  } else if (cleanliness === "unknown") {
+    lines.push(
+      "The worktree could not be checked for uncommitted changes; its files remain in place.",
+    );
+  }
+  lines.push(
+    "Use Continue preserved work to resume, or Discard preserved work with a separate confirmation to remove the worktree and uncommitted files.",
+  );
   return lines;
 }
 
 /**
- * F2: whether this attempt's branch can be landed straight into the base
- * checkout. `merge_conversation_branch` is local-only, so an SSH attempt has to
- * go through a PR instead of an in-app merge.
+ * Whether an accepted branch can be delivered into its recorded base checkout.
+ * SSH landing uses the saved, pinned execution host; native validation checks
+ * the exact reviewed commit and destination before merging.
  */
 export function attemptLandability(attempt: Attempt): { allowed: boolean; reason: string } {
-  if (attempt.target.kind === "ssh") {
+  if (attempt.status !== "completed") {
     return {
       allowed: false,
-      reason:
-        "Landing merges into the local checkout; this attempt ran on an SSH host. Open a PR for its branch instead.",
+      reason: "Review and accept this attempt before delivering its branch.",
     };
   }
-  if (!TERMINAL_ATTEMPT_STATUSES.has(attempt.status)) {
-    return { allowed: false, reason: "Accept or reject this attempt before landing its branch." };
+  if (attempt.delivery) {
+    return { allowed: false, reason: "This result has already been delivered." };
+  }
+  if (attempt.target.kind === "ssh") {
+    const server = useServerStore.getState().getServer(attempt.target.serverId);
+    if (!server) {
+      return {
+        allowed: false,
+        reason: `The saved SSH host ${attempt.target.serverId} is unavailable. Restore it in Servers before landing.`,
+      };
+    }
+    if (!server.hostFingerprint?.trim()) {
+      return {
+        allowed: false,
+        reason: `Verify and pin the SSH host key for ${server.name} before landing.`,
+      };
+    }
+    return {
+      allowed: true,
+      reason: `Squash-merge ${attempt.branch} into ${attempt.baseBranch} at ${attempt.target.basePath} on ${server.name} (${server.username}@${server.host}:${server.port}).`,
+    };
   }
   return {
     allowed: true,
-    reason: `Squash-merge ${attempt.branch} into the current branch of ${attempt.target.basePath}.`,
+    reason: `Squash-merge ${attempt.branch} into ${attempt.baseBranch} at ${attempt.target.basePath} on this computer.`,
   };
 }
 
@@ -1363,82 +1521,281 @@ function cleanupErrorMessage(err: unknown): string {
 
 export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
   launchAsync: async (flightId, prompt, targets, options = {}) => {
-    assertAsyncLaunchPathGate(flightId, targets, options);
-    for (const target of targets) {
-      await assertCostGuardrailsAllowLaunch(target.provider, flightId);
-    }
-    const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
-    const promptForLaunch = composeAsyncLaunchPrompt(prompt, flight, targets);
-    const attemptIdsBefore = new Set((flight?.attempts ?? []).map((attempt) => attempt.id));
-    let attempts: Attempt[];
+    if (stoppingFlights.has(flightId))
+      throw new Error("Wait for Stop to finish before starting another attempt.");
+    const ticket = registerFlightStartup(flightId);
+    let preparedForFailure: Attempt[] = [];
+    const observed = useFlightStore.getState().flights.find((flight) => flight.id === flightId);
+    const ensureCurrent = (beforeReopen = false) => {
+      const flight = useFlightStore
+        .getState()
+        .flights.find((candidate) => candidate.id === flightId);
+      if (!flight) throw new Error("This Flight no longer exists.");
+      if (
+        !ticket.isCurrent() ||
+        options.canStart?.() === false ||
+        (flight.stoppedAt && !(beforeReopen && options.explicitResume))
+      )
+        throw new Error(
+          "The Flight stopped before this attempt could start. Its work is preserved.",
+        );
+      if (flight.archivedAt || flight.delivery)
+        throw new Error("Create a new Flight for additional work after delivery or archive.");
+      if (
+        flight.executionMode === "cooperative" &&
+        targets.some(
+          (target) =>
+            !target.taskId ||
+            !flight.milestones.some((milestone) =>
+              milestone.tasks.some((task) => task.id === target.taskId),
+            ),
+        )
+      )
+        throw new Error(
+          "Launch a current task from the cooperative task list so its identity and brief are preserved.",
+        );
+    };
     try {
-      attempts = await launchFlightAsync(flightId, promptForLaunch, targets, {
-        allowPathCollisions: options.allowPathCollisions,
+      ensureCurrent(true);
+      await useFlightStore.getState().flushPersistence();
+      ensureCurrent(true);
+      if (options.explicitResume) {
+        await beginFlightExecution(flightId, observed?.stoppedAt);
+        if (!ticket.isCurrent())
+          throw new Error("The Flight was stopped while the new run was opening.");
+        useFlightStore.getState().updateFlight(flightId, { stoppedAt: undefined });
+      }
+      ensureCurrent();
+      assertAsyncLaunchPathGate(flightId, targets, options);
+      for (const target of targets) {
+        await assertCostGuardrailsAllowLaunch(target.provider, flightId);
+        ensureCurrent();
+      }
+      const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
+      const promptForLaunch = composeAsyncLaunchPrompt(prompt, flight, targets);
+      const attemptIdsBefore = new Set((flight?.attempts ?? []).map((attempt) => attempt.id));
+      let attempts: Attempt[];
+      try {
+        attempts = await launchFlightAsync(flightId, promptForLaunch, targets, {
+          allowPathCollisions: options.allowPathCollisions,
+        });
+        preparedForFailure = attempts;
+        ensureCurrent();
+      } catch (error) {
+        // Multi-target provisioning is sequential. If a later target fails,
+        // earlier attempts may already be persisted even though the command
+        // rejects. Rehydrate and start those prepared partial successes so they
+        // remain visible/controllable, then preserve the original launch error.
+        await useFlightStore.getState().hydrateFromBackend();
+        const partialAttempts =
+          useFlightStore
+            .getState()
+            .flights.find((current) => current.id === flightId)
+            ?.attempts?.filter((attempt) => !attemptIdsBefore.has(attempt.id)) ?? [];
+        preparedForFailure = partialAttempts;
+        await syncAsyncAttemptTerminalListeners(useFlightStore.getState().flights);
+        for (const attempt of partialAttempts) {
+          if (
+            !ticket.isCurrent() ||
+            useFlightStore.getState().flights.find((current) => current.id === flightId)?.stoppedAt
+          )
+            break;
+          try {
+            ensureCurrent();
+            await attachAttemptConversation(
+              attempt,
+              promptForLaunch,
+              attempt.status !== "provisioning" && attempt.status !== "queued",
+            );
+            if (!ticket.isCurrent())
+              await useAgentTaskStore.getState().cancelActiveConversation(attempt.sessionId);
+          } catch (attachError) {
+            console.warn(
+              "Failed to attach partial Flight attempt listeners:",
+              attempt.id,
+              attachError,
+            );
+          }
+        }
+        await useFlightStore.getState().hydrateFromBackend();
+        throw error;
+      }
+
+      const flightsWithAttempts = useFlightStore.getState().flights.map((currentFlight) => {
+        if (currentFlight.id !== flightId) return currentFlight;
+        return {
+          ...currentFlight,
+          attempts: [...(currentFlight.attempts ?? []), ...attempts],
+          prompt: currentFlight.prompt ?? promptForLaunch,
+          updatedAt: Date.now(),
+        };
       });
-    } catch (error) {
-      // Multi-target provisioning is sequential. If a later target fails,
-      // earlier attempts may already be persisted and running even though the
-      // command rejects. Rehydrate and attach those partial successes so they
-      // remain visible/controllable, then preserve the original launch error.
-      await useFlightStore.getState().hydrateFromBackend();
-      const partialAttempts =
-        useFlightStore
-          .getState()
-          .flights.find((current) => current.id === flightId)
-          ?.attempts?.filter((attempt) => !attemptIdsBefore.has(attempt.id)) ?? [];
-      for (const attempt of partialAttempts) {
+
+      // No provider has started: register terminal listeners for the prepared
+      // sessions before the normal conversation startup installs its own
+      // permission and streaming listeners and dispatches the provider. This
+      // local projection deliberately avoids saving and clobbering a fresher
+      // backend terminal status.
+      await syncAsyncAttemptTerminalListeners(flightsWithAttempts);
+      ensureCurrent();
+      await useFlightStore
+        .getState()
+        .hydrateFromBackend()
+        .catch((err) => console.warn("Failed to hydrate async launch attempts:", err));
+      const latestFlight = useFlightStore.getState().flights.find((f) => f.id === flightId);
+      const latestAttempts = attempts.map(
+        (attempt) =>
+          latestFlight?.attempts?.find((current) => current.id === attempt.id) ?? attempt,
+      );
+      applyAttemptsToFlightLocal(flightId, latestAttempts, promptForLaunch);
+
+      // Starting through the ordinary conversation path preserves budget/trust
+      // admission and AskForRisky permissions, with all listeners ready first.
+      let startupError: unknown;
+      for (const a of latestAttempts) {
+        ensureCurrent();
         try {
-          await attachAttemptConversation(attempt, promptForLaunch);
-        } catch (attachError) {
-          console.warn(
-            "Failed to attach partial Flight attempt listeners:",
-            attempt.id,
-            attachError,
+          await attachAttemptConversation(
+            a,
+            promptForLaunch,
+            a.status !== "provisioning" && a.status !== "queued",
           );
+          if (!ticket.isCurrent())
+            await useAgentTaskStore.getState().cancelActiveConversation(a.sessionId);
+        } catch (err) {
+          startupError ??= err;
         }
       }
+      await useFlightStore.getState().hydrateFromBackend();
+      ensureCurrent();
+      if (startupError) throw startupError;
+      return latestAttempts.map(
+        (a) =>
+          useFlightStore
+            .getState()
+            .flights.find((candidate) => candidate.id === flightId)
+            ?.attempts?.find((candidate) => candidate.id === a.id) ?? a,
+      );
+    } catch (error) {
+      await retainPreparedStartupFailures(preparedForFailure, error);
+      await useFlightStore.getState().hydrateFromBackend();
       throw error;
+    } finally {
+      ticket.finish();
     }
+  },
 
-    const flightsWithAttempts = useFlightStore.getState().flights.map((currentFlight) => {
-      if (currentFlight.id !== flightId) return currentFlight;
-      return {
-        ...currentFlight,
-        attempts: [...(currentFlight.attempts ?? []), ...attempts],
-        prompt: currentFlight.prompt ?? promptForLaunch,
-        updatedAt: Date.now(),
-      };
+  stopFlight: async (flightId, options = {}) => {
+    const pending = stoppingFlights.get(flightId);
+    if (pending) return pending;
+    revokeFlightStarts(flightId);
+    const flight = useFlightStore.getState().flights.find((candidate) => candidate.id === flightId);
+    if (!flight) return;
+    const ownedAtStop = flightOwnedSessionIds(flight);
+    const reason = options.reason ?? "Stopped by the user. Worktrees are retained.";
+    const stoppedAt = Date.now();
+    useFlightStore.getState().updateFlight(flightId, {
+      status: "paused",
+      stoppedAt,
+      autonomyRuntime: flight.autonomyRuntime
+        ? {
+            ...flight.autonomyRuntime,
+            status: options.needsAttention ? "needs_attention" : "stopped",
+            stoppedAt,
+            hardStopReason: reason,
+          }
+        : undefined,
     });
-
-    // Register terminal listeners before mutating local state so a very fast
-    // `api-agent:done/error` event cannot land between backend start and the
-    // listener install. The backend already persisted the attempts, so this
-    // local projection deliberately avoids saving and clobbering a fresher
-    // backend terminal status.
-    await syncAsyncAttemptTerminalListeners(flightsWithAttempts);
-    await useFlightStore
-      .getState()
-      .hydrateFromBackend()
-      .catch((err) => console.warn("Failed to hydrate async launch attempts:", err));
-    const latestFlight = useFlightStore.getState().flights.find((f) => f.id === flightId);
-    const latestAttempts = attempts.map(
-      (attempt) => latestFlight?.attempts?.find((current) => current.id === attempt.id) ?? attempt,
-    );
-    applyAttemptsToFlightLocal(flightId, latestAttempts, promptForLaunch);
-
-    // For each attempt, register a frontend AgentConversation that listens to
-    // the same backend event channel (apiAgent*Event(sessionId)) so AttemptTile
-    // can render the live stream. The backend has already started the session;
-    // we pass `skipBackendStart=true`.
-    for (const a of attempts) {
-      try {
-        await attachAttemptConversation(a, promptForLaunch);
-      } catch (err) {
-        console.warn("Failed to attach attempt listeners:", a.id, err);
+    const job = (async () => {
+      // The native stop is authoritative even if frontend persistence fails.
+      await useFlightStore
+        .getState()
+        .flushPersistence()
+        .catch((error) => console.warn("[flight stop] state save failed", error));
+      await stopFlightSessions(flightId);
+      await drainFlightStartups(flightId);
+      await useFlightStore.getState().hydrateFromBackend();
+      const current = useFlightStore
+        .getState()
+        .flights.find((candidate) => candidate.id === flightId);
+      const owned = new Set([...ownedAtStop, ...(current ? flightOwnedSessionIds(current) : [])]);
+      for (const id of owned) useAgentApprovalStore.getState().clearConversation(id);
+      for (const conversation of useAgentTaskStore.getState().conversations) {
+        if (owned.has(conversation.id) && conversation.status === "active")
+          await useAgentTaskStore.getState().cancelActiveConversation(conversation.id);
       }
+    })();
+    stoppingFlights.set(flightId, job);
+    try {
+      await job;
+    } finally {
+      if (stoppingFlights.get(flightId) === job) stoppingFlights.delete(flightId);
     }
+  },
 
-    return attempts;
+  resumeRetainedAttempt: async (flightId, attemptId) => {
+    if (stoppingFlights.has(flightId))
+      throw new Error("Wait for Stop to finish before resuming work.");
+    const ticket = registerFlightStartup(flightId);
+    let prepared: Attempt | undefined;
+    try {
+      const flight = useFlightStore
+        .getState()
+        .flights.find((candidate) => candidate.id === flightId);
+      const attempt = flight?.attempts?.find((candidate) => candidate.id === attemptId);
+      if (!flight || !attempt || attempt.recovery?.state !== "retained")
+        throw new Error("This attempt has no retained worktree to resume.");
+      if (flight.archivedAt || flight.delivery)
+        throw new Error("Unarchive this Flight or create a new Flight before resuming work.");
+      await useFlightStore.getState().flushPersistence();
+      if (!ticket.isCurrent()) return;
+      const resumed = await resumeFlightAttempt(flightId, attemptId, flight.stoppedAt);
+      prepared = resumed;
+      if (!ticket.isCurrent()) return;
+      // Native validation, owner registration and stop-state CAS have all
+      // succeeded. Project the new owner and reopen together, so no stale
+      // Reviewing record can briefly admit a reviewer between these steps.
+      applyAttemptsToFlightLocal(flightId, [resumed], flight.prompt ?? flight.objective, true);
+      await useFlightStore.getState().hydrateFromBackend();
+      if (!ticket.isCurrent()) return;
+      // The prepared DTO is authoritative even if hydration is delayed. Install
+      // the new primary session's listeners before creating its conversation.
+      applyAttemptsToFlightLocal(flightId, [resumed], flight.prompt ?? flight.objective, true);
+      await syncAsyncAttemptTerminalListeners(useFlightStore.getState().flights);
+      if (!ticket.isCurrent()) return;
+      const task = flight.milestones
+        .flatMap((milestone) => milestone.tasks)
+        .find((candidate) => candidate.id === attempt.taskId);
+      try {
+        await attachAttemptConversation(
+          resumed,
+          task ? buildCooperativeTaskPrompt(flight, task) : (flight.prompt ?? flight.objective),
+          false,
+        );
+      } finally {
+        await useFlightStore.getState().hydrateFromBackend();
+      }
+      if (!ticket.isCurrent())
+        await useAgentTaskStore.getState().cancelActiveConversation(resumed.sessionId);
+    } catch (error) {
+      await retainPreparedStartupFailures(prepared ? [prepared] : [], error);
+      await useFlightStore.getState().hydrateFromBackend();
+      throw error;
+    } finally {
+      ticket.finish();
+    }
+  },
+
+  discardRetainedWorktree: async (flightId, attemptId) => {
+    const attempt = useFlightStore
+      .getState()
+      .flights.find((flight) => flight.id === flightId)
+      ?.attempts?.find((candidate) => candidate.id === attemptId);
+    if (!attempt || attempt.recovery?.state !== "retained")
+      throw new Error("This attempt has no retained worktree to discard.");
+    const problem = await useAsyncFlightStore.getState().cancelAttempt(flightId, attemptId);
+    await useFlightStore.getState().hydrateFromBackend();
+    if (problem) throw new Error(problem);
   },
 
   cancelAttempt: async (flightId, attemptId) => {
@@ -1487,14 +1844,17 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
 
   deleteFlightWithAttemptCleanup: async (flightId) => {
     const failures: FlightCleanupFailure[] = [];
-    const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
-    const pending = attemptsNeedingCleanup(flight);
 
     // Suppress the flight-completed memory capture (and its fire-and-forget
     // LLM retrospective) for the cancels below: the user is deleting this
     // Flight, not settling it, so it must not mint memory on its way out.
     flightsBeingDeleted.add(flightId);
     try {
+      // Deletion's explicit discard first fences and drains every owned role.
+      // A failed Stop leaves the record available for another recovery action.
+      await useAsyncFlightStore.getState().stopFlight(flightId);
+      const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
+      const pending = attemptsNeedingCleanup(flight);
       for (const attempt of pending) {
         try {
           // The normal cancel path: closes the API session, marks the attempt
@@ -1536,13 +1896,6 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
       // cleanup can reach it — without this it outlives its Flight forever.
       const integrationFailure = await cleanupFlightIntegration(flight);
       if (integrationFailure) failures.push(integrationFailure);
-    } catch (err) {
-      // Belt and braces: cleanup must never take the delete down with it.
-      failures.push({
-        attemptId: "",
-        branch: "",
-        message: `Attempt cleanup stopped early: ${cleanupErrorMessage(err)}`,
-      });
     } finally {
       flightsBeingDeleted.delete(flightId);
     }
@@ -1552,22 +1905,32 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
   },
 
   setAttemptStatus: async (flightId, attemptId, status) => {
+    traceFlightAction(flightId, attemptId, "started");
     // Sample the flight's rolled-up status BEFORE the patch so we can detect
     // the non-`done` → `done` transition and capture a flight_completed
     // memory event exactly once (see captureFlightCompletionOnTransition).
     const statusBefore = useFlightStore.getState().computeFlightStatus(flightId);
 
-    const flightBefore = useFlightStore.getState().flights.find((f) => f.id === flightId);
-    const attemptBefore = flightBefore?.attempts?.find((a) => a.id === attemptId);
+    let flightBefore = useFlightStore.getState().flights.find((f) => f.id === flightId);
+    let attemptBefore = flightBefore?.attempts?.find((a) => a.id === attemptId);
 
     if (status === "completed" && flightBefore && attemptBefore) {
-      const gate = reviewerGateAllowsAcceptance(flightBefore, attemptBefore);
-      if (!gate.allowed) throw new Error(gate.reason);
-      // The Rust command enforces the same persisted policy. Flush a freshly
-      // parsed pass/override before asking it to complete the attempt.
       if (flightBefore.reviewGatePolicy?.enabled) {
         await useFlightStore.getState().flushPersistence();
+        try {
+          // Validate before integration or publication can change any branch.
+          // The backend invalidates stale/legacy passes, restoring Retry review.
+          await validateAttemptReviewGate(flightId, attemptId);
+        } catch (error) {
+          await useFlightStore.getState().hydrateFromBackend();
+          throw error;
+        }
+        flightBefore = useFlightStore.getState().flights.find((f) => f.id === flightId);
+        attemptBefore = flightBefore?.attempts?.find((a) => a.id === attemptId);
+        if (!flightBefore || !attemptBefore) throw new Error("This attempt no longer exists.");
       }
+      const gate = reviewerGateAllowsAcceptance(flightBefore, attemptBefore);
+      if (!gate.allowed) throw new Error(gate.reason);
       if (flightBefore.executionMode === "cooperative" && attemptBefore.taskId) {
         await integrateCooperativeAttempt(flightBefore, attemptBefore);
       }
@@ -1578,6 +1941,7 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
     // enabled local draft-PR publish fail at `git push` with a missing cwd.
     if (
       status === "completed" &&
+      flightBefore?.executionMode !== "cooperative" &&
       flightBefore?.publishAttemptsAsPrs &&
       attemptBefore &&
       !attemptBefore.draftPrNumber
@@ -1592,11 +1956,23 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
       await publish;
     }
 
-    // Terminal statuses tear the worktree down; the command reports a failed
-    // removal instead of swallowing it. There is no toast on this path (the
-    // user is accepting/rejecting, not deleting), so it is logged loudly —
-    // the delete path is what surfaces it to the UI.
-    const teardown = await markAttemptStatus(flightId, attemptId, status);
+    // Native acceptance owns clean-only cleanup. Failed/cancelled statuses
+    // preserve worktrees; explicit Discard owns destructive removal.
+    let teardown: Awaited<ReturnType<typeof markAttemptStatus>>;
+    try {
+      teardown = await markAttemptStatus(flightId, attemptId, status);
+    } catch (error) {
+      // Native cleanup can reject after persisting Failed + Retained. Expose
+      // that recovery state without replacing the original action failure.
+      await useFlightStore
+        .getState()
+        .hydrateFromBackend()
+        .catch((hydrationError) =>
+          console.warn("[attempt status] recovery refresh failed", attemptId, hydrationError),
+        );
+      throw error;
+    }
+    traceFlightAction(flightId, attemptId, "native_status_completed");
     const teardownProblem = describeCleanupOutcome(teardown, "Worktree");
     if (teardownProblem) console.warn("[attempt teardown]", attemptId, teardownProblem);
     patchAttempt(flightId, attemptId, {
@@ -1609,10 +1985,11 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
       const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
       const attempt = flight?.attempts?.find((a) => a.id === attemptId);
       if (attempt) detachAttemptTerminalListeners(attempt.sessionId);
-      if (attemptBefore) {
-        const sshProblem = await cleanupSshAttemptWorktree(flightId, attemptBefore);
-        if (sshProblem) console.warn("[attempt teardown]", attemptId, sshProblem);
-      }
+      // Refresh native recovery state for every terminal status. An SSH
+      // cleanup fallback here would defeat failed/cancelled work retention.
+      traceFlightAction(flightId, attemptId, "hydration_started");
+      await useFlightStore.getState().hydrateFromBackend();
+      traceFlightAction(flightId, attemptId, "hydration_completed");
     }
 
     // N2: a rejected/failed attempt records a coordination event and, when the
@@ -1632,25 +2009,50 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
     // Flight-completion memory capture. Runs on the terminal-success
     // transition regardless of which attempt outcome triggered it.
     captureFlightCompletionOnTransition(flightId, statusBefore);
+    traceFlightAction(flightId, attemptId, "completed");
   },
 
   landAttempt: async (flightId, attemptId) => {
     const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
     const attempt = flight?.attempts?.find((a) => a.id === attemptId);
     if (!flight || !attempt) throw new Error("This attempt no longer exists.");
+    if (flight.executionMode === "cooperative")
+      throw new Error("Deliver the combined integration branch after every task is integrated.");
+    if (flight.delivery) throw new Error("This Flight has already delivered a result.");
+    if ((flight.attempts ?? []).some(attemptHasActiveWork))
+      throw new Error("Stop the other agents before delivering the selected result.");
+    const statusBefore = useFlightStore.getState().computeFlightStatus(flightId);
 
     const gate = attemptLandability(attempt);
     if (!gate.allowed) throw new Error(gate.reason);
+    if (flight.reviewGatePolicy?.enabled) {
+      await useFlightStore.getState().flushPersistence();
+      try {
+        await validateAttemptDelivery(flightId, attemptId);
+      } catch (error) {
+        await useFlightStore.getState().hydrateFromBackend();
+        throw error;
+      }
+    }
 
     // Squash by default, matching the Agents worktree bar: an attempt branch is
     // a throwaway line of agent commits, not history worth preserving.
-    const outcome = await mergeConversationBranch(attempt.target.basePath, attempt.branch, true);
+    const outcome = await landReviewedAttempt(flightId, attemptId, true);
     if (outcome.nothingToLand) {
       return {
         landed: false,
         message: `Nothing to land — ${attempt.branch} has no commits the checkout doesn't already have. The branch is left in place.`,
       };
     }
+    applyDelivery(flightId, attemptId, {
+      kind: "landed",
+      deliveredAt: Date.now(),
+      branch: attempt.branch,
+      baseBranch: attempt.baseBranch,
+      commitSha: outcome.commitSha,
+      attemptId,
+    });
+    captureFlightCompletionOnTransition(flightId, statusBefore);
     return {
       landed: true,
       commitSha: outcome.commitSha,
@@ -1664,8 +2066,38 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
     const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
     const attempt = flight?.attempts?.find((a) => a.id === attemptId);
     if (!flight || !attempt) throw new Error("This attempt no longer exists.");
+    if (flight.executionMode === "cooperative")
+      throw new Error("Deliver the combined integration branch after every task is integrated.");
+    if (flight.delivery) throw new Error("This Flight has already delivered a result.");
+    if (attempt.status !== "completed")
+      throw new Error("Review and accept this attempt before opening a PR.");
+    if ((flight.attempts ?? []).some(attemptHasActiveWork))
+      throw new Error("Stop the other agents before delivering the selected result.");
+    const statusBefore = useFlightStore.getState().computeFlightStatus(flightId);
+    if (flight.reviewGatePolicy?.enabled) {
+      await useFlightStore.getState().flushPersistence();
+      try {
+        await validateAttemptDelivery(flightId, attemptId);
+      } catch (error) {
+        await useFlightStore.getState().hydrateFromBackend();
+        throw error;
+      }
+    }
     if (attempt.draftPrNumber) {
-      throw new Error(`Draft PR #${attempt.draftPrNumber} is already open for ${attempt.branch}.`);
+      const delivery: FlightDelivery = {
+        kind: "pull_request",
+        deliveredAt: Date.now(),
+        branch: attempt.branch,
+        baseBranch: attempt.baseBranch,
+        attemptId,
+        prNumber: attempt.draftPrNumber,
+        commitSha: attempt.reviewGate?.evidence?.headSha,
+      };
+      await recordAttemptDelivery(flightId, attemptId, delivery);
+      applyDelivery(flightId, attemptId, delivery);
+      patchAttempt(flightId, attemptId, { errorMessage: undefined });
+      captureFlightCompletionOnTransition(flightId, statusBefore);
+      return;
     }
 
     // Share the dedupe map with the automatic post-accept publish so a manual
@@ -1687,15 +2119,48 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
       .getState()
       .flights.find((f) => f.id === flightId)
       ?.attempts?.find((a) => a.id === attemptId);
-    if (!after?.draftPrNumber) {
-      throw new Error(after?.errorMessage ?? "The draft PR was not opened.");
+    if (!after?.delivery) {
+      throw new Error(after?.errorMessage ?? "The draft PR delivery was not recorded.");
     }
+    captureFlightCompletionOnTransition(flightId, statusBefore);
   },
 
-  reassignAttempt: async (flightId, attemptId, newAgentConfigId) => {
+  reassignAttempt: async (flightId, attemptId, newAgentConfigId, canStart) => {
     const flight = useFlightStore.getState().flights.find((f) => f.id === flightId);
     const failed = flight?.attempts?.find((a) => a.id === attemptId);
     if (!flight || !failed) return;
+    if (canStart?.() === false) return;
+    if (attemptHasActiveWork(failed)) throw new Error("Stop this attempt before reassigning it.");
+    const task = failed.taskId
+      ? flight.milestones
+          .flatMap((milestone) => milestone.tasks)
+          .find((candidate) => candidate.id === failed.taskId)
+      : undefined;
+    if (failed.taskId && !task)
+      throw new Error("This attempt no longer belongs to the current task plan.");
+    if (flight.executionMode === "cooperative") {
+      if (!task || !flight.integrationBranch || flight.integrationBranch.status !== "ready")
+        throw new Error("Resolve the task's integration branch before retrying.");
+      if (task.status === "done") throw new Error("This task is already integrated.");
+      if (
+        task.dependsOn.some(
+          (id) =>
+            !flight.milestones
+              .flatMap((milestone) => milestone.tasks)
+              .some((candidate) => candidate.id === id && candidate.status === "done"),
+        )
+      )
+        throw new Error("Integrate this task's dependencies before retrying.");
+      if (
+        (flight.attempts ?? []).some(
+          (candidate) =>
+            candidate.id !== attemptId &&
+            candidate.taskId === task.id &&
+            (attemptHasActiveWork(candidate) || candidate.status === "reviewing"),
+        )
+      )
+        throw new Error("This task already has an active attempt.");
+    }
 
     const spec = buildReassignSpec(failed, newAgentConfigId, (id) =>
       useServerStore.getState().getServer(id),
@@ -1718,8 +2183,32 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
 
     // Reuse the normal launch path — it provisions a fresh worktree and appends
     // a new attempt to this flight, leaving the failed record in place.
-    const prompt = flight.prompt ?? flight.objective ?? "";
-    await useAsyncFlightStore.getState().launchAsync(flightId, prompt, [spec]);
+    if (task && flight.integrationBranch) spec.baseBranch = flight.integrationBranch.branch;
+    const prompt = task
+      ? buildCooperativeTaskPrompt(flight, task)
+      : (flight.prompt ?? flight.objective ?? "");
+    if (task)
+      patchTask(flightId, task.id, {
+        status: "queued",
+        agentConfigId: newAgentConfigId,
+        model: spec.model,
+        blockedReason: undefined,
+      });
+    try {
+      await useAsyncFlightStore.getState().launchAsync(flightId, prompt, [spec], {
+        explicitResume: !canStart,
+        canStart,
+        allowPathCollisions: Boolean(task),
+      });
+      if (task) patchTask(flightId, task.id, { status: "running", startedAt: Date.now() });
+    } catch (error) {
+      if (task)
+        patchTask(flightId, task.id, {
+          status: "failed",
+          blockedReason: cleanupErrorMessage(error),
+        });
+      throw error;
+    }
   },
 
   retryReviewGate,
@@ -1730,74 +2219,90 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
     await ensureCooperativeIntegration(flightId);
   },
 
-  launchReadyTasks: async (flightId, taskIds) => {
-    let flight = useFlightStore.getState().flights.find((candidate) => candidate.id === flightId);
-    if (!flight) throw new Error(`Flight '${flightId}' was not found.`);
-    const graphIssues = validateCooperativeGraph(flight);
-    const assignmentIssues = validateCooperativeAssignments(flight);
-    if (graphIssues.length > 0 || assignmentIssues.length > 0) {
-      throw new Error([...graphIssues, ...assignmentIssues][0].message);
-    }
-    flight = await ensureCooperativeIntegration(flightId);
-    const selected = new Set(taskIds ?? []);
-    const ready = selectReadyCooperativeTasks(flight).filter(
-      (task) => selected.size === 0 || selected.has(task.id),
-    );
-    if (ready.length === 0) throw new Error("No cooperative tasks are ready to launch.");
-    const integration = flight.integrationBranch;
-    if (!integration) throw new Error("The Flight integration branch is unavailable.");
-    const target = cooperativeTarget(flight);
-    for (const task of ready) {
-      patchTask(flight.id, task.id, { status: "queued", blockedReason: undefined });
-      const provider = attemptProviderFor(task.agentConfigId);
-      const spec: AttemptTargetSpec = target.server
-        ? {
-            kind: "ssh",
-            targetId: target.server.id,
-            host: target.server.host,
-            port: target.server.port,
-            user: target.server.username,
-            keyPath: target.server.keyPath ?? null,
-            authMethod: target.server.authMethod,
-            hostFingerprint: target.server.hostFingerprint ?? null,
-            basePath: target.projectPath,
-            baseBranch: integration.branch,
-            agentConfigId: task.agentConfigId,
-            provider,
-            model: task.model!,
-            taskId: task.id,
-          }
-        : {
-            kind: "local",
-            basePath: target.projectPath,
-            baseBranch: integration.branch,
-            agentConfigId: task.agentConfigId,
-            provider,
-            model: task.model!,
-            taskId: task.id,
-          };
-      try {
-        await useAsyncFlightStore
-          .getState()
-          .launchAsync(flight.id, buildCooperativeTaskPrompt(flight, task), [spec], {
-            allowPathCollisions: true,
-          });
-        patchTask(flight.id, task.id, { status: "running", startedAt: Date.now() });
-        useFlightStore.getState().appendCoordinationEvent(flight.id, {
-          type: "task_started",
-          taskId: task.id,
-          taskTitle: task.title,
-          agentId: task.agentConfigId,
-          summary: `Launched cooperative task '${task.title}' from ${integration.branch}.`,
-          metadata: { integrationHead: integration.headSha },
-        });
-      } catch (error) {
-        patchTask(flight.id, task.id, {
-          status: "failed",
-          blockedReason: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
+  launchReadyTasks: async (flightId, taskIds, options = {}) => {
+    const ticket = registerFlightStartup(flightId);
+    const canStart = () => ticket.isCurrent() && options.canStart?.() !== false;
+    try {
+      let flight = useFlightStore.getState().flights.find((candidate) => candidate.id === flightId);
+      if (!flight) throw new Error(`Flight '${flightId}' was not found.`);
+      if (!canStart()) return;
+      if (flight.stoppedAt && !options.explicitResume)
+        throw new Error("Resume this Flight explicitly before launching tasks.");
+      if (flight.archivedAt || flight.delivery)
+        throw new Error("Create a new Flight for work after delivery or archive.");
+      const graphIssues = validateCooperativeGraph(flight);
+      const assignmentIssues = validateCooperativeAssignments(flight);
+      if (graphIssues.length > 0 || assignmentIssues.length > 0) {
+        throw new Error([...graphIssues, ...assignmentIssues][0].message);
       }
+      flight = await ensureCooperativeIntegration(flightId);
+      if (!canStart()) return;
+      const selected = new Set(taskIds ?? []);
+      const ready = selectReadyCooperativeTasks(flight).filter(
+        (task) => selected.size === 0 || selected.has(task.id),
+      );
+      if (ready.length === 0) throw new Error("No cooperative tasks are ready to launch.");
+      const integration = flight.integrationBranch;
+      if (!integration) throw new Error("The Flight integration branch is unavailable.");
+      const target = cooperativeTarget(flight);
+      for (const task of ready) {
+        if (!canStart()) return;
+        patchTask(flight.id, task.id, { status: "queued", blockedReason: undefined });
+        const provider = attemptProviderFor(task.agentConfigId);
+        const spec: AttemptTargetSpec = target.server
+          ? {
+              kind: "ssh",
+              targetId: target.server.id,
+              host: target.server.host,
+              port: target.server.port,
+              user: target.server.username,
+              keyPath: target.server.keyPath ?? null,
+              authMethod: target.server.authMethod,
+              hostFingerprint: target.server.hostFingerprint ?? null,
+              basePath: target.projectPath,
+              baseBranch: integration.branch,
+              agentConfigId: task.agentConfigId,
+              provider,
+              model: task.model!,
+              taskId: task.id,
+            }
+          : {
+              kind: "local",
+              basePath: target.projectPath,
+              baseBranch: integration.branch,
+              agentConfigId: task.agentConfigId,
+              provider,
+              model: task.model!,
+              taskId: task.id,
+            };
+        try {
+          await useAsyncFlightStore
+            .getState()
+            .launchAsync(flight.id, buildCooperativeTaskPrompt(flight, task), [spec], {
+              allowPathCollisions: true,
+              ...options,
+              canStart,
+            });
+          if (!canStart()) return;
+          patchTask(flight.id, task.id, { status: "running", startedAt: Date.now() });
+          useFlightStore.getState().appendCoordinationEvent(flight.id, {
+            type: "task_started",
+            taskId: task.id,
+            taskTitle: task.title,
+            agentId: task.agentConfigId,
+            summary: `Launched cooperative task '${task.title}' from ${integration.branch}.`,
+            metadata: { integrationHead: integration.headSha },
+          });
+        } catch (error) {
+          patchTask(flight.id, task.id, {
+            status: "failed",
+            blockedReason: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
+      }
+    } finally {
+      ticket.finish();
     }
   },
 
@@ -1806,9 +2311,29 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
     if (!flight?.integrationBranch) {
       throw new Error("The Flight integration branch is unavailable.");
     }
+    const statusBefore = useFlightStore.getState().computeFlightStatus(flightId);
     const tasks = flight.milestones.flatMap((milestone) => milestone.tasks);
+    if ((flight.attempts ?? []).some(attemptHasActiveWork))
+      throw new Error("Stop the other agents before delivering the combined result.");
+    if (
+      (flight.attempts ?? []).some(
+        (attempt) => !attempt.taskId || !tasks.some((task) => task.id === attempt.taskId),
+      )
+    )
+      throw new Error(
+        "An attempt no longer belongs to the current task plan. Resolve its ownership before delivery.",
+      );
     if (tasks.length === 0 || tasks.some((task) => task.status !== "done")) {
       throw new Error("Every cooperative task must be integrated before final landing.");
+    }
+    const graphIssues = validateCooperativeGraph(flight);
+    if (graphIssues.length > 0) throw new Error(graphIssues[0].message);
+    for (const view of selectCooperativeTaskViews(flight)) {
+      const latest = view.attempt;
+      if (!latest || latest.status !== "completed")
+        throw new Error(
+          "Every current task needs an accepted and integrated attempt before final delivery.",
+        );
     }
     if (flight.integrationBranch.status !== "ready") {
       throw new Error("Resolve the integration branch before final landing.");
@@ -1819,10 +2344,19 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
       baseBranch: flight.integrationBranch.baseBranch,
       integrationBranch: flight.integrationBranch.branch,
       serverConfig: target.server ? toGitServerConfigInput(target.server) : null,
+      flightId: flight.id,
+      expectedHeadSha: flight.integrationBranch.headSha,
     });
     useFlightStore.getState().updateFlight(flight.id, {
       status: "done",
       completedAt: Date.now(),
+      delivery: {
+        kind: "landed",
+        deliveredAt: Date.now(),
+        branch: flight.integrationBranch.branch,
+        baseBranch: flight.integrationBranch.baseBranch,
+        commitSha: headSha,
+      },
       integrationBranch: {
         ...flight.integrationBranch,
         headSha,
@@ -1835,5 +2369,6 @@ export const useAsyncFlightStore = create<AsyncFlightStore>(() => ({
       metadata: { integrationHead: headSha, landedBy: "user" },
     });
     await useFlightStore.getState().flushPersistence();
+    captureFlightCompletionOnTransition(flightId, statusBefore);
   },
 }));

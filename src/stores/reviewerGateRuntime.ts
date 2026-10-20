@@ -9,14 +9,21 @@ import {
   REVIEWER_ALLOWED_TOOLS,
 } from "@/lib/reviewerGate";
 import { getDefaultModel } from "@/lib/api-models";
-import { setAttemptReviewGate } from "@/lib/tauri";
+import { captureAttemptReviewEvidence, setAttemptReviewGate } from "@/lib/tauri";
 import { derivedArtifactProvenance } from "@/lib/provenance";
 import { requestConversationSave } from "@/stores/agentConversationPersistence";
-import { resolveRetiredApiAgent, useAgentTaskStore, type AgentCli } from "@/stores/agentTaskStore";
+import {
+  apiAgentProvider,
+  resolveRetiredApiAgent,
+  useAgentTaskStore,
+  type AgentCli,
+} from "@/stores/agentTaskStore";
 import { useFlightStore } from "@/stores/flightStore";
 import { useServerStore } from "@/stores/serverStore";
 import { useAppStore } from "@/stores/appStore";
+import { registerFlightStartup } from "@/lib/flightRunControl";
 import type { Attempt, AttemptReviewGate, Flight, ReviewGateReport } from "@/types/flight";
+import type { AgentConversation } from "@/types/agent-conversation";
 
 const startingAttempts = new Set<string>();
 const finishingAttempts = new Set<string>();
@@ -60,7 +67,7 @@ function patchReviewGate(
       const current = currentAttempt(flightId, attemptId)?.reviewGate;
       if (
         expectedRunningGate &&
-        (current?.status !== "running" ||
+        (current?.status !== expectedRunningGate.status ||
           current.reviewerConversationId !== expectedRunningGate.reviewerConversationId)
       )
         return false;
@@ -130,6 +137,20 @@ function reportStatus(report: ReviewGateReport): AttemptReviewGate["status"] {
   return "changes_requested";
 }
 
+function reviewerTurnCompleted(conversation: AgentConversation | undefined): boolean {
+  if (!conversation || conversation.messages.some((message) => message.isStreaming)) return false;
+  const lastAssistant = [...conversation.messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  // Older persisted sessions used done. Current API sessions settle to idle,
+  // which also represents cancellation and therefore requires a receipt.
+  return (
+    (conversation.status === "done" &&
+      !["cancelled", "failed"].includes(lastAssistant?.turnOutcome ?? "")) ||
+    (conversation.status === "idle" && lastAssistant?.turnOutcome === "completed")
+  );
+}
+
 async function finishReviewer(
   flightId: string,
   attemptId: string,
@@ -149,6 +170,8 @@ async function finishReviewer(
     .getState()
     .conversations.find((item) => item.id === conversationId);
   try {
+    if (!reviewerTurnCompleted(conversation))
+      throw new Error("The reviewer session failed or was interrupted. Retry the reviewer.");
     const parsedReport = parseLatestReviewGateReport(conversation?.messages ?? []);
     const reviewerSource = [...(conversation?.messages ?? [])]
       .reverse()
@@ -279,21 +302,81 @@ async function installReviewerListeners(
   else failed();
 }
 
+async function cancelReviewerStartup(
+  flightId: string,
+  attemptId: string,
+  conversationId: string,
+  expectedGate?: AttemptReviewGate,
+): Promise<void> {
+  detachReviewerListeners(conversationId);
+  const gate = currentAttempt(flightId, attemptId)?.reviewGate;
+  if (
+    !gate ||
+    !(
+      (gate.status === "running" && gate.reviewerConversationId === conversationId) ||
+      (expectedGate &&
+        gate.status === expectedGate.status &&
+        gate.reviewerConversationId === expectedGate.reviewerConversationId)
+    )
+  )
+    return;
+  await patchReviewGate(
+    flightId,
+    attemptId,
+    {
+      ...gate,
+      status: "error",
+      errorMessage:
+        "Automatic reviewer startup was paused or stopped before the provider started. Retry when ready.",
+    },
+    gate,
+  );
+}
+
 export async function startReviewGate(
   flightId: string,
   attemptId: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; expectedGate?: AttemptReviewGate; canStart?: () => boolean } = {},
 ): Promise<void> {
   const key = attemptKey(flightId, attemptId);
   if (startingAttempts.has(key)) return;
+  if (options.canStart?.() === false) {
+    await cancelReviewerStartup(flightId, attemptId, "", options.expectedGate);
+    return;
+  }
 
   const flight = currentFlight(flightId);
   const attempt = currentAttempt(flightId, attemptId);
   const policy = flight?.reviewGatePolicy;
-  if (!flight || !attempt || attempt.status !== "reviewing" || !policy?.enabled) return;
+  if (
+    !flight ||
+    flight.stoppedAt ||
+    flight.archivedAt ||
+    !attempt ||
+    attempt.status !== "reviewing" ||
+    !policy?.enabled
+  )
+    return;
   if (!options.force && attempt.reviewGate) return;
+  if (attempt.reviewGate?.status === "overridden") return;
+  if (
+    options.expectedGate &&
+    (attempt.reviewGate?.status !== options.expectedGate.status ||
+      attempt.reviewGate?.reviewerConversationId !== options.expectedGate.reviewerConversationId)
+  )
+    return;
 
   startingAttempts.add(key);
+  const ticket = registerFlightStartup(flightId);
+  const requestedGuard = options.canStart;
+  options = {
+    ...options,
+    canStart: () =>
+      ticket.isCurrent() &&
+      !currentFlight(flightId)?.stoppedAt &&
+      !currentFlight(flightId)?.archivedAt &&
+      requestedGuard?.() !== false,
+  };
   // A persisted policy can name a provider that no longer exists — chiefly
   // `api-openai-codex`, removed in 2026-07. Substituting its designated
   // replacement is the one place a retired id SHOULD be remapped: a reviewer
@@ -311,22 +394,75 @@ export async function startReviewGate(
   const conversationId = `review-${crypto.randomUUID()}`;
   const startedAt = Date.now();
   try {
-    await patchReviewGate(flightId, attemptId, {
-      status: "running",
-      reviewerConversationId: conversationId,
-      reviewerAgentConfigId: reviewerAgent,
-      reviewerModel,
-      startedAt,
-    });
+    await useFlightStore.getState().flushPersistence();
+    if (options.canStart?.() === false) {
+      await cancelReviewerStartup(flightId, attemptId, conversationId, options.expectedGate);
+      return;
+    }
+    const freshFlight = currentFlight(flightId);
+    const freshAttempt = currentAttempt(flightId, attemptId);
+    if (
+      !freshFlight ||
+      !freshAttempt ||
+      freshAttempt.status !== "reviewing" ||
+      !freshFlight.reviewGatePolicy?.enabled
+    )
+      return;
+    const evidenceSnapshot = await captureAttemptReviewEvidence(flightId, attemptId);
+    if (options.canStart?.() === false) {
+      await cancelReviewerStartup(flightId, attemptId, conversationId, options.expectedGate);
+      return;
+    }
+    const reviewerSessions = [
+      ...(attempt.reviewGate?.reviewerSessions ?? []),
+      {
+        sessionId: conversationId,
+        provider: apiAgentProvider(reviewerAgent),
+        model: reviewerModel,
+      },
+    ];
+    const applied = await patchReviewGate(
+      flightId,
+      attemptId,
+      {
+        status: "running",
+        reviewerConversationId: conversationId,
+        reviewerAgentConfigId: reviewerAgent,
+        reviewerModel,
+        startedAt,
+        evidence: evidenceSnapshot,
+        reviewerSessions,
+      },
+      options.expectedGate,
+    );
+    if (!applied) return;
+    if (options.canStart?.() === false) {
+      await cancelReviewerStartup(flightId, attemptId, conversationId, options.expectedGate);
+      return;
+    }
 
     const builderConversation = useAgentTaskStore
       .getState()
       .conversations.find((conversation) => conversation.id === attempt.sessionId);
-    const evidence = await buildReviewEvidenceBundle(flight, attempt, {
+    const evidence = await buildReviewEvidenceBundle(freshFlight, freshAttempt, {
+      snapshot: evidenceSnapshot,
       builderConversation,
       lookupServer: (id) => useServerStore.getState().getServer(id),
     });
+    if (options.canStart?.() === false) {
+      await cancelReviewerStartup(flightId, attemptId, conversationId, options.expectedGate);
+      return;
+    }
+    if (
+      currentAttempt(flightId, attemptId)?.reviewGate?.status !== "running" ||
+      currentAttempt(flightId, attemptId)?.reviewGate?.reviewerConversationId !== conversationId
+    )
+      return;
     await installReviewerListeners(flightId, attemptId, conversationId);
+    if (options.canStart?.() === false) {
+      await cancelReviewerStartup(flightId, attemptId, conversationId, options.expectedGate);
+      return;
+    }
 
     const server =
       attempt.target.kind === "ssh"
@@ -361,6 +497,17 @@ export async function startReviewGate(
       },
     });
 
+    if (
+      currentAttempt(flightId, attemptId)?.reviewGate?.status !== "running" ||
+      currentAttempt(flightId, attemptId)?.reviewGate?.reviewerConversationId !== conversationId
+    ) {
+      detachReviewerListeners(conversationId);
+      return;
+    }
+    if (options.canStart?.() === false) {
+      await cancelReviewerStartup(flightId, attemptId, conversationId, options.expectedGate);
+      return;
+    }
     await useAgentTaskStore.getState().createApiConversation({
       explicitId: conversationId,
       agent: reviewerAgent,
@@ -385,7 +532,9 @@ export async function startReviewGate(
     }));
     requestConversationSave(conversationId);
     useFlightStore.getState().updateFlight(flightId, {
-      linkedSessionIds: Array.from(new Set([...flight.linkedSessionIds, conversationId])),
+      linkedSessionIds: Array.from(
+        new Set([...(currentFlight(flightId)?.linkedSessionIds ?? []), conversationId]),
+      ),
     });
 
     const created = useAgentTaskStore
@@ -394,14 +543,24 @@ export async function startReviewGate(
     if (created?.status === "failed") {
       throw new Error("The reviewer session could not be started.");
     }
-    if (created?.status === "done") await finishReviewer(flightId, attemptId, conversationId);
+    if (reviewerTurnCompleted(created)) await finishReviewer(flightId, attemptId, conversationId);
   } catch (error) {
     detachReviewerListeners(conversationId);
     const message = error instanceof Error ? error.message : String(error);
     const fresh = currentAttempt(flightId, attemptId);
-    if (fresh?.reviewGate?.reviewerConversationId === conversationId) {
+    if (
+      fresh &&
+      (fresh.reviewGate?.reviewerConversationId === conversationId ||
+        (fresh.reviewGate?.status === attempt.reviewGate?.status &&
+          fresh.reviewGate?.reviewerConversationId === attempt.reviewGate?.reviewerConversationId))
+    ) {
       await patchReviewGate(flightId, attemptId, {
         ...fresh.reviewGate,
+        reviewerSessions:
+          fresh.reviewGate?.reviewerSessions ?? attempt.reviewGate?.reviewerSessions,
+        reviewerConversationId: conversationId,
+        reviewerAgentConfigId: reviewerAgent,
+        reviewerModel,
         status: "error",
         errorMessage: message,
         completedAt: Date.now(),
@@ -416,18 +575,38 @@ export async function startReviewGate(
     }
   } finally {
     startingAttempts.delete(key);
+    ticket.finish();
   }
 }
 
-export async function retryReviewGate(flightId: string, attemptId: string): Promise<void> {
+export async function retryReviewGate(
+  flightId: string,
+  attemptId: string,
+  canStart?: () => boolean,
+): Promise<void> {
+  if (canStart?.() === false) return;
+  if (startingAttempts.has(attemptKey(flightId, attemptId))) return;
   const attempt = currentAttempt(flightId, attemptId);
   if (!attempt?.reviewGate) return;
-  await patchReviewGate(flightId, attemptId, {
+  if (attempt.status !== "reviewing") {
+    throw new Error(
+      "Accepted attempts cannot restart the reviewer after worktree cleanup. Use an explicit override or a new reviewed attempt.",
+    );
+  }
+  if (attempt.reviewGate.status === "overridden") return;
+  const pending: AttemptReviewGate = {
+    reviewerSessions: attempt.reviewGate.reviewerSessions,
     status: "pending",
+    reviewerConversationId: attempt.reviewGate.reviewerConversationId,
     reviewerAgentConfigId: attempt.reviewGate.reviewerAgentConfigId,
     reviewerModel: attempt.reviewGate.reviewerModel,
-  });
-  await startReviewGate(flightId, attemptId, { force: true });
+  };
+  if (!(await patchReviewGate(flightId, attemptId, pending, attempt.reviewGate))) return;
+  if (canStart?.() === false) {
+    await cancelReviewerStartup(flightId, attemptId, "", pending);
+    return;
+  }
+  await startReviewGate(flightId, attemptId, { force: true, expectedGate: pending, canStart });
 }
 
 export async function overrideReviewGate(
@@ -464,6 +643,8 @@ export async function sendReviewFindingsToBuilder(
   flightId: string,
   attemptId: string,
 ): Promise<void> {
+  if (currentFlight(flightId)?.stoppedAt || currentFlight(flightId)?.archivedAt)
+    throw new Error("Resume this Flight explicitly before sending a repair turn.");
   const attempt = currentAttempt(flightId, attemptId);
   const report = attempt?.reviewGate?.report;
   if (!attempt || !report) throw new Error("No structured reviewer findings are available.");
@@ -472,9 +653,13 @@ export async function sendReviewFindingsToBuilder(
     .getState()
     .conversations.find((conversation) => conversation.id === attempt.sessionId);
   if (!builder) throw new Error("The builder conversation is no longer available.");
-  useAgentTaskStore
+  if (attempt.status !== "reviewing" || builder.mode !== "api")
+    throw new Error("Only an API attempt awaiting review can receive a repair turn.");
+  await useAgentTaskStore
     .getState()
-    .sendMessage(attempt.sessionId, buildReviewerRemediationPrompt(report));
+    .sendMessageWithReceipt(attempt.sessionId, buildReviewerRemediationPrompt(report), undefined, {
+      requireIdle: true,
+    });
   useFlightStore.getState().appendCoordinationEvent(flightId, {
     type: "handoff",
     taskId: attemptId,
@@ -493,6 +678,7 @@ export async function syncReviewerGateRuns(
 ): Promise<void> {
   if (!useAppStore.getState().initialized) return;
   for (const flight of flights) {
+    if (flight.stoppedAt || flight.archivedAt) continue;
     if (!flight.reviewGatePolicy?.enabled) continue;
     for (const attempt of flight.attempts ?? []) {
       if (attempt.status !== "reviewing") continue;
@@ -502,11 +688,25 @@ export async function syncReviewerGateRuns(
         void startReviewGate(flight.id, attempt.id).catch(console.error);
         continue;
       }
+      if (gate.status === "passed" && !gate.evidence) {
+        await patchReviewGate(
+          flight.id,
+          attempt.id,
+          {
+            ...gate,
+            status: "error",
+            errorMessage:
+              "This saved review has no code fingerprint. Retry the reviewer before accepting this attempt.",
+          },
+          gate,
+        );
+        continue;
+      }
       if (gate.status !== "running") continue;
       const conversation = useAgentTaskStore
         .getState()
         .conversations.find((item) => item.id === gate.reviewerConversationId);
-      if (conversation?.status === "done" && gate.reviewerConversationId) {
+      if (reviewerTurnCompleted(conversation) && gate.reviewerConversationId) {
         await finishReviewer(flight.id, attempt.id, gate.reviewerConversationId);
       } else if (!conversation || conversation.status !== "active") {
         await patchReviewGate(

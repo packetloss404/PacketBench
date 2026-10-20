@@ -6,12 +6,9 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { makeSshUri } from "@/lib/ssh-uri";
 import { getPreferredWorkspaceCli } from "@/lib/workspaceCliDefaults";
 import type { AgentConversation } from "@/types/agent-conversation";
-import {
-  isLocalWorkspace,
-  type Workspace,
-  type WorkspaceAgentSlot,
-} from "@/types/workspace";
+import { isLocalWorkspace, type Workspace, type WorkspaceAgentSlot } from "@/types/workspace";
 import { recordWorkspaceAgentsEvent } from "@/stores/workspaceAgentsDogfoodStore";
+import { useServerStore } from "@/stores/serverStore";
 
 export type AgentHandoffErrorCode =
   | "conversation_not_found"
@@ -104,6 +101,13 @@ function ensureProjectWorkspace(
   initialSession?: WorkspaceAgentSlot,
 ): { workspaceId: string; created: boolean } {
   const target = getConversationProjectTarget(conversation);
+  return ensureTargetWorkspace(target, initialSession);
+}
+
+function ensureTargetWorkspace(
+  target: ConversationProjectTarget,
+  initialSession?: WorkspaceAgentSlot,
+): { workspaceId: string; created: boolean } {
   const workspaceStore = useWorkspaceStore.getState();
   const activeMatch = workspaceStore.workspaces.find(
     (workspace) =>
@@ -262,6 +266,61 @@ export function openFlightAttemptInWorkspace(conversationId: string): AgentHando
     recordWorkspaceAgentsEvent("flight_attempt_opened_workspace");
   }
   return result;
+}
+
+/** Inspect retained files after restart without requiring a live conversation. */
+export function inspectFlightAttemptInWorkspace(
+  flightId: string,
+  attemptId: string,
+): AgentHandoffResult<{
+  workspaceId: string;
+  created: boolean;
+}> {
+  const attempt = useFlightStore
+    .getState()
+    .flights.find((flight) => flight.id === flightId)
+    ?.attempts?.find((candidate) => candidate.id === attemptId);
+  if (!attempt)
+    return {
+      ok: false,
+      code: "flight_not_found",
+      message: "This Flight attempt no longer exists.",
+    };
+  const retained =
+    attempt.recovery?.state === "retained" ||
+    ["queued", "provisioning", "running", "reviewing"].includes(attempt.status);
+  const projectPath = retained ? attempt.target.worktreePath : attempt.target.basePath;
+  const server =
+    attempt.target.kind === "ssh"
+      ? useServerStore.getState().getServer(attempt.target.serverId)
+      : undefined;
+  if (attempt.target.kind === "ssh" && !server)
+    return {
+      ok: false,
+      code: "unsupported_target",
+      message: "Restore this attempt's saved SSH host before inspecting its retained worktree.",
+    };
+  try {
+    const workspace = ensureTargetWorkspace(
+      {
+        kind: attempt.target.kind,
+        projectPath,
+        serverId: server?.id,
+        serverName: server?.name,
+      },
+      "terminal",
+    );
+    useAppStore.getState().setActiveView("workspace");
+    recordWorkspaceAgentsEvent("flight_attempt_opened_workspace");
+    return { ok: true, ...workspace };
+  } catch (error) {
+    return {
+      ok: false,
+      code: "workspace_not_found",
+      message:
+        error instanceof Error ? error.message : "The retained worktree could not be opened.",
+    };
+  }
 }
 
 export function linkConversationToFlight(

@@ -1,8 +1,11 @@
 import { Plane } from "lucide-react";
+import { useMemo } from "react";
 import { Modal } from "@/components/ui/Modal";
-import { linkConversationToFlight } from "@/lib/agentHandoffs";
 import { useFlightStore } from "@/stores/flightStore";
 import type { AgentConversation } from "@/types/agent-conversation";
+import { useAppStore } from "@/stores/appStore";
+import { flightContextFromConversation } from "@/lib/flightLaunchContext";
+import { projectFlightLifecycle } from "@/lib/flightLifecycle";
 
 interface AddConversationToFlightModalProps {
   conversation: AgentConversation;
@@ -15,28 +18,24 @@ export function AddConversationToFlightModal({
   onClose,
   onFeedback,
 }: AddConversationToFlightModalProps) {
-  const flights = useFlightStore((state) =>
-    state.flights.filter(
-      (flight) =>
-        flight.status !== "done" &&
-        flight.status !== "cancelled" &&
-        flight.status !== "failed",
-    ),
+  const storedFlights = useFlightStore((state) => state.flights);
+  const flights = useMemo(
+    () =>
+      storedFlights.filter(
+        (flight) =>
+          flight.status !== "done" &&
+          flight.status !== "cancelled" &&
+          flight.status !== "failed" &&
+          !["delivered", "archived"].includes(projectFlightLifecycle(flight).phase),
+      ),
+    [storedFlights],
   );
 
   function handleLink(flightId: string) {
-    const result = linkConversationToFlight(conversation.id, flightId, {
-      openFlight: true,
-    });
-    if (!result.ok) {
-      onFeedback(result.message);
-      return;
-    }
-    onFeedback(
-      result.alreadyLinked
-        ? "Opened the already-linked Flight"
-        : "Conversation linked to Flight",
-    );
+    useAppStore
+      .getState()
+      .openFlightBrief({ ...flightContextFromConversation(conversation), flightId });
+    onFeedback("Review the Flight brief before running this follow-up.");
     onClose();
   }
 
@@ -49,15 +48,25 @@ export function AddConversationToFlightModal({
       width="w-[520px]"
     >
       <div className="space-y-2 p-5">
+        <button
+          type="button"
+          onClick={() => {
+            useAppStore.getState().openFlightBrief(flightContextFromConversation(conversation));
+            onClose();
+          }}
+          className="flex w-full items-center justify-center gap-2 rounded border border-accent-line bg-accent-soft px-3 py-2.5 text-xs font-medium text-accent-green"
+        >
+          <Plane size={13} /> Prepare a new Flight from this conversation
+        </button>
         <div className="mb-3 text-ui text-text-secondary">
           Flight Deck receives a reference to{" "}
-          <span className="font-medium text-text-primary">{conversation.title}</span>.
-          The conversation ID, transcript, approvals, review, and worktree remain
-          authoritative in Agents.
+          <span className="font-medium text-text-primary">{conversation.title}</span>. The
+          conversation ID, transcript, approvals, review, and worktree remain authoritative in
+          Agents.
         </div>
         {flights.length === 0 ? (
           <div className="rounded border border-bg-border bg-bg-primary px-3 py-4 text-center text-ui text-text-muted">
-            No active Flights are available. Create one in Flight Deck first.
+            No active Flights yet. Prepare a brief above to run a scoped follow-up.
           </div>
         ) : (
           flights.map((flight) => {
@@ -79,11 +88,9 @@ export function AddConversationToFlightModal({
                   </span>
                 </span>
                 <span
-                  className={
-                    linked ? "text-meta text-accent-green" : "text-meta text-text-muted"
-                  }
+                  className={linked ? "text-meta text-accent-green" : "text-meta text-text-muted"}
                 >
-                  {linked ? "Linked · Open" : "Link & open"}
+                  {linked ? "Linked · Prepare follow-up" : "Use this Flight"}
                 </span>
               </button>
             );

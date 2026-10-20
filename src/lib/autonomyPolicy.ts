@@ -1,11 +1,6 @@
 import { APP_NAME } from "@/lib/brand";
 
-import type {
-  AutonomyActionKind,
-  AutonomyPolicy,
-  AutonomyRuntime,
-  Flight,
-} from "@/types/flight";
+import type { AutonomyActionKind, AutonomyPolicy, AutonomyRuntime, Flight } from "@/types/flight";
 
 export const DEFAULT_AUTONOMY_POLICY: AutonomyPolicy = {
   schemaVersion: 1,
@@ -133,10 +128,23 @@ function actionCount(
 ): number {
   return (flight.autonomyRuntime?.actionHistory ?? []).filter(
     (record) =>
-      record.kind === action &&
-      record.subjectId === subjectId &&
-      record.status !== "denied",
+      record.kind === action && record.subjectId === subjectId && record.status !== "denied",
   ).length;
+}
+
+/** Kept separately from the bounded activity log so a busy Flight cannot
+ * regain reviewer retries when older activity is evicted. Legacy runs use
+ * their persisted actions until the first counted retry migrates them. */
+export function reviewerRetryCount(flight: Flight, attemptId: string): number {
+  const count = flight.autonomyRuntime?.reviewRetryCounts?.[attemptId];
+  const historyCount = actionCount(flight, "retry_review", attemptId);
+  if (count === undefined) return historyCount;
+  if (!Number.isSafeInteger(count) || count < 0) return Number.POSITIVE_INFINITY;
+  return Math.max(count, historyCount);
+}
+
+export function reviewerRetryDelayMs(flight: Flight, attemptId: string): number {
+  return Math.min(60_000, 1_000 * 2 ** Math.min(reviewerRetryCount(flight, attemptId), 6));
 }
 
 export function evaluateAutonomyAction(
@@ -206,9 +214,7 @@ export function evaluateAutonomyAction(
     if (!policy.autoRecovery) {
       return { allowed: false, reason: "Auto-recovery is disabled.", hardStop: false };
     }
-    if (
-      actionCount(flight, request.action, request.subjectId) >= policy.maxRetriesPerTask
-    ) {
+    if (actionCount(flight, request.action, request.subjectId) >= policy.maxRetriesPerTask) {
       return {
         allowed: false,
         reason: `Retry limit reached (${policy.maxRetriesPerTask}) for this task.`,
@@ -216,9 +222,7 @@ export function evaluateAutonomyAction(
       };
     }
   }
-  if (
-    ["review_remediation", "retry_review", "accept_review_pass"].includes(request.action)
-  ) {
+  if (["review_remediation", "retry_review", "accept_review_pass"].includes(request.action)) {
     if (!policy.autoReviewRemediation) {
       return {
         allowed: false,
@@ -233,6 +237,16 @@ export function evaluateAutonomyAction(
       return {
         allowed: false,
         reason: `Reviewer remediation limit reached (${policy.maxReviewRounds}).`,
+        hardStop: true,
+      };
+    }
+    if (
+      request.action === "retry_review" &&
+      reviewerRetryCount(flight, request.subjectId ?? "") >= policy.maxReviewRounds
+    ) {
+      return {
+        allowed: false,
+        reason: `Reviewer retry limit reached (${policy.maxReviewRounds}). Retry manually or revise the policy.`,
         hardStop: true,
       };
     }

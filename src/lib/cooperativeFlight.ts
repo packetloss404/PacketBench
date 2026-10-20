@@ -152,6 +152,10 @@ export function validateCooperativeAssignments(flight: Flight): CooperativeGraph
     const left = tasks[leftIndex];
     for (let rightIndex = leftIndex + 1; rightIndex < tasks.length; rightIndex += 1) {
       const right = tasks[rightIndex];
+      // Ordered writers receive the integrated predecessor tree. Only pairs
+      // that can execute concurrently must have disjoint ownership.
+      if (taskDependsOn(tasks, left.id, right.id) !== taskDependsOn(tasks, right.id, left.id))
+        continue;
       for (const leftRaw of left.ownedPaths ?? []) {
         for (const rightRaw of right.ownedPaths ?? []) {
           const leftPath = normalizeClaimedPath(leftRaw);
@@ -168,6 +172,20 @@ export function validateCooperativeAssignments(flight: Flight): CooperativeGraph
     }
   }
   return issues;
+}
+
+export function taskDependsOn(tasks: Task[], taskId: string, dependencyId: string): boolean {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const pending = [...(byId.get(taskId)?.dependsOn ?? [])];
+  const visited = new Set<string>();
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    if (id === dependencyId) return true;
+    pending.push(...(byId.get(id)?.dependsOn ?? []));
+  }
+  return false;
 }
 
 export function selectCooperativeTaskViews(flight: Flight): CooperativeTaskView[] {

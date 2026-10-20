@@ -200,7 +200,11 @@ impl SidecarManager {
             workspace,
             mcp_trust_snapshot,
         );
+        crate::commands::flight_runtime::sidecar_active(&session_id, true);
         let result = self.send_json_for_session(&session_id, req).await;
+        if result.is_err() {
+            crate::commands::flight_runtime::sidecar_active(&session_id, false);
+        }
         if result.is_err() {
             self.forget_owned_session(&session_id).await;
             self.close_remote_session(&session_id).await;
@@ -226,7 +230,12 @@ impl SidecarManager {
         // supervisor or remote-process waiter clears it authoritatively if the
         // transport really exited; a transient closed writer must not reroute a
         // later message into the in-process runtime.
-        self.send_json_for_session(&session_id, req).await
+        crate::commands::flight_runtime::sidecar_active(&session_id, true);
+        let result = self.send_json_for_session(&session_id, req).await;
+        if result.is_err() {
+            crate::commands::flight_runtime::sidecar_active(&session_id, false);
+        }
+        result
     }
 
     /// Forward a permission decision to the sidecar. `reason`, when set on a
@@ -343,6 +352,10 @@ impl SidecarManager {
 
     /// Forward a close request and remove from owned sessions.
     pub async fn forward_close(&self, session_id: String) -> Result<(), String> {
+        if crate::commands::flight_runtime::sidecar_is_active(&session_id) {
+            self.forward_cancel(session_id.clone()).await?;
+            crate::commands::flight_runtime::wait_sidecar_idle(&session_id).await?;
+        }
         let req = json!({
             "type": "close_session",
             "sessionId": session_id,

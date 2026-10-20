@@ -27,7 +27,7 @@ import { logSwallowed } from "@/lib/logSwallowed";
 // store must not decide affordances — components do, from the descriptor —
 // and a runtime import would drag `lib/agentCapabilities`' own dependency
 // graph (serverStore, the api-models catalog) into every store consumer.
-import type {  } from "@/lib/agentCapabilities";
+import type {} from "@/lib/agentCapabilities";
 /** Phase 2: SSH conversations now reference a `ServerConfig` from
  *  `serverStore` plus a per-session remote path. This payload is what the
  *  Agents UI hands to `createApiConversation` — it carries every field we
@@ -121,7 +121,12 @@ export function failTurn(
         streamingMessageId !== null
           ? c.messages.map((m) =>
               m.id === streamingMessageId
-                ? { ...m, isStreaming: false, content: m.content + `\n\nError: ${error}` }
+                ? {
+                    ...m,
+                    isStreaming: false,
+                    turnOutcome: "failed" as const,
+                    content: m.content + `\n\nError: ${error}`,
+                  }
                 : m,
             )
           : c.messages;
@@ -273,7 +278,6 @@ export function apiAgentProvider(agent: AgentCli): string {
     "api-ollama-cloud": "ollama-cloud",
     "api-google": "google",
     "api-xai": "xai",
-
   };
   // Canonicalise first so a legacy id hydrated from disk (`api-minimax-api`)
   // resolves through its alias instead of tripping the unknown-agent fallback.
@@ -391,17 +395,27 @@ export async function runBudgetedApiTurn(
   const token = Symbol(conversation.id);
   pendingTurnAdmissions.set(conversation.id, { token, newSession: options.newSession ?? false });
   latestTurnAdmissions.set(conversation.id, token);
-  const current = () => pendingTurnAdmissions.get(conversation.id)?.token === token &&
+  const current = () =>
+    pendingTurnAdmissions.get(conversation.id)?.token === token &&
     useAgentTaskStore.getState().conversations.some((c) => c.id === conversation.id);
   let dispatched = false;
   try {
-    if (!options.budgetChecked) await assertCostGuardrailsAllowLaunch(conversation.provider ?? conversation.agent, undefined, conversation);
+    if (!options.budgetChecked)
+      await assertCostGuardrailsAllowLaunch(
+        conversation.provider ?? conversation.agent,
+        undefined,
+        conversation,
+      );
     if (!current()) return false;
     await prepare(async (run) => {
       if (!current()) return;
-      pendingTurnAdmissions.delete(conversation.id);
-      dispatched = true;
-      await run();
+      const { runFlightConversationTurn } = await import("@/stores/flightConversationRuntime");
+      await runFlightConversationTurn(conversation.id, async () => {
+        if (!current()) throw new Error("Turn cancelled before provider dispatch.");
+        pendingTurnAdmissions.delete(conversation.id);
+        dispatched = true;
+        await run();
+      });
     });
     return dispatched;
   } catch (error) {
@@ -411,14 +425,18 @@ export async function runBudgetedApiTurn(
     if (!dispatched && options.newSession && latestTurnAdmissions.get(conversation.id) === token) {
       releaseApiConversationListeners(conversation.id);
     }
-    if (pendingTurnAdmissions.get(conversation.id)?.token === token) pendingTurnAdmissions.delete(conversation.id);
+    if (pendingTurnAdmissions.get(conversation.id)?.token === token)
+      pendingTurnAdmissions.delete(conversation.id);
   }
 }
 
 function hasLiveApiSession(conversation: AgentConversation): boolean {
-  return apiConversationCleanup.has(conversation.id) ||
+  return (
+    apiConversationCleanup.has(conversation.id) ||
     apiListenerInstallInFlight.has(conversation.id) ||
-    apiResumeInFlight.has(conversation.id) || conversation.status === "active";
+    apiResumeInFlight.has(conversation.id) ||
+    conversation.status === "active"
+  );
 }
 
 /** Detach and forget the api-agent listener block for `id`, so the next
@@ -583,6 +601,13 @@ interface AgentTaskStore {
     content: string,
     attachments?: ImageAttachment[] | null,
   ) => void;
+  /** Resolve only after native turn dispatch; ordinary chat sends stay fire-and-forget. */
+  sendMessageWithReceipt: (
+    conversationId: string,
+    content: string,
+    attachments?: ImageAttachment[] | null,
+    options?: { requireIdle?: boolean },
+  ) => Promise<void>;
   addAssistantMessage: (
     conversationId: string,
     content: string,
@@ -666,6 +691,7 @@ interface AgentTaskStore {
     conversationId: string,
     content: string,
     attachments?: ImageAttachment[] | null,
+    options?: { propagateErrors?: boolean },
   ) => Promise<void>;
   /** MCPH4: close the selected live API backend and discard only its frozen
    * MCP authority. The next user turn follows the normal resume path, captures
@@ -691,7 +717,9 @@ async function ensureApiAgentListeners(id: string): Promise<void> {
   if (!install) {
     install = installApiAgentListeners(id)
       .then((cleanup) => {
-        if (useAgentTaskStore.getState().conversations.some((conversation) => conversation.id === id)) {
+        if (
+          useAgentTaskStore.getState().conversations.some((conversation) => conversation.id === id)
+        ) {
           apiConversationCleanup.set(id, cleanup);
         } else cleanup();
       })
@@ -916,45 +944,51 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       if (skipBackendStart) {
         await ensureApiAgentListeners(id);
       } else {
-        await runBudgetedApiTurn(conversation, async (dispatch) => {
-          await ensureApiAgentListeners(id);
-          const sshConfig = sshTarget
-            ? {
-                host: sshTarget.host,
-                port: sshTarget.port,
-                user: sshTarget.user,
-                remote_path: sshTarget.remotePath,
-                key_path: sshTarget.keyPath ?? null,
-                auth_method: sshTarget.authMethod ?? null,
-                // Phase 2: backend still calls this `target_id` for now. It
-                // accepts the unified `ServerConfig.id`; the parallel backend
-                // PR is unifying naming.
-                target_id: sshTarget.serverId,
-                host_fingerprint: sshTarget.hostFingerprint ?? null,
-              }
-            : null;
-          await dispatch(() => startApiAgentSession(
-            id,
-            provider,
-            model,
-            projectPath,
-            initialMessage,
-            effectiveSystemPrompt,
-            thinkingEnabled ?? false,
-            attachments ?? undefined,
-            planMode ?? false,
-            sshConfig,
-            allowedTools ?? null,
-            null, // resumeToken — fresh start
-            resolvedMcpIds,
-            null,
-            permissionMode ?? "ask_for_risky",
-            approveWrites ?? false,
-            null, // commandPath — no surviving sidecar provider is CLI-backed
-            undefined,
-            frozenMcpTrust,
-          ));
-        }, { budgetChecked: true, newSession: true });
+        await runBudgetedApiTurn(
+          conversation,
+          async (dispatch) => {
+            await ensureApiAgentListeners(id);
+            const sshConfig = sshTarget
+              ? {
+                  host: sshTarget.host,
+                  port: sshTarget.port,
+                  user: sshTarget.user,
+                  remote_path: sshTarget.remotePath,
+                  key_path: sshTarget.keyPath ?? null,
+                  auth_method: sshTarget.authMethod ?? null,
+                  // Phase 2: backend still calls this `target_id` for now. It
+                  // accepts the unified `ServerConfig.id`; the parallel backend
+                  // PR is unifying naming.
+                  target_id: sshTarget.serverId,
+                  host_fingerprint: sshTarget.hostFingerprint ?? null,
+                }
+              : null;
+            await dispatch(() =>
+              startApiAgentSession(
+                id,
+                provider,
+                model,
+                projectPath,
+                initialMessage,
+                effectiveSystemPrompt,
+                thinkingEnabled ?? false,
+                attachments ?? undefined,
+                planMode ?? false,
+                sshConfig,
+                allowedTools ?? null,
+                null, // resumeToken — fresh start
+                resolvedMcpIds,
+                null,
+                permissionMode ?? "ask_for_risky",
+                approveWrites ?? false,
+                null, // commandPath — no surviving sidecar provider is CLI-backed
+                undefined,
+                frozenMcpTrust,
+              ),
+            );
+          },
+          { budgetChecked: true, newSession: true },
+        );
       }
     } catch (e) {
       // `startApiAgentSession` rejected before any `api-agent:*` event could
@@ -968,8 +1002,23 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
   },
 
   sendMessage: (conversationId, content, attachments) => {
+    void get()
+      .sendMessageWithReceipt(conversationId, content, attachments)
+      .catch(() => undefined);
+  },
+
+  sendMessageWithReceipt: async (conversationId, content, attachments, options = {}) => {
     const conv = get().conversations.find((c) => c.id === conversationId);
-    if (!conv) return;
+    if (!conv) throw new Error("The conversation is no longer available.");
+    if (
+      options.requireIdle &&
+      (conv.status === "active" ||
+        conv.messages.some((message) => message.isStreaming) ||
+        get().cancellingConversationIds.has(conversationId))
+    )
+      throw new Error(
+        "Wait for the builder's active turn and pending approvals to finish before sending repair findings.",
+      );
     // Retired-provider guard (see RETIRED_API_AGENTS). The transcript stays
     // readable; only new turns are refused. Recorded as a system message so
     // the refusal is visible and persisted rather than silently swallowed —
@@ -977,7 +1026,7 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     // around the disabled composer.
     if (conv.mode === "api" && isRetiredApiAgent(conv.agent)) {
       appendRetiredAgentNotice(conversationId, conv.agent);
-      return;
+      throw new Error(retiredApiAgentNotice(conv.agent));
     }
     // Fresh user turn — re-arm auto-failover for this conversation.
     failoverGuard.delete(conversationId);
@@ -1008,7 +1057,9 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       !apiConversationCleanup.has(conversationId) &&
       !apiResumeInFlight.has(conversationId)
     ) {
-      void get().resumeApiConversation(conversationId, effectiveContent, attachments);
+      await get().resumeApiConversation(conversationId, effectiveContent, attachments, {
+        propagateErrors: true,
+      });
       return;
     }
     // Continue with the comment-augmented content from here on.
@@ -1097,9 +1148,12 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
         ),
       }));
 
-      void runBudgetedApiTurn(conv, (dispatch) => dispatch(() =>
-        sendApiAgentMessage(conversationId, content, attachments ?? undefined),
-      )).catch((err) => {
+      let dispatched: boolean;
+      try {
+        dispatched = await runBudgetedApiTurn(conv, (dispatch) =>
+          dispatch(() => sendApiAgentMessage(conversationId, content, attachments ?? undefined)),
+        );
+      } catch (err) {
         // Mark the conversation failed AND clear the streaming assistant
         // placeholder created just above — otherwise its spinner never stops.
         failTurn(conversationId, assistantMsgId, err);
@@ -1110,11 +1164,15 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
         if (String(err).includes("No active session")) {
           releaseApiConversationListeners(conversationId);
         }
-      });
+        throw err;
+      }
+      // A revoked admission may settle after another turn has started. Its
+      // receipt still rejects, but must not run failTurn against the new owner.
+      if (!dispatched) throw new Error("The turn was cancelled before provider dispatch.");
     } else {
       // PTY mode
-      if (!conv.sessionId) return;
-      void writePty(conv.sessionId, content + "\r");
+      if (!conv.sessionId) throw new Error("This conversation has no active terminal session.");
+      await writePty(conv.sessionId, content + "\r");
     }
   },
 
@@ -1354,11 +1412,21 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     if (pendingTurnAdmissions.delete(id)) {
       apiResumeInFlight.delete(id);
       if (pendingAdmission?.newSession) releaseApiConversationListeners(id);
-      set((state) => ({ conversations: state.conversations.map((conversation) => conversation.id === id ? {
-        ...conversation, status: "idle", queuedMessages: [],
-        messages: conversation.messages.filter((message) => !message.queued).map((message) => ({ ...message, isStreaming: false })),
-        updatedAt: Date.now(),
-      } : conversation) }));
+      set((state) => ({
+        conversations: state.conversations.map((conversation) =>
+          conversation.id === id
+            ? {
+                ...conversation,
+                status: "idle",
+                queuedMessages: [],
+                messages: conversation.messages
+                  .filter((message) => !message.queued)
+                  .map((message) => ({ ...message, isStreaming: false })),
+                updatedAt: Date.now(),
+              }
+            : conversation,
+        ),
+      }));
       requestConversationSave(id);
       return;
     }
@@ -1700,7 +1768,12 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     useAgentStreamingStore.getState().clearThinking(id);
     try {
       if (!conversation) return;
-      if (!await runBudgetedApiTurn(conversation, (dispatch) => dispatch(() => tauriRetryLastTurn(id, newModel)))) return;
+      if (
+        !(await runBudgetedApiTurn(conversation, (dispatch) =>
+          dispatch(() => tauriRetryLastTurn(id, newModel)),
+        ))
+      )
+        return;
     } catch (e) {
       // The backend rejected the retry start (rate limit, session gone,
       // sidecar down) — so no `api-agent:done`/`error` event will ever
@@ -1749,15 +1822,20 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
    * Routes around `sendApiAgentMessage` because the Rust side has no
    * record of the session id — calling send before start would 404.
    */
-  resumeApiConversation: async (conversationId, content, attachments) => {
+  resumeApiConversation: async (conversationId, content, attachments, options = {}) => {
     const conv = get().conversations.find((c) => c.id === conversationId);
-    if (!conv || conv.mode !== "api" || !conv.provider || !conv.model) return;
+    if (!conv || conv.mode !== "api" || !conv.provider || !conv.model) {
+      if (options.propagateErrors)
+        throw new Error("This conversation has no resumable API provider and model.");
+      return;
+    }
     const { provider, model } = conv;
     // Retired-provider guard. The hydrate-then-send path lands here first, so
     // this is the guard a restarted app actually hits for a stored Codex
     // conversation.
     if (isRetiredApiAgent(conv.agent)) {
       appendRetiredAgentNotice(conversationId, conv.agent);
+      if (options.propagateErrors) throw new Error(retiredApiAgentNotice(conv.agent));
       return;
     }
     // Belt-and-braces re-entry guard; sendMessage already routes around an
@@ -1765,7 +1843,11 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     // be able to double-start the backend session either. The add happens
     // in this synchronous prefix (before any await) so no interleaving can
     // observe the flag unset mid-resume.
-    if (apiResumeInFlight.has(conversationId)) return;
+    if (apiResumeInFlight.has(conversationId)) {
+      if (options.propagateErrors)
+        throw new Error("This conversation is already resuming. Wait before sending another turn.");
+      return;
+    }
     const resumeToken = Symbol(conversationId);
     apiResumeInFlight.set(conversationId, resumeToken);
 
@@ -1810,74 +1892,81 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     }));
     if (updated) scheduleSave(updated);
 
+    let dispatched = false;
     try {
-      await runBudgetedApiTurn(conv, async (dispatch) => {
-        await ensureApiAgentListeners(conversationId);
-        const resumeMessages = buildConversationResumeMessages(conv.messages);
+      dispatched = await runBudgetedApiTurn(
+        conv,
+        async (dispatch) => {
+          await ensureApiAgentListeners(conversationId);
+          const resumeMessages = buildConversationResumeMessages(conv.messages);
 
-        // S5: resolve the live ServerConfig from `serverStore` for the full
-        // connection identity — host, user, port, keyPath, authMethod, and the
-        // pinned host fingerprint — so a server renamed or repointed since the
-        // conversation was created resumes to the right host, not the stale copy
-        // frozen into the conversation. `remote_path` stays the conversation's own
-        // working directory. See `buildResumeSshConfig` for the full contract.
-        let sshConfig: ResumeSshConfig | null = null;
-        if (conv.sshTarget) {
-          const { useServerStore } = await import("@/stores/serverStore");
-          const server = useServerStore.getState().getServer(conv.sshTarget.id);
-          sshConfig = buildResumeSshConfig(conv.sshTarget, server);
-        }
-        let frozenMcpTrust = conv.mcpTrustSnapshot;
-        if (frozenMcpTrust === undefined) {
-          frozenMcpTrust = await captureMcpTrustSnapshot(
-            conv.projectPath,
-            conv.enabledMcpServerIds ?? null,
-            Boolean(conv.sshTarget),
-          );
-          if (frozenMcpTrust !== undefined) {
-            set((state) => ({
-              conversations: state.conversations.map((candidate) =>
-                candidate.id === conversationId
-                  ? { ...candidate, mcpTrustSnapshot: frozenMcpTrust }
-                  : candidate,
-              ),
-            }));
-            const persisted = get().conversations.find(
-              (candidate) => candidate.id === conversationId,
-            );
-            if (persisted) scheduleSave(persisted);
+          // S5: resolve the live ServerConfig from `serverStore` for the full
+          // connection identity — host, user, port, keyPath, authMethod, and the
+          // pinned host fingerprint — so a server renamed or repointed since the
+          // conversation was created resumes to the right host, not the stale copy
+          // frozen into the conversation. `remote_path` stays the conversation's own
+          // working directory. See `buildResumeSshConfig` for the full contract.
+          let sshConfig: ResumeSshConfig | null = null;
+          if (conv.sshTarget) {
+            const { useServerStore } = await import("@/stores/serverStore");
+            const server = useServerStore.getState().getServer(conv.sshTarget.id);
+            sshConfig = buildResumeSshConfig(conv.sshTarget, server);
           }
-        }
+          let frozenMcpTrust = conv.mcpTrustSnapshot;
+          if (frozenMcpTrust === undefined) {
+            frozenMcpTrust = await captureMcpTrustSnapshot(
+              conv.projectPath,
+              conv.enabledMcpServerIds ?? null,
+              Boolean(conv.sshTarget),
+            );
+            if (frozenMcpTrust !== undefined) {
+              set((state) => ({
+                conversations: state.conversations.map((candidate) =>
+                  candidate.id === conversationId
+                    ? { ...candidate, mcpTrustSnapshot: frozenMcpTrust }
+                    : candidate,
+                ),
+              }));
+              const persisted = get().conversations.find(
+                (candidate) => candidate.id === conversationId,
+              );
+              if (persisted) scheduleSave(persisted);
+            }
+          }
 
-        await dispatch(() => startApiAgentSession(
-          conversationId,
-          provider,
-          model,
-          conv.projectPath,
-          content,
-          // M1(c): resends replay the FROZEN system prompt captured at session
-          // creation — the memory brief + AGENTS.md that were composed once in
-          // createApiConversation and baked into `systemPromptOverride`. This is
-          // intentional: memory is injected at session start only and is NOT
-          // recomposed per resume, so a mid-session memory edit won't retro-apply.
-          // The MemoryInjectionCard / HeaderOverflowMenu "injected at session
-          // start" disclosure reflects exactly this behavior.
-          conv.systemPromptOverride ?? null,
-          conv.thinkingEnabled ?? false,
-          attachments ?? undefined,
-          conv.planMode ?? false,
-          sshConfig,
-          conv.allowedTools ?? null,
-          conv.resumeToken ?? null,
-          conv.enabledMcpServerIds ?? null,
-          resumeMessages,
-          conv.permissionMode ?? "ask_for_risky",
-          conv.approveWrites ?? false,
-          null, // commandPath — no surviving sidecar provider is CLI-backed
-          undefined,
-          frozenMcpTrust,
-        ));
-      }, { newSession: true });
+          await dispatch(() =>
+            startApiAgentSession(
+              conversationId,
+              provider,
+              model,
+              conv.projectPath,
+              content,
+              // M1(c): resends replay the FROZEN system prompt captured at session
+              // creation — the memory brief + AGENTS.md that were composed once in
+              // createApiConversation and baked into `systemPromptOverride`. This is
+              // intentional: memory is injected at session start only and is NOT
+              // recomposed per resume, so a mid-session memory edit won't retro-apply.
+              // The MemoryInjectionCard / HeaderOverflowMenu "injected at session
+              // start" disclosure reflects exactly this behavior.
+              conv.systemPromptOverride ?? null,
+              conv.thinkingEnabled ?? false,
+              attachments ?? undefined,
+              conv.planMode ?? false,
+              sshConfig,
+              conv.allowedTools ?? null,
+              conv.resumeToken ?? null,
+              conv.enabledMcpServerIds ?? null,
+              resumeMessages,
+              conv.permissionMode ?? "ask_for_risky",
+              conv.approveWrites ?? false,
+              null, // commandPath — no surviving sidecar provider is CLI-backed
+              undefined,
+              frozenMcpTrust,
+            ),
+          );
+        },
+        { newSession: true },
+      );
     } catch (e) {
       console.warn("resumeApiConversation failed:", e);
       // Clear the streaming placeholder we appended above — no `api-agent:*`
@@ -1891,9 +1980,13 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       if (String(e).includes("No active session")) {
         releaseApiConversationListeners(conversationId);
       }
+      if (options.propagateErrors) throw e;
     } finally {
-      if (apiResumeInFlight.get(conversationId) === resumeToken) apiResumeInFlight.delete(conversationId);
+      if (apiResumeInFlight.get(conversationId) === resumeToken)
+        apiResumeInFlight.delete(conversationId);
     }
+    if (!dispatched && options.propagateErrors)
+      throw new Error("The turn was cancelled before provider dispatch.");
   },
 
   prepareMcpReconnect: async (conversationId, enabledMcpServerIds) => {

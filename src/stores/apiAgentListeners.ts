@@ -23,6 +23,7 @@ import { classifyToolTier, decideApprovalGate } from "@/lib/approvalTiers";
 // what posture a session is in.
 import { deriveMode } from "@/components/agents/agentModeChipUtils";
 import { createStreamCoalescer } from "@/lib/streamCoalescer";
+import { interruptRunningToolCalls } from "@/lib/toolCallSettlement";
 import { sendApiAgentMessage } from "@/lib/tauri";
 import { estimateTurnCostUsd } from "@/lib/conversationCost";
 import {
@@ -113,6 +114,7 @@ function applyToolResult(
       id: payload.id,
       name: payload.name,
       status: (payload.is_error ? "error" : "done") as AgentToolCall["status"],
+      interrupted: undefined,
       summary: payload.content.slice(0, 200),
       fullContent: payload.content,
       input: payload.input || undefined,
@@ -189,9 +191,9 @@ function sendPromotedQueuedMessage(
 
   const conversation = getState().conversations.find((c) => c.id === conversationId);
   if (!conversation) return;
-  void runBudgetedApiTurn(conversation, (dispatch) => dispatch(() =>
-    sendApiAgentMessage(conversationId, content, undefined),
-  )).catch((err) => {
+  void runBudgetedApiTurn(conversation, (dispatch) =>
+    dispatch(() => sendApiAgentMessage(conversationId, content, undefined)),
+  ).catch((err) => {
     // failTurn also clears the streaming placeholder we just inserted —
     // previously this only flipped status to "failed", leaving the assistant
     // bubble spinning forever.
@@ -333,6 +335,7 @@ export async function installApiAgentListeners(conversationId: string): Promise<
     resume_token?: string | null;
     cancelled?: boolean;
   }>(apiAgentDoneEvent(id), (event) => {
+    useAgentApprovalStore.getState().clearConversation(id);
     // Land any buffered stream deltas before flipping isStreaming off —
     // otherwise the pending frame would find no streaming message and the
     // turn's tail chunks would be lost.
@@ -352,6 +355,10 @@ export async function installApiAgentListeners(conversationId: string): Promise<
             const settled: AgentMessage = {
               ...m,
               isStreaming: false,
+              turnOutcome: event.payload.cancelled ? "cancelled" : "completed",
+              toolCalls: event.payload.cancelled
+                ? interruptRunningToolCalls(m.toolCalls ?? [])
+                : m.toolCalls,
               inputTokens: event.payload.input_tokens,
               outputTokens: event.payload.output_tokens,
               cacheReadTokens: event.payload.cache_read_input_tokens,
@@ -435,6 +442,7 @@ export async function installApiAgentListeners(conversationId: string): Promise<
   });
 
   const errorUnlisten = await listen<{ message: string }>(apiAgentErrorEvent(id), (event) => {
+    useAgentApprovalStore.getState().clearConversation(id);
     // Same as `done`: buffered deltas must land while the message is still
     // streaming, and before any failover retry forks the transcript.
     coalescer.flushNow();
@@ -501,6 +509,7 @@ export async function installApiAgentListeners(conversationId: string): Promise<
               ? {
                   ...m,
                   isStreaming: false,
+                  turnOutcome: "failed" as const,
                   content: m.content + `\n\nError: ${event.payload.message}`,
                 }
               : m,
@@ -572,6 +581,38 @@ export async function installApiAgentListeners(conversationId: string): Promise<
       // fires the orchestrator `approval_needed` flip internally.
       const conv = getState().conversations.find((c) => c.id === id);
       if (!conv) return;
+      // Native tool-start arrives before its arguments are complete. A
+      // permission request has the finalized input even while execution is
+      // blocked; fill only its matching card, preserving any earlier input.
+      let inputFilled = false;
+      const messages = conv.messages.map((message) => {
+        if (
+          !message.toolCalls?.some(
+            (tool) =>
+              tool.id === event.payload.id && tool.name === event.payload.name && !tool.input,
+          )
+        )
+          return message;
+        inputFilled = true;
+        return {
+          ...message,
+          toolCalls: message.toolCalls.map((tool) =>
+            tool.id === event.payload.id && tool.name === event.payload.name && !tool.input
+              ? { ...tool, input: event.payload.arguments }
+              : tool,
+          ),
+        };
+      });
+      if (inputFilled) {
+        setState((state) => ({
+          conversations: state.conversations.map((conversation) =>
+            conversation.id === id
+              ? { ...conversation, messages, updatedAt: Date.now() }
+              : conversation,
+          ),
+        }));
+        requestConversationSave(id);
+      }
       // P1-9 tiered gating: read/search tools never prompt; in-project
       // edits auto-apply into the post-hoc review bar (baselines from
       // P1-7, surface from P1-8). Only shell/network/out-of-project

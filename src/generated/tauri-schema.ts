@@ -152,7 +152,11 @@ export type ReviewGateReportDto = { schemaVersion: 1, verdict: ReviewGateVerdict
 
 export type ReviewGatePolicyDto = { enabled: boolean, reviewerAgentConfigId: string, reviewerModel?: string, acceptanceCriteria: Array<string>, };
 
-export type AttemptReviewGateDto = { status: ReviewGateStatusDto, reviewerConversationId?: string, reviewerAgentConfigId?: string, reviewerModel?: string, report?: ReviewGateReportDto, errorMessage?: string, startedAt?: number, completedAt?: number, overriddenAt?: number, overrideReason?: string, };
+export type ReviewGateEvidenceDto = { fingerprint: string, contextFingerprint: string, contextJson: string, baseSha: string, headSha: string, };
+
+export type ReviewerSessionDto = { sessionId: string, provider: string, model: string, };
+
+export type AttemptReviewGateDto = { status: ReviewGateStatusDto, reviewerConversationId?: string, reviewerAgentConfigId?: string, reviewerModel?: string, evidence?: ReviewGateEvidenceDto, reviewerSessions: Array<ReviewerSessionDto>, report?: ReviewGateReportDto, errorMessage?: string, startedAt?: number, completedAt?: number, overriddenAt?: number, overrideReason?: string, };
 
 export type FlightExecutionModeDto = "independent" | "cooperative";
 
@@ -176,7 +180,7 @@ export type AutonomyPolicyDto = { schemaVersion: 1, autoRecovery: boolean, autoR
 
 export type AutonomyActionRecordDto = { id: string, kind: AutonomyActionKindDto, subjectId?: string, status: AutonomyActionStatusDto, reason: string, timestamp: number, cost: number, metadata?: Record<string, string | number | boolean | null>, };
 
-export type AutonomyRuntimeDto = { status: AutonomyRunStatusDto, startedAt?: number, pausedAt?: number, stoppedAt?: number, hardStopReason?: string, actionHistory: Array<AutonomyActionRecordDto>, };
+export type AutonomyRuntimeDto = { status: AutonomyRunStatusDto, startedAt?: number, pausedAt?: number, stoppedAt?: number, hardStopReason?: string, actionHistory: Array<AutonomyActionRecordDto>, reviewRetryCounts?: { [key in string]?: number }, };
 
 export type CoordinationMessageKindDto = "instruction" | "question" | "answer" | "blocker" | "finding" | "handoff" | "artifact";
 
@@ -192,7 +196,13 @@ export type CoordinationAcknowledgementDto = { by: CoordinationMessagePartyDto, 
 
 export type CoordinationMessageDto = { schemaVersion: 1, id: string, flightId: string, kind: CoordinationMessageKindDto, sender: CoordinationMessagePartyDto, recipient: CoordinationMessageRecipientDto, body: string, artifacts: Array<CoordinationArtifactRefDto>, status: CoordinationDeliveryStatusDto, createdAt: number, deliveredAt?: number, acknowledgements: Array<CoordinationAcknowledgementDto>, replyToId?: string, dedupeKey: string, hopCount: number, errorMessage?: string, };
 
-export type AttemptDto = { id: string, flightId: string, target: AttemptTargetDto, agentConfigId: string, model: string, provider: string, branch: string, baseBranch: string, sessionId: string, status: AttemptStatusDto, startedAt?: number, completedAt?: number, cost: number, tokens: number, errorMessage?: string,
+export type AttemptRecoveryDto = { state: 'retained' | 'discarded', reason: string, retainedAt: number, };
+
+export type FlightDeliveryDto = { kind: 'landed' | 'pull_request', deliveredAt: number, branch: string, baseBranch: string, commitSha?: string, prNumber?: number, prUrl?: string, attemptId?: string, };
+
+export type FlightExecutionTargetDto = { kind: 'local' | 'ssh', serverId?: string, basePath: string, };
+
+export type AttemptDto = { id: string, flightId: string, target: AttemptTargetDto, agentConfigId: string, model: string, provider: string, branch: string, baseBranch: string, sessionId: string, status: AttemptStatusDto, sessionHistory?: Array<ReviewerSessionDto>, startedAt?: number, completedAt?: number, cost: number, tokens: number, errorMessage?: string,
 /**
  * E1: structured failure category (stable snake_case label) derived when
  * the attempt failed; `None` otherwise.
@@ -201,7 +211,7 @@ failureCategory?: string,
 /**
  * RG1: independent reviewer lifecycle and verdict.
  */
-reviewGate?: AttemptReviewGateDto,
+reviewGate?: AttemptReviewGateDto, recovery?: AttemptRecoveryDto, delivery?: FlightDeliveryDto,
 /**
  * Cooperative graph task that owns this attempt.
  */
@@ -213,7 +223,7 @@ taskId?: string,
  */
 draftPrNumber?: number, };
 
-export type FlightDto = { id: string, title: string, objective: string, status: FlightStatusDto, priority: FlightPriorityDto, projectPath: string, workspaceId?: string, gitBranch?: string, milestones: Array<MilestoneDto>, linkedSessionIds: Array<string>, issueIds: Array<string>, createdAt: number, updatedAt: number, completedAt?: number, totalCost: number, totalTokens: number, prompt?: string, attempts: Array<AttemptDto>,
+export type FlightDto = { id: string, title: string, objective: string, status: FlightStatusDto, priority: FlightPriorityDto, projectPath: string, workspaceId?: string, gitBranch?: string, milestones: Array<MilestoneDto>, linkedSessionIds: Array<string>, issueIds: Array<string>, createdAt: number, updatedAt: number, completedAt?: number, delivery?: FlightDeliveryDto, archivedAt?: number, stoppedAt?: number, totalCost: number, totalTokens: number, prompt?: string, attempts: Array<AttemptDto>,
 /**
  * RG1: opt-in reviewer policy. Absent means disabled.
  */
@@ -221,7 +231,7 @@ reviewGatePolicy?: ReviewGatePolicyDto,
 /**
  * Cooperative execution is opt-in; absent means independent.
  */
-executionMode?: FlightExecutionModeDto, integrationBranch?: FlightIntegrationBranchDto, coordinationInbox: Array<CoordinationMessageDto>, autonomyMode?: AutonomyFlightModeDto, autonomyPolicy?: AutonomyPolicyDto, autonomyRuntime?: AutonomyRuntimeDto,
+executionMode?: FlightExecutionModeDto, executionTarget?: FlightExecutionTargetDto, integrationBranch?: FlightIntegrationBranchDto, coordinationInbox: Array<CoordinationMessageDto>, autonomyMode?: AutonomyFlightModeDto, autonomyPolicy?: AutonomyPolicyDto, autonomyRuntime?: AutonomyRuntimeDto,
 /**
  * Normal API-agent conversation used to refine the current upfront plan.
  */

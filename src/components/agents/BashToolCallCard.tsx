@@ -21,18 +21,14 @@ function parseBashInput(raw: string | undefined): BashInput {
   const parsed = parseToolInput(raw);
   // Undecodable input is treated as a bare command string.
   if (!parsed) return { command: raw ?? "" };
-  const command =
-    typeof parsed.command === "string" ? parsed.command : "";
+  const command = typeof parsed.command === "string" ? parsed.command : "";
   const cwd = typeof parsed.cwd === "string" ? parsed.cwd : undefined;
   return { command, cwd };
 }
 
 function BashToolCallCardImpl({ toolCall }: BashToolCallCardProps) {
   const verbosity = useAgentSettingsStore((s) => s.transcriptViewMode);
-  const { command, cwd } = useMemo(
-    () => parseBashInput(toolCall.input),
-    [toolCall.input],
-  );
+  const { command, cwd } = useMemo(() => parseBashInput(toolCall.input), [toolCall.input]);
 
   const [expanded, setExpanded] = useState(verbosity === "verbose");
   const [copied, setCopied] = useState(false);
@@ -68,10 +64,9 @@ function BashToolCallCardImpl({ toolCall }: BashToolCallCardProps) {
     ) : (
       <StatusPill
         status={pillStatus}
+        interrupted={toolCall.interrupted}
         variant="exit-code"
-        exitCode={
-          toolCall.exitCode ?? (pillStatus === "error" ? 1 : 0)
-        }
+        exitCode={toolCall.exitCode ?? (pillStatus === "error" ? 1 : 0)}
       />
     );
 
@@ -80,32 +75,24 @@ function BashToolCallCardImpl({ toolCall }: BashToolCallCardProps) {
       <button
         type="button"
         onClick={handleCopy}
-        className="text-text-muted hover:text-text-primary transition-colors p-0.5 rounded hover:bg-bg-border"
+        className="rounded p-0.5 text-text-muted transition-colors hover:bg-bg-border hover:text-text-primary"
         aria-label="Copy command"
       >
-        {copied ? (
-          <CheckCircle2 size={11} className="text-accent-green" />
-        ) : (
-          <Copy size={11} />
-        )}
+        {copied ? <CheckCircle2 size={11} className="text-accent-green" /> : <Copy size={11} />}
       </button>
     </Tooltip>
   );
 
   const subHeader =
     verbosity === "verbose" && cwd ? (
-      <div className="px-2 pb-1 font-mono text-meta text-text-faint truncate">
-        cwd: {cwd}
-      </div>
+      <div className="truncate px-2 pb-1 font-mono text-meta text-text-faint">cwd: {cwd}</div>
     ) : undefined;
 
   return (
     <BaseToolCard
-      icon={<Terminal size={11} className="text-text-muted shrink-0" />}
+      icon={<Terminal size={11} className="shrink-0 text-text-muted" />}
       kind="bash"
-      title={
-        <span className="font-mono">{command || "(no command)"}</span>
-      }
+      title={<span className="font-mono">{command || "(no command)"}</span>}
       titleAttr={command}
       statusPill={pill}
       headerActions={headerActions}
@@ -117,11 +104,11 @@ function BashToolCallCardImpl({ toolCall }: BashToolCallCardProps) {
         expanded: "Collapse output",
         collapsed: "Expand output",
       }}
-      isError={toolCall.status === "error"}
+      isError={toolCall.status === "error" && !toolCall.interrupted}
     >
       {/* `selectable` is load-bearing: `body { user-select: none }` is global,
           so without it command output cannot be copied out of the transcript. */}
-      <pre className="selectable text-ui font-mono whitespace-pre-wrap bg-bg-primary rounded-lg p-2 mx-1 mb-1 text-text-primary overflow-y-auto max-h-[320px]">
+      <pre className="selectable mx-1 mb-1 max-h-[320px] overflow-y-auto whitespace-pre-wrap rounded-lg bg-bg-primary p-2 font-mono text-ui text-text-primary">
         {body}
       </pre>
     </BaseToolCard>

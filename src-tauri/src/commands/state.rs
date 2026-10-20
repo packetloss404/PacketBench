@@ -10,7 +10,16 @@ use crate::core::storage::{self};
 
 #[tauri::command]
 pub fn load_persisted_state() -> Result<PersistedStateDto, String> {
-    Ok(storage::load_state().into())
+    let started = std::time::Instant::now();
+    tracing::info!("Persisted state read started");
+    let state: PersistedStateDto = storage::load_state().into();
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        version = state.version,
+        flights = state.flights.len(),
+        "Persisted state read completed"
+    );
+    Ok(state)
 }
 
 /// Bulk-save the persisted state.

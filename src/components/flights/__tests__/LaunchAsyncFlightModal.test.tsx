@@ -7,7 +7,7 @@
  *  - a multi-target launch that fails partway must say how many agents are
  *    nonetheless live and spending.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/tauri", async (importActual) => {
@@ -47,6 +47,8 @@ function seedFlight(flight: Flight) {
 }
 
 function publishCheckbox(): HTMLInputElement {
+  const options = screen.getByRole("button", { name: /Execution options/ });
+  if (options.getAttribute("aria-expanded") === "false") fireEvent.click(options);
   return screen
     .getByText("Publish attempts as draft PRs")
     .closest("label")!

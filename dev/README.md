@@ -162,6 +162,17 @@ All document links in this file resolve as of 2026-08-27.
 
 ## Research and reference
 
+- [Flight runtime and experience review](./flight-overhaul-review-2026-10-19.md)
+  combines separate runtime, GUI, and journey reviews. It recommends a
+  Workspace/issue-to-delivery flow with one agent by default, identifies
+  lifecycle and launch blockers, and defines acceptance criteria for an
+  overhaul. Implementation evidence for the scoped runtime repairs is recorded
+  separately from the proposed product changes.
+- [Loop and graph engineering alignment](./loop-and-graph-engineering-alignment-2026-10-19.md)
+  reviews Cherny/Osmani and Kopadze against source `4698ca9c` on October 19.
+  Existing Flight loops/DAGs are present; evidence freshness, reviewer cost
+  and retry accounting, and full runtime proof are the useful next steps.
+  Research only; proposed follow-ups live in `../backlog.md`.
 - [`competitors.md`](./competitors.md) indexes the competitive research.
 - [`bridgemind/bridgespace-competitive-brief.md`](./bridgemind/bridgespace-competitive-brief.md)
   and [`bridgemind/bridgeswarm-teardown.md`](./bridgemind/bridgeswarm-teardown.md)

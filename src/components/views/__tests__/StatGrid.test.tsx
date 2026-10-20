@@ -204,7 +204,8 @@ describe("StatGrid cost cell (P2-20 convergence)", () => {
 
     renderView();
 
-    expect(screen.getAllByText("spec").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Draft").length).toBeGreaterThan(0);
+    expect(flight.status).toBe("spec"); // Read compatibility does not rewrite saved state.
     expect(screen.getByText("Cost")).toBeInTheDocument();
     expect(screen.getByTestId("mock-async-flight-grid")).toBeInTheDocument();
   });

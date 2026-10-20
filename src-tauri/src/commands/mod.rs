@@ -17,6 +17,8 @@ pub mod custom_agents;
 pub mod dictation;
 pub mod error_classifier;
 pub mod flight_attempts;
+pub mod flight_review;
+pub mod flight_runtime;
 pub mod fs;
 pub mod git;
 pub mod git_host_probe;

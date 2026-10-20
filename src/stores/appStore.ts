@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { getRoute, resolveModuleAlias } from "@/lib/routeRegistry";
 import type { SettingsTarget } from "@/types/settings";
+import type { FlightLaunchContext } from "@/lib/flightLaunchContext";
 
 export type CoreView =
   | "welcome"
@@ -113,6 +114,9 @@ export interface MemoryViewFilter {
 }
 
 interface AppStore {
+  flightLaunchContext: FlightLaunchContext | null;
+  openFlightBrief: (context?: FlightLaunchContext) => void;
+  closeFlightBrief: () => void;
   initialized: boolean;
   activeView: AppView;
   gitBranch: string | null;
@@ -163,6 +167,9 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set) => ({
+  flightLaunchContext: null,
+  openFlightBrief: (context = {}) => set({ flightLaunchContext: context }),
+  closeFlightBrief: () => set({ flightLaunchContext: null }),
   initialized: false,
   activeView: "welcome",
   gitBranch: null,

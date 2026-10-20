@@ -527,7 +527,7 @@ pub struct MergeBranchOutcome {
     /// SHA (`rev-parse HEAD`) after the squash commit. When the branch was
     /// already fully merged this is the unchanged prior HEAD.
     pub commit_sha: String,
-    /// The `pkt/<convId>` branch was force-deleted (`-D`).
+    /// The `pkt/<convId>` branch was deleted at its expected commit.
     pub branch_deleted: bool,
     /// The conversation worktree directory was removed.
     pub worktree_removed: bool,
@@ -555,14 +555,39 @@ pub struct MergeBranchOutcome {
 ///   `git reset --hard HEAD` (safe precisely because the root was verified
 ///   clean) leaving BOTH the root checkout AND the conversation worktree
 ///   byte-identical to their pre-merge state. Returns Err.
-/// - **Success.** Creates the squash commit, removes the worktree dir, then
-///   force-deletes the branch (`-D`; a squash leaves no ancestry for `-d`).
+/// - **Success.** Creates the squash commit, then removes the unchanged clean
+///   worktree and deletes the source ref at the expected commit.
 pub fn merge_conversation_branch(
     project_path: &str,
     branch: &str,
     squash: bool,
 ) -> Result<MergeBranchOutcome, String> {
     validate_branch_name(branch)?;
+    let expected_sha = conversation_branch_head(project_path, branch)?;
+    merge_conversation_branch_at_ref(project_path, branch, squash, &expected_sha)
+}
+
+/// Land the exact reviewed commit, even if the source branch moves while Git
+/// runs hooks or creates the destination commit. Cleanup locks and compares the
+/// source ref before removing its worktree, so newer work is retained.
+pub fn merge_conversation_branch_at_ref(
+    project_path: &str,
+    branch: &str,
+    squash: bool,
+    expected_sha: &str,
+) -> Result<MergeBranchOutcome, String> {
+    validate_branch_name(branch)?;
+    if !matches!(expected_sha.len(), 40 | 64)
+        || !expected_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("The reviewed commit must be a full Git commit SHA.".to_string());
+    }
+    let expected_sha = expected_sha.to_ascii_lowercase();
+    if conversation_branch_head(project_path, branch)? != expected_sha {
+        return Err(
+            "The retained branch changed after review. Review it again before landing.".to_string(),
+        );
+    }
 
     // --- Dirty-root guard (git_safety_check semantics; see doc note) -----
     if get_branch(project_path).is_err() {
@@ -578,8 +603,7 @@ pub fn merge_conversation_branch(
 
     // --- Dirty-worktree guard (ruled: "every non-Discard removal path
     // dirty-checks first" / "Discard is the only path allowed to remove a
-    // dirty tree"). The cleanup below runs `git worktree remove --force`,
-    // which would silently blow away uncommitted work (tracked edits OR
+    // dirty tree"). Forced removal would silently blow away uncommitted work (tracked edits OR
     // untracked agent output) that a squash of only the *committed* branch
     // tip never lands. Refuse first, touching nothing. -------------------
     let wt_dirt = conversation_worktree_dirt(project_path, branch)?;
@@ -592,7 +616,7 @@ pub fn merge_conversation_branch(
 
     // --- Merge (+ explicit conflict recovery) ----------------------------
     let head_before = git_command_result(&["rev-parse", "HEAD"], project_path)?;
-    let commit_sha = squash_merge_into_head(project_path, branch, squash)?;
+    let commit_sha = squash_merge_into_head(project_path, &expected_sha, branch, squash)?;
 
     // Nothing was landed: the squash staged no changes (branch already merged
     // / empty), so HEAD did not move. Do NOT clean up and do NOT report as a
@@ -608,12 +632,8 @@ pub fn merge_conversation_branch(
     }
 
     // --- Cleanup (best-effort; the merge already landed) -----------------
-    // Remove the worktree BEFORE deleting the branch: git refuses to delete
-    // a branch that is checked out in a linked worktree.
-    let worktree_removed = remove_conversation_worktree_dir(project_path, branch);
-    let branch_deleted = git_command(&["branch", "-D", branch], project_path)
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let (worktree_removed, branch_deleted) =
+        cleanup_conversation_branch_at_ref(project_path, branch, &expected_sha);
 
     Ok(MergeBranchOutcome {
         commit_sha,
@@ -621,6 +641,81 @@ pub fn merge_conversation_branch(
         worktree_removed,
         nothing_to_land: false,
     })
+}
+
+fn conversation_branch_head(project_path: &str, branch: &str) -> Result<String, String> {
+    git_command_result(
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("refs/heads/{branch}^{{commit}}"),
+        ],
+        project_path,
+    )
+}
+
+/// Hold a compare-and-swap deletion transaction open during worktree cleanup.
+/// A plain check followed by `worktree remove` could remove newer committed
+/// files if another process advanced the branch between those commands.
+fn cleanup_conversation_branch_at_ref(
+    project_path: &str,
+    branch: &str,
+    expected_sha: &str,
+) -> (bool, bool) {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+
+    let mut command = Command::new("git");
+    command
+        .args(["update-ref", "--no-deref", "--stdin"])
+        .current_dir(project_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    hide_window(&mut command);
+    let Ok(mut child) = command.spawn() else {
+        return (false, false);
+    };
+    let mut worktree_removed = false;
+    let deleted = (|| -> Option<bool> {
+        let mut input = child.stdin.take()?;
+        let mut output = BufReader::new(child.stdout.take()?);
+        write!(
+            input,
+            "start\ndelete refs/heads/{branch} {expected_sha}\nprepare\n"
+        )
+        .ok()?;
+        input.flush().ok()?;
+        for expected_reply in ["start: ok", "prepare: ok"] {
+            let mut reply = String::new();
+            output.read_line(&mut reply).ok()?;
+            if reply.trim() != expected_reply {
+                return None;
+            }
+        }
+
+        // The ref is now locked at the reviewed SHA. A newly dirty worktree
+        // must still survive: removal deliberately does not use --force.
+        worktree_removed =
+            remove_conversation_worktree_dir_at_ref(project_path, branch, expected_sha);
+        let checked_out = format!("branch refs/heads/{branch}");
+        let worktrees =
+            git_command_result(&["worktree", "list", "--porcelain"], project_path).ok()?;
+        if worktrees.lines().any(|line| line == checked_out) {
+            // Dropping stdin aborts the transaction and leaves this ref intact.
+            return Some(false);
+        }
+        input.write_all(b"commit\n").ok()?;
+        input.flush().ok()?;
+        let mut reply = String::new();
+        output.read_line(&mut reply).ok()?;
+        Some(reply.trim() == "commit: ok")
+    })()
+    .unwrap_or(false);
+    // All stdin handles have been dropped, so EOF also aborts an uncommitted
+    // transaction. Reap the helper before returning and releasing its locks.
+    let success = child.wait().is_ok_and(|status| status.success());
+    (worktree_removed, deleted && success)
 }
 
 /// Non-empty `git status --short` lines for the conversation worktree that
@@ -668,7 +763,8 @@ fn root_dirt_ignoring_worktrees(project_path: &str) -> Result<Vec<String>, Strin
 /// failure, recover the root to its pre-merge clean state and return Err.
 fn squash_merge_into_head(
     project_path: &str,
-    branch: &str,
+    source_ref: &str,
+    branch_label: &str,
     squash: bool,
 ) -> Result<String, String> {
     let mut args: Vec<&str> = vec!["merge"];
@@ -678,7 +774,7 @@ fn squash_merge_into_head(
         args.push("--no-ff");
         args.push("--no-edit");
     }
-    args.push(branch);
+    args.push(source_ref);
 
     let output = git_command(&args, project_path)?;
     if !output.status.success() {
@@ -716,7 +812,7 @@ fn squash_merge_into_head(
         if !has_staged_changes(project_path)? {
             return git_command_result(&["rev-parse", "HEAD"], project_path);
         }
-        let msg = format!("Merge branch '{}' (squash)", branch);
+        let msg = format!("Merge branch '{}' (squash)", branch_label);
         let commit = git_command(&["commit", "-m", &msg], project_path)?;
         if !commit.status.success() {
             let _ = git_command(&["reset", "--hard", "HEAD"], project_path);
@@ -727,11 +823,15 @@ fn squash_merge_into_head(
     git_command_result(&["rev-parse", "HEAD"], project_path)
 }
 
-/// Remove the worktree dir for `pkt/<convId>` via `git worktree remove
-/// --force` (which also prunes the admin metadata). Returns true when the
+/// Remove the unchanged, clean worktree dir for `pkt/<convId>` via
+/// `git worktree remove` (which also prunes the admin metadata). Returns true when the
 /// dir is gone afterwards. Best-effort: derives the conv id from the `pkt/`
 /// branch prefix and reuses `worktree::worktree_path`.
-fn remove_conversation_worktree_dir(project_path: &str, branch: &str) -> bool {
+fn remove_conversation_worktree_dir_at_ref(
+    project_path: &str,
+    branch: &str,
+    expected_sha: &str,
+) -> bool {
     let conv_id = match branch.strip_prefix("pkt/") {
         Some(id) if !id.is_empty() => id,
         _ => return false,
@@ -743,7 +843,12 @@ fn remove_conversation_worktree_dir(project_path: &str, branch: &str) -> bool {
     if !std::path::Path::new(&path).exists() {
         return true;
     }
-    git_command(&["worktree", "remove", "--force", &path], project_path)
+    if get_branch(&path).as_deref() != Ok(branch)
+        || git_command_result(&["rev-parse", "HEAD"], &path).as_deref() != Ok(expected_sha)
+    {
+        return false;
+    }
+    git_command(&["worktree", "remove", &path], project_path)
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -1038,6 +1143,131 @@ mod tests {
             branches
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn install_landing_hook(root: &std::path::Path, body: &str) {
+        git_ok(root, &["config", "core.hooksPath", ".git/hooks"]);
+        let path = root.join(".git/hooks/pre-commit");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn merge_conversation_branch_at_ref_refuses_a_branch_advanced_after_review() {
+        let conv = "review-moved";
+        let branch = format!("pkt/{conv}");
+        let root = fixture_repo_with_worktree("review-moved", conv);
+        let wt = root.join(".pkt-worktrees").join(conv);
+        std::fs::write(wt.join("f.txt"), "reviewed\n").unwrap();
+        git_ok(&wt, &["commit", "-qam", "reviewed"]);
+        let base = root.to_string_lossy().to_string();
+        let reviewed = conversation_branch_head(&base, &branch).unwrap();
+        std::fs::write(wt.join("f.txt"), "unreviewed\n").unwrap();
+        std::fs::write(wt.join("later.txt"), "retain newer work\n").unwrap();
+        git_ok(&wt, &["add", "-A"]);
+        git_ok(&wt, &["commit", "-qm", "newer work"]);
+        let advanced = conversation_branch_head(&base, &branch).unwrap();
+        let root_head = git_command_result(&["rev-parse", "HEAD"], &base).unwrap();
+
+        let error = merge_conversation_branch_at_ref(&base, &branch, true, &reviewed)
+            .expect_err("a stale reviewed SHA must refuse before merging");
+        assert!(error.contains("changed after review"), "{error}");
+        assert_eq!(
+            git_command_result(&["rev-parse", "HEAD"], &base).unwrap(),
+            root_head
+        );
+        assert_eq!(conversation_branch_head(&base, &branch).unwrap(), advanced);
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "base\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join("f.txt")).unwrap(),
+            "unreviewed\n"
+        );
+        assert!(wt.join("later.txt").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_conversation_branch_at_ref_keeps_a_branch_advanced_during_landing() {
+        let conv = "review-hook";
+        let branch = format!("pkt/{conv}");
+        let root = fixture_repo_with_worktree("review-hook", conv);
+        let wt = root.join(".pkt-worktrees").join(conv);
+        std::fs::write(wt.join("f.txt"), "reviewed\n").unwrap();
+        git_ok(&wt, &["commit", "-qam", "reviewed"]);
+        let base = root.to_string_lossy().to_string();
+        let reviewed = conversation_branch_head(&base, &branch).unwrap();
+        std::fs::write(wt.join("f.txt"), "unreviewed\n").unwrap();
+        std::fs::write(wt.join("later.txt"), "retain newer work\n").unwrap();
+        git_ok(&wt, &["add", "-A"]);
+        git_ok(&wt, &["commit", "-qm", "newer work"]);
+        let advanced = conversation_branch_head(&base, &branch).unwrap();
+        git_ok(&wt, &["reset", "--hard", &reviewed]);
+        install_landing_hook(
+            &root,
+            &format!(
+                "unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE\ngit -C '.pkt-worktrees/{conv}' reset --hard {advanced}"
+            ),
+        );
+
+        let outcome = merge_conversation_branch_at_ref(&base, &branch, true, &reviewed)
+            .expect("the immutable reviewed commit can still land");
+        assert!(!outcome.nothing_to_land);
+        assert!(!outcome.branch_deleted, "never delete the advanced ref");
+        assert!(!outcome.worktree_removed, "never remove the newer worktree");
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "reviewed\n"
+        );
+        assert!(
+            !root.join("later.txt").exists(),
+            "unreviewed content must not land"
+        );
+        assert_eq!(conversation_branch_head(&base, &branch).unwrap(), advanced);
+        assert_eq!(
+            std::fs::read_to_string(wt.join("f.txt")).unwrap(),
+            "unreviewed\n"
+        );
+        assert!(wt.join("later.txt").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_conversation_branch_at_ref_keeps_worktree_dirt_created_during_landing() {
+        let conv = "review-dirty-hook";
+        let branch = format!("pkt/{conv}");
+        let root = fixture_repo_with_worktree("review-dirty-hook", conv);
+        let wt = root.join(".pkt-worktrees").join(conv);
+        std::fs::write(wt.join("f.txt"), "reviewed\n").unwrap();
+        git_ok(&wt, &["commit", "-qam", "reviewed"]);
+        let base = root.to_string_lossy().to_string();
+        let reviewed = conversation_branch_head(&base, &branch).unwrap();
+        install_landing_hook(
+            &root,
+            &format!("printf 'unsaved\\n' > '.pkt-worktrees/{conv}/unsaved.txt'"),
+        );
+
+        let outcome = merge_conversation_branch_at_ref(&base, &branch, true, &reviewed)
+            .expect("the reviewed code lands before cleanup notices new dirt");
+        assert!(!outcome.nothing_to_land);
+        assert!(!outcome.branch_deleted);
+        assert!(!outcome.worktree_removed);
+        assert_eq!(
+            std::fs::read_to_string(root.join("f.txt")).unwrap(),
+            "reviewed\n"
+        );
+        assert_eq!(conversation_branch_head(&base, &branch).unwrap(), reviewed);
+        assert_eq!(
+            std::fs::read_to_string(wt.join("unsaved.txt")).unwrap(),
+            "unsaved\n"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -3,11 +3,7 @@ import { FileEdit } from "lucide-react";
 import { BaseToolCard } from "../tool-cards/BaseToolCard";
 import { StatusPill } from "../tool-cards/StatusPill";
 import { toolRowMeta } from "../tool-cards/toolRowMeta";
-import {
-  isEditToolName,
-  materializeEdits,
-  parseEditToolCalls,
-} from "@/lib/parseToolInput";
+import { isEditToolName, materializeEdits, parseEditToolCalls } from "@/lib/parseToolInput";
 import { countLineChanges } from "@/lib/diffUtils";
 import { useEditBaselineStore } from "@/stores/editBaselineStore";
 import { useReviewStore } from "@/stores/reviewStore";
@@ -37,16 +33,12 @@ function ToolCallCardImpl({
   // (write_file, Write/Edit/MultiEdit/NotebookEdit, apply_patch), not just
   // the legacy in-process `write_file`. `projectPath` relativizes absolute
   // Claude Code / Codex paths so disk fallbacks and baseline keys line up.
-  const edits = isEditToolName(toolCall.name)
-    ? parseEditToolCalls(toolCall, projectPath)
-    : [];
+  const edits = isEditToolName(toolCall.name) ? parseEditToolCalls(toolCall, projectPath) : [];
   const singleEdit = edits.length === 1 ? edits[0] : null;
   // Pre-edit content recorded for THIS call (per-tool-call baseline) so the
   // diff stays truthful after the edit applies. Subscribed so a baseline
   // arriving after the card mounted re-renders it.
-  const callBaseline = useEditBaselineStore((s) =>
-    s.byToolCall.get(toolCall.id),
-  );
+  const callBaseline = useEditBaselineStore((s) => s.byToolCall.get(toolCall.id));
   const baselineContent =
     callBaseline && singleEdit && callBaseline.path === singleEdit.path
       ? callBaseline.content
@@ -56,9 +48,7 @@ function ToolCallCardImpl({
   const writeFileInput = singleEdit
     ? (() => {
         const after = materializeEdits([singleEdit], baselineContent ?? null);
-        return after !== null
-          ? { path: singleEdit.path, content: after }
-          : null;
+        return after !== null ? { path: singleEdit.path, content: after } : null;
       })()
     : null;
 
@@ -66,18 +56,17 @@ function ToolCallCardImpl({
     toolCall.status === "running" ? (
       <StatusPill status="running" />
     ) : (
-      <StatusPill status={toolCall.status} variant="label" />
+      <StatusPill status={toolCall.status} interrupted={toolCall.interrupted} variant="label" />
     );
 
-  const isError = toolCall.status === "error";
+  const isError = toolCall.status === "error" && !toolCall.interrupted;
 
   // P1-8: inline transcript edits collapse to a one-line file chip
   // (DiffPaneTrigger-style +N/-M). Clicking deep-links into the canonical
   // review surface focused on this file — the full diff (with the protected
   // per-row comment composer) lives there, not in the transcript.
   if (writeFileInput) {
-    const baseName =
-      writeFileInput.path.split(/[\\/]/).pop() ?? writeFileInput.path;
+    const baseName = writeFileInput.path.split(/[\\/]/).pop() ?? writeFileInput.path;
     const counts =
       baselineContent !== undefined
         ? countLineChanges(baselineContent ?? "", writeFileInput.content)
@@ -87,34 +76,30 @@ function ToolCallCardImpl({
       <button
         type="button"
         onClick={() =>
-          useReviewStore
-            .getState()
-            .openForConversation(conversationId, writeFileInput.path)
+          useReviewStore.getState().openForConversation(conversationId, writeFileInput.path)
         }
         title={`Review ${writeFileInput.path}`}
         // Same resting fill + radius + header padding as BaseToolCard: the
         // transcript must show exactly ONE card background, so the edit chip
         // sits on bg-bg-tertiary too and only its border responds to hover.
-        className={`w-full flex items-center gap-2 px-3 py-2 border rounded-xl text-left transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left transition-colors ${
           isError
             ? "border-accent-red/40 bg-accent-red/5"
             : "border-bg-border bg-bg-tertiary hover:border-line-strong"
         }`}
       >
-        <FileEdit size={12} className="text-text-secondary shrink-0" />
+        <FileEdit size={12} className="shrink-0 text-text-secondary" />
         <span className="shrink-0 font-mono text-meta uppercase tracking-[0.05em] text-text-faint">
           Edit
         </span>
-        <span className="font-mono text-ui text-text-primary truncate">
-          {baseName}
-        </span>
+        <span className="truncate font-mono text-ui text-text-primary">{baseName}</span>
         {isNewFile && (
           <span className="shrink-0 font-mono text-meta font-semibold uppercase tracking-[0.05em] text-accent-green">
             new
           </span>
         )}
         {counts && (
-          <span className="flex items-center gap-1 font-mono text-meta shrink-0">
+          <span className="flex shrink-0 items-center gap-1 font-mono text-meta">
             <span className="text-accent-green">+{counts.added}</span>
             <span className="text-accent-red">-{counts.removed}</span>
           </span>
@@ -137,18 +122,16 @@ function ToolCallCardImpl({
 
   return (
     <BaseToolCard
-      icon={<Icon size={11} className="text-text-muted shrink-0" />}
+      icon={<Icon size={11} className="shrink-0 text-text-muted" />}
       // Eyebrow carries the raw tool id the model actually called; the title
       // carries the humanized verb + target. Suppressed for the toolRowMeta
       // fallback, where verb IS the tool name and the two would duplicate.
       kind={meta.verb === toolCall.name ? undefined : toolCall.name}
       title={
-        <span className="flex items-center gap-1.5 min-w-0">
-          <span className="text-text-primary shrink-0">{meta.verb}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 text-text-primary">{meta.verb}</span>
           {meta.target && (
-            <span className="font-mono text-text-muted truncate min-w-0">
-              {meta.target}
-            </span>
+            <span className="min-w-0 truncate font-mono text-text-muted">{meta.target}</span>
           )}
         </span>
       }
@@ -164,11 +147,11 @@ function ToolCallCardImpl({
       {/* `selectable` is load-bearing: `body { user-select: none }` is global
           (src/index.css), so without it tool output cannot be copied at all.
           Full-bleed with a divider now that the card clips its own corners. */}
-      <pre className="selectable text-ui font-mono whitespace-pre-wrap border-t border-bg-border bg-bg-primary px-3 py-2.5 text-text-primary overflow-auto max-h-[320px]">
+      <pre className="selectable max-h-[320px] overflow-auto whitespace-pre-wrap border-t border-bg-border bg-bg-primary px-3 py-2.5 font-mono text-ui text-text-primary">
         {body}
       </pre>
       {verbosity === "verbose" && toolCall.input && (
-        <pre className="selectable text-meta font-mono whitespace-pre-wrap border-t border-line-soft bg-bg-secondary px-3 py-2 max-h-48 overflow-auto text-text-muted">
+        <pre className="selectable max-h-48 overflow-auto whitespace-pre-wrap border-t border-line-soft bg-bg-secondary px-3 py-2 font-mono text-meta text-text-muted">
           input: {toolCall.input}
         </pre>
       )}

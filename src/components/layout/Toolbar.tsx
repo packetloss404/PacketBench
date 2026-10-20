@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, lazy, Suspense } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   FolderOpen,
   Wrench,
@@ -17,7 +17,7 @@ import { RunningAgentsChip } from "./RunningAgentsChip";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useAppStore, isModuleView, moduleViewId } from "@/stores/appStore";
 import { useModuleStore } from "@/stores/moduleStore";
-import { useFlightStore } from "@/stores/flightStore";
+import { flightContextFromWorkspace } from "@/lib/flightLaunchContext";
 import { getModulesSorted } from "@/modules/registry";
 import { ROUTE_REGISTRY, resolveModuleAlias } from "@/lib/routeRegistry";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -28,14 +28,6 @@ import { getPreferredWorkspaceCli } from "@/lib/workspaceCliDefaults";
 import { openWorkspaceCreationModal } from "@/lib/workspaceCreation";
 import { TERMINAL_AGENTS } from "@/lib/agent-catalog";
 import { isLocalWorkspace } from "@/types/workspace";
-
-// Lazy-loaded so the markdown vendor chunk leaves the entry chunk; only
-// fetched when the New Flight modal opens.
-const LaunchAsyncFlightModal = lazy(() =>
-  import("@/components/flights/LaunchAsyncFlightModal").then((m) => ({
-    default: m.LaunchAsyncFlightModal,
-  })),
-);
 
 /**
  * Human label for the CLI this picker will actually seed, e.g. "a PacketCode".
@@ -60,7 +52,7 @@ export function Toolbar() {
   const projectPath = useLayoutStore((s) => s.projectPath);
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
-  const [showNewFlight, setShowNewFlight] = useState(false);
+  const openFlightBrief = useAppStore((state) => state.openFlightBrief);
   const [showNewIssue, setShowNewIssue] = useState(false);
   // v0.8.8: when no workspace is active, picking a folder pops a small
   // disambiguation dialog (create-new vs. set-default-only). Holds the
@@ -82,7 +74,6 @@ export function Toolbar() {
   const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
 
   const enabledModules = getModulesSorted().filter((mod) => moduleStates[mod.id]?.enabled ?? false);
-  const setActiveFlight = useFlightStore((s) => s.setActiveFlight);
 
   // Close tools menu when clicking outside
   useEffect(() => {
@@ -202,7 +193,9 @@ export function Toolbar() {
                 icon={<Target size={12} className="text-accent-green" />}
                 label="New Flight"
                 onClick={() => {
-                  setShowNewFlight(true);
+                  openFlightBrief(
+                    activeWorkspace ? flightContextFromWorkspace(activeWorkspace) : { projectPath },
+                  );
                   setShowNewMenu(false);
                 }}
               />
@@ -295,16 +288,18 @@ export function Toolbar() {
 
         {/* Open project folder */}
         {(() => {
-          const activeProjectPath = activeWorkspace && !isLocalWorkspace(activeWorkspace)
-            ? (activeWorkspace.remoteProjectPath ?? activeWorkspace.projectPath)
-            : projectPath;
-          const folderTooltip = activeWorkspace && !isLocalWorkspace(activeWorkspace)
-            ? `Remote project: ${activeProjectPath || "(unset)"} (${activeWorkspace.name}) — change it in Workspace settings`
-            : activeWorkspace
-              ? `Project: ${activeProjectPath || "(unset)"} (${activeWorkspace.name}) — click to change`
-              : projectPath
-                ? `Default folder: ${projectPath} — no workspace open. Click to change or create one.`
-                : "No workspace open — click to create one";
+          const activeProjectPath =
+            activeWorkspace && !isLocalWorkspace(activeWorkspace)
+              ? (activeWorkspace.remoteProjectPath ?? activeWorkspace.projectPath)
+              : projectPath;
+          const folderTooltip =
+            activeWorkspace && !isLocalWorkspace(activeWorkspace)
+              ? `Remote project: ${activeProjectPath || "(unset)"} (${activeWorkspace.name}) — change it in Workspace settings`
+              : activeWorkspace
+                ? `Project: ${activeProjectPath || "(unset)"} (${activeWorkspace.name}) — click to change`
+                : projectPath
+                  ? `Default folder: ${projectPath} — no workspace open. Click to change or create one.`
+                  : "No workspace open — click to create one";
           return (
             <button
               onClick={handleOpenFolder}
@@ -320,17 +315,6 @@ export function Toolbar() {
       </div>
 
       {/* Modals */}
-      {showNewFlight && (
-        <Suspense fallback={null}>
-          <LaunchAsyncFlightModal
-            onClose={() => setShowNewFlight(false)}
-            onLaunched={(id) => {
-              setActiveFlight(id);
-              setActiveView("flights");
-            }}
-          />
-        </Suspense>
-      )}
       {showNewIssue && <NewIssueForm defaultStatus="todo" onClose={() => setShowNewIssue(false)} />}
       {pendingPickedPath && (
         <FolderPickerFollowUp
@@ -387,7 +371,7 @@ function FolderPickerFollowUp({
           <button
             type="button"
             onClick={onCreateWorkspace}
-            className="hover:border-accent-green/40 hover:bg-accent-green/5 flex items-start gap-3 rounded border border-bg-border bg-bg-primary px-3 py-3 text-left transition-colors"
+            className="flex items-start gap-3 rounded border border-bg-border bg-bg-primary px-3 py-3 text-left transition-colors hover:border-accent-green/40 hover:bg-accent-green/5"
           >
             <LayoutGrid size={14} className="mt-0.5 flex-shrink-0 text-accent-green" />
             <span className="flex flex-col">
@@ -402,7 +386,7 @@ function FolderPickerFollowUp({
           <button
             type="button"
             onClick={onSetDefault}
-            className="hover:border-accent-amber/40 hover:bg-accent-amber/5 flex items-start gap-3 rounded border border-bg-border bg-bg-primary px-3 py-3 text-left transition-colors"
+            className="flex items-start gap-3 rounded border border-bg-border bg-bg-primary px-3 py-3 text-left transition-colors hover:border-accent-amber/40 hover:bg-accent-amber/5"
           >
             <Bookmark size={14} className="mt-0.5 flex-shrink-0 text-accent-amber" />
             <span className="flex flex-col">

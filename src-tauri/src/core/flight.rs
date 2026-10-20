@@ -396,6 +396,23 @@ pub struct ReviewGatePolicy {
     pub acceptance_criteria: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewGateEvidence {
+    pub fingerprint: String,
+    pub context_fingerprint: String,
+    #[serde(default)]
+    pub context_json: String,
+    pub base_sha: String,
+    pub head_sha: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewerSession {
+    pub session_id: String,
+    pub provider: String,
+    pub model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttemptReviewGate {
     pub status: ReviewGateStatus,
@@ -405,6 +422,10 @@ pub struct AttemptReviewGate {
     pub reviewer_agent_config_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewer_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<ReviewGateEvidence>,
+    #[serde(default)]
+    pub reviewer_sessions: Vec<ReviewerSession>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<ReviewGateReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -575,6 +596,8 @@ pub struct AutonomyRuntime {
     pub hard_stop_reason: Option<String>,
     #[serde(default)]
     pub action_history: Vec<AutonomyActionRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_retry_counts: Option<std::collections::HashMap<String, u32>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -672,6 +695,9 @@ pub struct Attempt {
     pub base_branch: String,
     pub session_id: String,
     pub status: AttemptStatus,
+    /// Immutable ownership of prior builder sessions after explicit recovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_history: Option<Vec<ReviewerSession>>,
     #[serde(default)]
     pub started_at: Option<u64>,
     #[serde(default)]
@@ -692,6 +718,10 @@ pub struct Attempt {
     /// attempts and Flights with the Reviewer Gate disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_gate: Option<AttemptReviewGate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<AttemptRecovery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<FlightDelivery>,
     /// Cooperative graph task that owns this attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
@@ -704,6 +734,51 @@ pub struct Attempt {
     /// itself stays in whatever terminal state it earned naturally).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_pr_number: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryState {
+    Retained,
+    Discarded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttemptRecovery {
+    pub state: RecoveryState,
+    pub reason: String,
+    pub retained_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryKind {
+    Landed,
+    PullRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightDelivery {
+    pub kind: DeliveryKind,
+    pub delivered_at: u64,
+    pub branch: String,
+    pub base_branch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlightExecutionTarget {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    pub base_path: String,
 }
 
 // === Flight ===
@@ -724,6 +799,12 @@ pub struct Flight {
     pub created_at: u64,
     pub updated_at: u64,
     pub completed_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<FlightDelivery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_at: Option<u64>,
     pub total_cost: f64,
     pub total_tokens: u64,
     #[serde(default)]
@@ -737,6 +818,8 @@ pub struct Flight {
     /// independent-attempt mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_mode: Option<FlightExecutionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_target: Option<FlightExecutionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration_branch: Option<FlightIntegrationBranch>,
     #[serde(default)]
@@ -932,11 +1015,15 @@ mod tests {
             attempts: Vec::new(),
             review_gate_policy: None,
             execution_mode: None,
+            execution_target: None,
             integration_branch: None,
             coordination_inbox: Vec::new(),
             autonomy_mode: None,
             autonomy_policy: None,
             autonomy_runtime: None,
+            delivery: None,
+            archived_at: None,
+            stopped_at: None,
             planning_conversation_id: None,
             planner_session_id: None,
             planner_status: None,

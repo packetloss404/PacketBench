@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, GitMerge, Network, Play, RotateCcw, X } from "lucide-react";
-import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
+import { DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
+import { FlightAgentPicker } from "./FlightAgentPicker";
 import {
   selectCooperativeTaskViews,
   validateCooperativeAssignments,
@@ -28,12 +29,24 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
   const landCooperativeFlight = useAsyncFlightStore((state) => state.landCooperativeFlight);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [confirmLanding, setConfirmLanding] = useState(false);
+  const [agentReadiness, setAgentReadiness] = useState<
+    Record<string, { agent: string; model?: string; error: string | null }>
+  >({});
   const views = useMemo(() => selectCooperativeTaskViews(flight), [flight]);
   const issues = useMemo(
     () => [...validateCooperativeGraph(flight), ...validateCooperativeAssignments(flight)],
     [flight],
   );
   const ready = views.filter((view) => view.state === "ready");
+  const readyAgentsBlocked = ready.some(({ task }) => {
+    const value = agentReadiness[task.id];
+    return (
+      !value ||
+      value.agent !== task.agentConfigId ||
+      value.model !== task.model ||
+      value.error !== null
+    );
+  });
   const allIntegrated = views.length > 0 && views.every((view) => view.state === "integrated");
 
   if (flight.milestones.length === 0) return null;
@@ -176,10 +189,10 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
           ))}
         <button
           type="button"
-          disabled={issues.length > 0 || ready.length === 0}
+          disabled={issues.length > 0 || ready.length === 0 || readyAgentsBlocked}
           onClick={() =>
             void run(
-              () => launchReadyTasks(flight.id),
+              () => launchReadyTasks(flight.id, undefined, { explicitResume: true }),
               `Launched ${ready.length} ready task${ready.length === 1 ? "" : "s"}.`,
             )
           }
@@ -203,13 +216,10 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
 
       <div className="divide-y divide-bg-border">
         {views.map(({ task, state, blockedBy }) => {
-          const provider = API_PROVIDERS.find(
-            (candidate) => candidate.agentCli === task.agentConfigId,
-          );
           return (
             <div
               key={task.id}
-              className="grid grid-cols-[minmax(160px,1.3fr)_130px_minmax(130px,1fr)_minmax(150px,1fr)] items-center gap-2 px-3 py-2 text-[10px]"
+              className="grid grid-cols-1 items-start gap-3 px-3 py-3 text-[11px] xl:grid-cols-[minmax(160px,1fr)_minmax(260px,1.5fr)_minmax(150px,1fr)]"
             >
               <div className="min-w-0">
                 <div className="truncate font-medium text-text-primary">{task.title}</div>
@@ -220,40 +230,31 @@ export function CooperativeFlightCard({ flight }: { flight: Flight }) {
                     : ""}
                 </div>
               </div>
-              <select
-                aria-label={`Agent for ${task.title}`}
-                value={task.agentConfigId}
-                disabled={state !== "ready" && state !== "blocked"}
-                onChange={(event) => {
-                  const agent = event.target.value as AgentCli;
-                  patchTask(task.id, {
-                    agentConfigId: agent,
-                    model: getDefaultModel(agent),
-                  });
-                }}
-                className="rounded border border-bg-border bg-bg-primary px-1.5 py-1 text-text-secondary outline-none"
-              >
-                <option value="unassigned">Unassigned</option>
-                {API_PROVIDERS.map((candidate) => (
-                  <option key={candidate.agentCli} value={candidate.agentCli}>
-                    {candidate.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label={`Model for ${task.title}`}
-                value={task.model ?? ""}
-                disabled={state !== "ready" && state !== "blocked"}
-                onChange={(event) => patchTask(task.id, { model: event.target.value })}
-                className="rounded border border-bg-border bg-bg-primary px-1.5 py-1 text-text-secondary outline-none"
-              >
-                <option value="">Choose model</option>
-                {provider?.models.map((model) => (
-                  <option key={model.value} value={model.value}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
+              {state === "ready" || state === "blocked" ? (
+                <FlightAgentPicker
+                  label={`Agent for ${task.title}`}
+                  agent={task.agentConfigId as AgentCli}
+                  model={task.model ?? ""}
+                  autoSelectAgent={task.agentConfigId === DEFAULT_API_AGENT}
+                  onChange={(agent, model) => patchTask(task.id, { agentConfigId: agent, model })}
+                  onReadinessChange={(error) =>
+                    setAgentReadiness((previous) =>
+                      previous[task.id]?.agent === task.agentConfigId &&
+                      previous[task.id]?.model === task.model &&
+                      previous[task.id]?.error === error
+                        ? previous
+                        : {
+                            ...previous,
+                            [task.id]: { agent: task.agentConfigId, model: task.model, error },
+                          },
+                    )
+                  }
+                />
+              ) : (
+                <div className="text-text-muted">
+                  {task.agentConfigId} · {task.model}
+                </div>
+              )}
               <input
                 aria-label={`Owned paths for ${task.title}`}
                 value={(task.ownedPaths ?? []).join(", ")}

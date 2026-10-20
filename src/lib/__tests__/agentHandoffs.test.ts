@@ -56,6 +56,7 @@ import {
   openConversationGitEnding,
   openConversationProjectInWorkspace,
   openFlightAttemptInWorkspace,
+  inspectFlightAttemptInWorkspace,
 } from "@/lib/agentHandoffs";
 import { useAgentStore } from "@/stores/agentStore";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
@@ -66,6 +67,7 @@ import { useLayoutStore } from "@/stores/layoutStore";
 import { useServerStore } from "@/stores/serverStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import type { AgentConversation } from "@/types/agent-conversation";
+import type { Attempt } from "@/types/flight";
 import { useWorkspaceAgentsDogfoodStore } from "@/stores/workspaceAgentsDogfoodStore";
 
 function conversation(overrides: Partial<AgentConversation> = {}): AgentConversation {
@@ -86,6 +88,43 @@ function conversation(overrides: Partial<AgentConversation> = {}): AgentConversa
     enabledMcpServerIds: ["trusted-local"],
     ...overrides,
   };
+}
+
+function restoredAttempt(patch: Partial<Attempt> = {}): { flightId: string; attempt: Attempt } {
+  const flight = useFlightStore
+    .getState()
+    .addFlight({
+      title: "Restored result",
+      objective: "Inspect work after restart",
+      priority: "medium",
+      projectPath: "D:\\projects\\example",
+    });
+  const attempt: Attempt = {
+    id: "restored-attempt",
+    flightId: flight.id,
+    target: {
+      kind: "local",
+      basePath: "D:\\projects\\example",
+      worktreePath: "D:\\projects\\example\\.worktrees\\restored-attempt",
+    },
+    agentConfigId: "api-sugar",
+    model: "model",
+    provider: "sugar",
+    branch: "pkt/restored-attempt",
+    baseBranch: "main",
+    sessionId: "lost-session",
+    status: "cancelled",
+    cost: 0,
+    tokens: 0,
+    recovery: { state: "retained", retainedAt: 123, reason: "Desktop restarted" },
+    ...patch,
+  };
+  useFlightStore.setState({
+    flights: [{ ...flight, attempts: [attempt] }],
+    activeFlightId: flight.id,
+  });
+  useAgentTaskStore.setState({ conversations: [], selectedConversationId: null });
+  return { flightId: flight.id, attempt };
 }
 
 describe("WA3 agent handoffs", () => {
@@ -319,5 +358,109 @@ describe("WA3 agent handoffs", () => {
     ).toEqual(["conv-1"]);
     expect(useFlightStore.getState().activeFlightId).toBe(flight.id);
     expect(useAppStore.getState().activeView).toBe("flights");
+  });
+
+  describe("Flight inspection after restart", () => {
+    it("opens the exact local retained worktree without a surviving conversation and reuses it on a second inspection", () => {
+      const { flightId, attempt } = restoredAttempt();
+      const first = inspectFlightAttemptInWorkspace(flightId, attempt.id);
+      expect(first).toMatchObject({ ok: true, created: true });
+      const workspace = useWorkspaceStore.getState().workspaces[0];
+      expect(workspace).toMatchObject({
+        projectPath: attempt.target.worktreePath,
+        agents: ["terminal"],
+      });
+      expect(workspace.serverId).toBeUndefined();
+      expect(workspace.panes.every((pane) => !pane.conversationId)).toBe(true);
+      expect(useAgentTaskStore.getState().conversations).toEqual([]);
+      expect(useAppStore.getState().activeView).toBe("workspace");
+      expect(inspectFlightAttemptInWorkspace(flightId, attempt.id)).toMatchObject({
+        ok: true,
+        created: false,
+        workspaceId: workspace.id,
+      });
+      expect(useWorkspaceStore.getState().workspaces).toHaveLength(1);
+    });
+
+    it("opens a cleaned accepted result's base repository rather than its removed worktree", () => {
+      const { flightId, attempt } = restoredAttempt({ status: "completed", recovery: undefined });
+      expect(inspectFlightAttemptInWorkspace(flightId, attempt.id)).toMatchObject({ ok: true });
+      expect(useWorkspaceStore.getState().workspaces[0].projectPath).toBe(attempt.target.basePath);
+      expect(useWorkspaceStore.getState().workspaces[0].projectPath).not.toBe(
+        attempt.target.worktreePath,
+      );
+      expect(useAgentTaskStore.getState().conversations).toHaveLength(0);
+    });
+
+    it("opens the exact pinned SSH worktree without using the server's different default path or a local fallback", () => {
+      useServerStore.setState({
+        servers: [
+          {
+            id: "restored-host",
+            name: "Build host",
+            host: "example.com",
+            port: 22,
+            username: "builder",
+            authMethod: "agent",
+            hostFingerprint: "SHA256:fixture",
+            remotePath: "/srv/default-project",
+            installedAgents: ["packetcode"],
+          },
+        ],
+      });
+      const { flightId, attempt } = restoredAttempt({
+        target: {
+          kind: "ssh",
+          serverId: "restored-host",
+          basePath: "/srv/project",
+          worktreePath: "/srv/project/.worktrees/restored-attempt",
+        },
+      });
+      expect(inspectFlightAttemptInWorkspace(flightId, attempt.id)).toMatchObject({
+        ok: true,
+        created: true,
+      });
+      const workspace = useWorkspaceStore.getState().workspaces[0];
+      expect(workspace).toMatchObject({
+        serverId: "restored-host",
+        projectPath: attempt.target.worktreePath,
+        remoteProjectPath: attempt.target.worktreePath,
+        agents: ["terminal"],
+      });
+      expect(workspace.projectPath).not.toBe("/srv/default-project");
+      expect(useAgentTaskStore.getState().conversations).toHaveLength(0);
+    });
+
+    it("refuses a missing SSH host without changing view or creating any local Workspace", () => {
+      const { flightId, attempt } = restoredAttempt({
+        target: {
+          kind: "ssh",
+          serverId: "missing-host",
+          basePath: "/srv/project",
+          worktreePath: "/srv/project/.worktrees/restored-attempt",
+        },
+      });
+      const before = useAppStore.getState().activeView;
+      expect(inspectFlightAttemptInWorkspace(flightId, attempt.id)).toMatchObject({
+        ok: false,
+        code: "unsupported_target",
+        message: expect.stringMatching(/saved SSH host/i),
+      });
+      expect(useWorkspaceStore.getState().workspaces).toEqual([]);
+      expect(useAppStore.getState().activeView).toBe(before);
+      expect(
+        useWorkspaceAgentsDogfoodStore.getState().evidence.counters.flight_attempt_opened_workspace,
+      ).toBe(0);
+    });
+
+    it("returns a typed stale-attempt failure without requiring or creating a conversation", () => {
+      const { flightId } = restoredAttempt();
+      expect(inspectFlightAttemptInWorkspace(flightId, "missing-attempt")).toMatchObject({
+        ok: false,
+        code: "flight_not_found",
+      });
+      expect(useWorkspaceStore.getState().workspaces).toHaveLength(0);
+      expect(useAgentTaskStore.getState().conversations).toHaveLength(0);
+    });
   });
 });

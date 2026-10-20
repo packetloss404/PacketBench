@@ -35,8 +35,7 @@ vi.mock("@/lib/notifications", () => ({
 
 vi.mock("@/stores/memoryStore", () => ({
   useMemoryStore: {
-    getState: vi.fn(() => ({
-    })),
+    getState: vi.fn(() => ({})),
   },
 }));
 
@@ -218,6 +217,101 @@ describe("apiAgentListeners chunk coalescing", () => {
     unsubscribe();
   });
 
+  it("settles only unfinished tools on cancellation and leaves the next turn running", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const { installApiAgentListeners } = await import("@/stores/apiAgentListeners");
+    const conversation = makeStreamingConversation("conv-interrupted");
+    const assistant = conversation.messages[conversation.messages.length - 1];
+    assistant.toolCalls = [
+      {
+        id: "pending",
+        name: "bash",
+        status: "running",
+        input: '{"command":"node scripts/checkpoint.mjs"}',
+      },
+      { id: "completed", name: "bash", status: "done", exitCode: 0 },
+      { id: "failed", name: "bash", status: "error", exitCode: 2 },
+    ];
+    useAgentTaskStore.setState({ conversations: [conversation] });
+    await installApiAgentListeners(conversation.id);
+    listeners.get(`api-agent:done:${conversation.id}`)?.({
+      payload: { cancelled: true, input_tokens: 1, output_tokens: 1 },
+    });
+    const settled = useAgentTaskStore.getState().conversations[0].messages[1];
+    expect(settled.toolCalls).toEqual([
+      expect.objectContaining({ id: "pending", status: "error", interrupted: true }),
+      assistant.toolCalls[1],
+      assistant.toolCalls[2],
+    ]);
+    expect(settled.turnOutcome).toBe("cancelled");
+    useAgentTaskStore.setState((state) => ({
+      conversations: state.conversations.map((item) => ({
+        ...item,
+        status: "active",
+        messages: [
+          ...item.messages,
+          makeMessage({ id: "next", role: "assistant", content: "", isStreaming: true }),
+        ],
+      })),
+    }));
+    listeners.get(`api-agent:tool-start:${conversation.id}`)?.({
+      payload: { id: "future", name: "bash" },
+    });
+    const next = useAgentTaskStore.getState().conversations[0].messages[2];
+    expect(next.toolCalls?.[0]).toMatchObject({ id: "future", status: "running" });
+    expect(next.toolCalls?.[0].interrupted).toBeUndefined();
+    listeners.get(`api-agent:tool-result:${conversation.id}`)?.({
+      payload: { id: "pending", name: "bash", content: "late real result", is_error: false },
+    });
+    expect(useAgentTaskStore.getState().conversations[0].messages[1].toolCalls?.[0]).toMatchObject({
+      status: "done",
+      interrupted: undefined,
+    });
+  });
+
+  it("captures a prepared Flight builder's first risky-tool permission before provider startup returns", async () => {
+    const { useAgentTaskStore, releaseApiConversationListeners } =
+      await import("@/stores/agentTaskStore");
+    const { useAgentApprovalStore } = await import("@/stores/agentApprovalStore");
+    const { useFlightStore } = await import("@/stores/flightStore");
+    useFlightStore.setState({ flights: [] });
+    startApiAgentSessionMock.mockImplementationOnce(async (id: string, ...args: unknown[]) => {
+      expect(id).toBe("prepared-first-permission");
+      expect(args[13]).toBe("ask_for_risky");
+      expect(
+        useAgentTaskStore.getState().conversations.some((conversation) => conversation.id === id),
+      ).toBe(true);
+      const permission = listeners.get(`api-agent:permission-request:${id}`);
+      expect(permission).toBeTypeOf("function");
+      permission?.({
+        payload: {
+          id: "first-risky-tool",
+          name: "bash",
+          arguments: '{"command":"echo checkpoint"}',
+        },
+      });
+    });
+    const id = await useAgentTaskStore.getState().createApiConversation({
+      explicitId: "prepared-first-permission",
+      agent: "api-openai",
+      model: "fixture-model",
+      projectPath: "D:/fixture/retained",
+      initialMessage: "Create the checkpoint",
+      memoryContextEnabled: false,
+      skipBackendStart: false,
+      permissionMode: "ask_for_risky",
+    });
+    expect(startApiAgentSessionMock).toHaveBeenCalledOnce();
+    expect(
+      useAgentApprovalStore
+        .getState()
+        .permissions.get(id)
+        ?.map((permission) => permission.id),
+    ).toEqual(["first-risky-tool"]);
+    expect(respondPermissionTauriMock).not.toHaveBeenCalled();
+    releaseApiConversationListeners(id);
+  });
+
   it("flushes buffered tail chunks before `done` settles the message (no lost chunks)", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { installApiAgentListeners } = await import("@/stores/apiAgentListeners");
@@ -335,21 +429,35 @@ describe("apiAgentListeners queued message drain", () => {
       const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
       const { installApiAgentListeners } = await import("@/stores/apiAgentListeners");
       const { storageKey } = await import("@/lib/brand");
-      localStorage.setItem(storageKey("cost-guardrails"), JSON.stringify({ sessionLimitUsd: 0.01 }));
-      invokeMock.mockResolvedValue(JSON.stringify({ modelUsage: [], dailyCosts: [], totalCostUsd: 1, sessionCostsById: { "queued-cap": 1 } }));
+      localStorage.setItem(
+        storageKey("cost-guardrails"),
+        JSON.stringify({ sessionLimitUsd: 0.01 }),
+      );
+      invokeMock.mockResolvedValue(
+        JSON.stringify({
+          modelUsage: [],
+          dailyCosts: [],
+          totalCostUsd: 1,
+          sessionCostsById: { "queued-cap": 1 },
+        }),
+      );
       const conv = makeActiveConversation("queued-cap");
       conv.messages.push(makeMessage({ id: "queued", content: "preserve me", queued: true }));
       conv.queuedMessages = ["preserve me"];
       useAgentTaskStore.setState({ conversations: [conv] });
       await installApiAgentListeners(conv.id);
-      listeners.get(`api-agent:done:${conv.id}`)?.({ payload: { input_tokens: 1, output_tokens: 1 } });
+      listeners.get(`api-agent:done:${conv.id}`)?.({
+        payload: { input_tokens: 1, output_tokens: 1 },
+      });
       await vi.runAllTimersAsync();
       expect(sendApiAgentMessageMock).not.toHaveBeenCalled();
       const updated = useAgentTaskStore.getState().conversations[0];
       expect(updated.status).toBe("failed");
       expect(updated.messages.some((message) => message.content === "preserve me")).toBe(true);
       expect(updated.messages.some((message) => message.isStreaming)).toBe(false);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("promotes the drained queued bubble in place before the remaining queued messages", async () => {
@@ -544,7 +652,9 @@ describe("Stop with a queued message does not re-send it (G33)", () => {
     const acknowledged = useAgentTaskStore.getState();
     expect(acknowledged.cancellingConversationIds.has("conv-stopping")).toBe(false);
     expect(acknowledged.conversations[0]?.status).toBe("idle");
-    expect(acknowledged.conversations[0]?.messages.some((message) => message.isStreaming)).toBe(false);
+    expect(acknowledged.conversations[0]?.messages.some((message) => message.isStreaming)).toBe(
+      false,
+    );
   });
 
   it("keeps the conversation active when the backend rejects Stop", async () => {
@@ -966,6 +1076,33 @@ describe("apiAgentListeners baseline recording", () => {
     const tc = conv?.messages.flatMap((m) => m.toolCalls ?? []).find((t) => t.id === "tc-1");
     expect(tc?.input).toBe(resultInput);
   });
+
+  it("fills a pending native Bash card's command by identity before any tool result", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const { installApiAgentListeners } = await import("@/stores/apiAgentListeners");
+    const { useAgentApprovalStore } = await import("@/stores/agentApprovalStore");
+    useAgentTaskStore.setState({ conversations: [makeApiConversation("conv-command")] });
+    await installApiAgentListeners("conv-command");
+    const start = listeners.get("api-agent:tool-start:conv-command");
+    const permission = listeners.get("api-agent:permission-request:conv-command");
+    const original = JSON.stringify({ command: "git status" });
+    start?.({ payload: { id: "pending", name: "bash" } });
+    start?.({ payload: { id: "already-populated", name: "bash", input: original } });
+    start?.({ payload: { id: "other-kind", name: "read_file" } });
+    const input = JSON.stringify({ command: "git diff --check", cwd: "/proj" });
+    permission?.({ payload: { id: "pending", name: "bash", arguments: input } });
+    permission?.({ payload: { id: "already-populated", name: "bash", arguments: input } });
+    permission?.({ payload: { id: "other-kind", name: "bash", arguments: input } });
+    const tools = useAgentTaskStore
+      .getState()
+      .conversations[0].messages.flatMap((message) => message.toolCalls ?? []);
+    expect(tools.find((tool) => tool.id === "pending")).toMatchObject({ status: "running", input });
+    expect(tools.find((tool) => tool.id === "already-populated")?.input).toBe(original);
+    expect(tools.find((tool) => tool.id === "other-kind")?.input).toBeUndefined();
+    expect(useAgentApprovalStore.getState().permissions.get("conv-command")).toContainEqual(
+      expect.objectContaining({ id: "pending", arguments: input }),
+    );
+  });
 });
 
 describe("apiAgentListeners tiered approval gating (P1-9)", () => {
@@ -1087,12 +1224,7 @@ describe("apiAgentListeners tiered approval gating (P1-9)", () => {
     });
 
     expect(respondPermissionTauriMock).not.toHaveBeenCalled();
-    expect(
-      useAgentApprovalStore
-        .getState()
-        .permissions.get("conv-tainted")
-        ?.[0],
-    ).toMatchObject({
+    expect(useAgentApprovalStore.getState().permissions.get("conv-tainted")?.[0]).toMatchObject({
       id: "tool-write",
       effectivePolicy: "yolo + evidence boundary",
       sourceChain: [

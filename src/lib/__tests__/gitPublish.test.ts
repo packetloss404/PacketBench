@@ -103,6 +103,26 @@ describe("gitPublish.publishBranchAsPr", () => {
     const result = await publishBranchAsPr(baseInput);
     expect(result).toEqual({ ok: true, prNumber: null });
   });
+
+  it.each([
+    { number: 42, html_url: "https://github.com/acme/widget/pull/42" },
+    { number: 42, web_url: "https://forge.example/acme/widget/-/merge_requests/42" },
+  ])("records the Git host's actual PR URL", async (response) => {
+    mocks.githubCreatePr.mockResolvedValue(JSON.stringify(response));
+    const result = await publishBranchAsPr(baseInput);
+    expect(result).toEqual({
+      ok: true,
+      prNumber: 42,
+      prUrl: response.html_url || response.web_url,
+    });
+  });
+
+  it("ignores an unsafe optional link without turning a created PR into a failure", async () => {
+    mocks.githubCreatePr.mockResolvedValue(
+      JSON.stringify({ number: 42, html_url: "javascript:alert(1)" }),
+    );
+    expect(await publishBranchAsPr(baseInput)).toEqual({ ok: true, prNumber: 42 });
+  });
 });
 
 describe("worktree PR authority", () => {
@@ -149,5 +169,44 @@ describe("worktree PR authority", () => {
       { id: "two", kind: "gitea", baseUrl: "https://forge.example" },
     ]);
     await expect(resolveWorktreePrTarget(baseInput.worktreePath)).rejects.toThrow(/exactly one/);
+  });
+
+  it("reads the configured SSH worktree origin without inspecting the same path locally", async () => {
+    mocks.gitGetOriginUrl.mockResolvedValue("https://github.com/wrong/local-repo.git");
+    const readOrigin = vi.fn().mockResolvedValue("ssh://git@forge.example:2222/team/actual.git\n");
+    mocks.gitHostListConnections.mockResolvedValue([
+      { id: "cloud", kind: "github", baseUrl: "https://api.github.com" },
+      { id: "forge", kind: "gitea", baseUrl: "https://forge.example" },
+    ]);
+    expect(await resolveWorktreePrTarget("/srv/repo", { readOrigin })).toEqual({
+      owner: "team",
+      repo: "actual",
+      connectionId: "forge",
+    });
+    expect(readOrigin).toHaveBeenCalledOnce();
+    expect(mocks.gitGetOriginUrl).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to local origin after SSH lookup failure", async () => {
+    mocks.gitGetOriginUrl.mockResolvedValue("https://github.com/wrong/local-repo.git");
+    const readOrigin = vi.fn().mockRejectedValue(new Error("SSH host unavailable"));
+    await expect(resolveWorktreePrTarget("/srv/repo", { readOrigin })).rejects.toThrow(
+      "SSH host unavailable",
+    );
+    expect(mocks.gitGetOriginUrl).not.toHaveBeenCalled();
+    expect(mocks.gitPushBranch).not.toHaveBeenCalled();
+    expect(mocks.githubCreatePr).not.toHaveBeenCalled();
+  });
+
+  it("preserves nested GitLab namespaces when resolving the actual destination", async () => {
+    mocks.gitGetOriginUrl.mockResolvedValue("https://gitlab.example/team/platform/project.git");
+    mocks.gitHostListConnections.mockResolvedValue([
+      { id: "lab", kind: "gitlab", baseUrl: "https://gitlab.example" },
+    ]);
+    expect(await resolveWorktreePrTarget(baseInput.worktreePath)).toEqual({
+      owner: "team/platform",
+      repo: "project",
+      connectionId: "lab",
+    });
   });
 });

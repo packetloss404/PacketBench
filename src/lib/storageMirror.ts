@@ -48,9 +48,9 @@
  *
  * ## Invariants
  *
- * - **`localStorage` always wins.** Restore fills *gaps* only; a key present
- *   in the live store is never overwritten from the mirror. The mirror is a
- *   derived copy, never an authority.
+ * - **`localStorage` wins settings.** Restore fills gaps only, except that
+ *   valid project-history arrays merge by exact path and newest timestamp.
+ *   A warm origin must not erase history recorded under another origin.
  * - **Snapshot, not deltas.** Each flush sends the complete `packetbench:*`
  *   keyspace, so deletions propagate and the mirror cannot accumulate keys the
  *   app has stopped using.
@@ -103,7 +103,7 @@ export const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 export interface StorageMirrorBootResult {
   /** Whether the write-through mirror is now running. */
   active: boolean;
-  /** How many keys were copied back into an empty/partial `localStorage`. */
+  /** How many keys were restored or had project history merged at boot. */
   restored: number;
   /** Why the mirror is inactive, when it is. */
   reason: "no-tauri" | "no-storage" | "load-failed" | "intercept-failed" | null;
@@ -186,12 +186,58 @@ export function snapshotMirroredKeys(): Record<string, string> {
   return snapshot;
 }
 
+interface MirroredProjectHistoryEntry {
+  path: string;
+  lastOpened: number;
+}
+
+function parseProjectHistory(raw: string): MirroredProjectHistoryEntry[] | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.every((entry: unknown) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+        const item = entry as Record<string, unknown>;
+        return (
+          typeof item.path === "string" &&
+          item.path.length > 0 &&
+          typeof item.lastOpened === "number" &&
+          Number.isFinite(item.lastOpened) &&
+          item.lastOpened >= 0
+        );
+      })
+    )
+      return null;
+    return parsed as MirroredProjectHistoryEntry[];
+  } catch {
+    return null;
+  }
+}
+
+/** The history store has no retention cap; preserve every exact path here too. */
+function mergeProjectHistory(current: string, mirrored: string): string | null {
+  const live = parseProjectHistory(current);
+  const durable = parseProjectHistory(mirrored);
+  // Keep a valid local copy when the mirror is malformed. If only the
+  // mirror is valid, recover it instead of letting a corrupt warm key erase it.
+  if (!durable) return null;
+  const byPath = new Map<string, MirroredProjectHistoryEntry>();
+  for (const entry of [...(live ?? []), ...durable]) {
+    const previous = byPath.get(entry.path);
+    if (!previous || entry.lastOpened > previous.lastOpened) byPath.set(entry.path, entry);
+  }
+  return JSON.stringify(
+    [...byPath.values()].sort((left, right) => right.lastOpened - left.lastOpened),
+  );
+}
+
 /**
- * Copy mirrored entries into `localStorage`, filling gaps only.
+ * Copy mirrored entries into `localStorage`, filling gaps except project history.
  *
  * Returns the number of keys actually restored. A key already present in
- * `localStorage` is left untouched — the live store is the authority and a
- * stale mirror must never clobber it.
+ * `localStorage` is left untouched except for valid project-history arrays,
+ * whose exact paths are unioned before hydration and the initial mirror flush.
  */
 export function applyMirrorToStorage(entries: Record<string, string>): number {
   const store = getLocalStorage();
@@ -204,7 +250,15 @@ export function applyMirrorToStorage(entries: Record<string, string>): number {
     if (!key.startsWith(STORAGE_PREFIX)) continue;
     if (typeof value !== "string") continue;
     try {
-      if (store.getItem(key) !== null) continue;
+      const current = store.getItem(key);
+      if (current !== null) {
+        if (key !== `${STORAGE_PREFIX}project-history`) continue;
+        const merged = mergeProjectHistory(current, value);
+        if (merged === null || merged === current) continue;
+        store.setItem(key, merged);
+        restored++;
+        continue;
+      }
       store.setItem(key, value);
       restored++;
     } catch {

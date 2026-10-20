@@ -7,6 +7,7 @@ import type {
   ReviewGateFinding,
   ReviewGateFindingSeverity,
   ReviewGateReport,
+  ReviewGateEvidence,
   ReviewGateVerdict,
 } from "@/types/flight";
 import type { ServerConfig } from "@/types/server";
@@ -41,9 +42,17 @@ export interface ReviewEvidenceBundle {
   patch: string;
   patchTruncated: boolean;
   checks: ReviewCheckEvidence[];
+  task?: {
+    id: string;
+    title: string;
+    description: string;
+    ownedPaths?: string[];
+    dependsOn: string[];
+  };
 }
 
 export interface BuildReviewEvidenceOptions {
+  snapshot?: ReviewGateEvidence;
   builderConversation?: AgentConversation;
   lookupServer: (id: string) => ServerConfig | undefined;
   loadGitEvidence?: typeof getGitReviewEvidence;
@@ -89,36 +98,106 @@ export async function buildReviewEvidenceBundle(
   attempt: Attempt,
   options: BuildReviewEvidenceOptions,
 ): Promise<ReviewEvidenceBundle> {
-  const server =
-    attempt.target.kind === "ssh" ? options.lookupServer(attempt.target.serverId) : undefined;
-  if (attempt.target.kind === "ssh" && !server) {
+  const task = flight.milestones
+    ?.flatMap((milestone) => milestone.tasks)
+    .find((task) => task.id === attempt.taskId);
+  const milestone = task
+    ? flight.milestones.find((milestone) => milestone.id === task.milestoneId)
+    : undefined;
+  const frozen = options.snapshot
+    ? (JSON.parse(options.snapshot.contextJson || "null") as {
+        objective: string;
+        prompt: string | null;
+        criteria: string[] | null;
+        branch: string;
+        target: { kind: "local" | "ssh"; worktree_path: string; server_id?: string };
+        task: {
+          id: string;
+          title: string;
+          description: string;
+          ownedPaths?: string[];
+          dependsOn: string[];
+          validationCriteria: string[];
+        } | null;
+      } | null)
+    : null;
+  if (options.snapshot && !frozen)
+    throw new Error("The review snapshot has no frozen criteria. Retry the reviewer.");
+  const objective = frozen?.objective ?? flight.objective;
+  const prompt = frozen ? (frozen.prompt ?? frozen.objective) : (flight.prompt ?? flight.objective);
+  const criteria = frozen
+    ? [...(frozen.criteria ?? []), ...(frozen.task?.validationCriteria ?? [])]
+    : [
+        ...(flight.reviewGatePolicy?.acceptanceCriteria ?? []),
+        ...(milestone?.validationCriteria ?? []),
+      ];
+  if (
+    objective.length > 8_000 ||
+    prompt.length > 12_000 ||
+    criteria.length > 40 ||
+    criteria.some((criterion) => criterion.length > 1_000)
+  ) {
+    throw new Error(
+      "The review objective, prompt, or acceptance criteria exceed the evidence limit. Shorten them or split this Flight before reviewing; required criteria cannot be omitted.",
+    );
+  }
+  const taskEvidence = frozen
+    ? (frozen.task ?? undefined)
+    : task
+      ? {
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          ownedPaths: task.ownedPaths,
+          dependsOn: task.dependsOn,
+        }
+      : undefined;
+  if (taskEvidence && JSON.stringify(taskEvidence).length > 20_000)
+    throw new Error(
+      "The review task context exceeds the evidence limit. Split this task before reviewing.",
+    );
+  const targetKind = frozen?.target.kind ?? attempt.target.kind;
+  const serverId =
+    frozen?.target.server_id ?? (attempt.target.kind === "ssh" ? attempt.target.serverId : "");
+  const server = targetKind === "ssh" ? options.lookupServer(serverId ?? "") : undefined;
+  if (targetKind === "ssh" && !server) {
     throw new Error("The SSH server used by this attempt is no longer configured.");
   }
   const loader = options.loadGitEvidence ?? getGitReviewEvidence;
-  const git: GitReviewEvidence = await loader(
-    attempt.target.worktreePath,
-    attempt.baseBranch,
-    server ? toGitServerConfigInput(server) : null,
-    REVIEW_EVIDENCE_PATCH_LIMIT,
-  );
+  const git: GitReviewEvidence = options.snapshot
+    ? await loader(
+        frozen!.target.worktree_path,
+        options.snapshot.baseSha,
+        server ? toGitServerConfigInput(server) : null,
+        REVIEW_EVIDENCE_PATCH_LIMIT,
+        options.snapshot.headSha,
+      )
+    : await loader(
+        attempt.target.worktreePath,
+        attempt.baseBranch,
+        server ? toGitServerConfigInput(server) : null,
+        REVIEW_EVIDENCE_PATCH_LIMIT,
+      );
+  if (options.snapshot && git.headRef !== options.snapshot.headSha) {
+    throw new Error("The attempt changed while collecting review evidence. Retry review.");
+  }
   return {
     schemaVersion: 1,
     flightId: flight.id,
     attemptId: attempt.id,
-    objective: boundedText(flight.objective, 8_000),
-    prompt: boundedText(flight.prompt ?? flight.objective, 12_000),
-    acceptanceCriteria: (flight.reviewGatePolicy?.acceptanceCriteria ?? [])
-      .slice(0, 40)
-      .map((criterion) => boundedText(criterion, 1_000)),
+    objective,
+    prompt,
+    acceptanceCriteria: criteria,
     baseRef: git.baseRef,
     headRef: git.headRef,
-    branch: boundedText(attempt.branch, 512),
-    target: attempt.target.kind,
+    branch: boundedText(frozen?.branch ?? attempt.branch, 512),
+    target: targetKind,
     diffSummary: boundedText(git.diffSummary, 16_000),
     changedPaths: git.changedPaths.slice(0, 2_000).map((path) => boundedText(path, 2_000)),
     patch: boundedText(git.patch, REVIEW_EVIDENCE_PATCH_LIMIT),
     patchTruncated: git.patchTruncated,
     checks: extractReviewChecks(options.builderConversation),
+    task: taskEvidence,
   };
 }
 
@@ -267,12 +346,20 @@ export function reviewerGateAllowsAcceptance(
 } {
   if (!flight.reviewGatePolicy?.enabled) return { allowed: true };
   const status = attempt.reviewGate?.status;
-  if (status === "passed" || status === "overridden") return { allowed: true };
+  if (
+    status === "overridden" &&
+    attempt.reviewGate?.overrideReason?.trim() &&
+    attempt.reviewGate.overriddenAt
+  )
+    return { allowed: true };
+  if (status === "passed" && attempt.reviewGate?.evidence) return { allowed: true };
   return {
     allowed: false,
     reason:
-      status === "running" || status === "pending"
-        ? "The independent reviewer has not finished."
-        : "The Reviewer Gate must pass or be explicitly overridden before acceptance.",
+      status === "passed"
+        ? "This review has no code fingerprint. Run the reviewer again before acceptance."
+        : status === "running" || status === "pending"
+          ? "The independent reviewer has not finished."
+          : "The Reviewer Gate must pass or be explicitly overridden before acceptance.",
   };
 }

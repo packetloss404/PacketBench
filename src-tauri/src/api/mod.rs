@@ -640,6 +640,25 @@ pub struct ReviewGatePolicyDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct ReviewGateEvidenceDto {
+    pub fingerprint: String,
+    pub context_fingerprint: String,
+    #[serde(default)]
+    pub context_json: String,
+    pub base_sha: String,
+    pub head_sha: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewerSessionDto {
+    pub session_id: String,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct AttemptReviewGateDto {
     pub status: ReviewGateStatusDto,
     #[serde(default)]
@@ -651,6 +670,11 @@ pub struct AttemptReviewGateDto {
     #[serde(default)]
     #[ts(optional)]
     pub reviewer_model: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub evidence: Option<ReviewGateEvidenceDto>,
+    #[serde(default)]
+    pub reviewer_sessions: Vec<ReviewerSessionDto>,
     #[serde(default)]
     #[ts(optional)]
     pub report: Option<ReviewGateReportDto>,
@@ -834,6 +858,9 @@ pub struct AutonomyRuntimeDto {
     pub hard_stop_reason: Option<String>,
     #[serde(default)]
     pub action_history: Vec<AutonomyActionRecordDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub review_retry_counts: Option<std::collections::HashMap<String, u32>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -939,6 +966,50 @@ pub struct CoordinationMessageDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct AttemptRecoveryDto {
+    #[ts(type = "'retained' | 'discarded'")]
+    pub state: String,
+    pub reason: String,
+    #[ts(type = "number")]
+    pub retained_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FlightDeliveryDto {
+    #[ts(type = "'landed' | 'pull_request'")]
+    pub kind: String,
+    #[ts(type = "number")]
+    pub delivered_at: u64,
+    pub branch: String,
+    pub base_branch: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub commit_sha: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub pr_number: Option<u32>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub pr_url: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub attempt_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FlightExecutionTargetDto {
+    #[ts(type = "'local' | 'ssh'")]
+    pub kind: String,
+    #[serde(default)]
+    #[ts(optional)]
+    pub server_id: Option<String>,
+    pub base_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct AttemptDto {
     pub id: String,
     pub flight_id: String,
@@ -950,6 +1021,9 @@ pub struct AttemptDto {
     pub base_branch: String,
     pub session_id: String,
     pub status: AttemptStatusDto,
+    #[serde(default)]
+    #[ts(optional)]
+    pub session_history: Option<Vec<ReviewerSessionDto>>,
     #[serde(default)]
     #[ts(optional)]
     #[ts(type = "number")]
@@ -975,6 +1049,12 @@ pub struct AttemptDto {
     #[serde(default)]
     #[ts(optional)]
     pub review_gate: Option<AttemptReviewGateDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub recovery: Option<AttemptRecoveryDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub delivery: Option<FlightDeliveryDto>,
     /// Cooperative graph task that owns this attempt.
     #[serde(default)]
     #[ts(optional)]
@@ -1013,6 +1093,17 @@ pub struct FlightDto {
     #[ts(optional)]
     #[ts(type = "number")]
     pub completed_at: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub delivery: Option<FlightDeliveryDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub archived_at: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub stopped_at: Option<u64>,
     pub total_cost: f64,
     #[ts(type = "number")]
     pub total_tokens: u64,
@@ -1029,6 +1120,9 @@ pub struct FlightDto {
     #[serde(default)]
     #[ts(optional)]
     pub execution_mode: Option<FlightExecutionModeDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub execution_target: Option<FlightExecutionTargetDto>,
     #[serde(default)]
     #[ts(optional)]
     pub integration_branch: Option<FlightIntegrationBranchDto>,
@@ -2148,6 +2242,50 @@ impl From<ReviewGatePolicyDto> for core_flight::ReviewGatePolicy {
     }
 }
 
+impl From<core_flight::ReviewGateEvidence> for ReviewGateEvidenceDto {
+    fn from(value: core_flight::ReviewGateEvidence) -> Self {
+        Self {
+            fingerprint: value.fingerprint,
+            context_fingerprint: value.context_fingerprint,
+            context_json: value.context_json,
+            base_sha: value.base_sha,
+            head_sha: value.head_sha,
+        }
+    }
+}
+
+impl From<ReviewGateEvidenceDto> for core_flight::ReviewGateEvidence {
+    fn from(value: ReviewGateEvidenceDto) -> Self {
+        Self {
+            fingerprint: value.fingerprint,
+            context_fingerprint: value.context_fingerprint,
+            context_json: value.context_json,
+            base_sha: value.base_sha,
+            head_sha: value.head_sha,
+        }
+    }
+}
+
+impl From<core_flight::ReviewerSession> for ReviewerSessionDto {
+    fn from(value: core_flight::ReviewerSession) -> Self {
+        Self {
+            session_id: value.session_id,
+            provider: value.provider,
+            model: value.model,
+        }
+    }
+}
+
+impl From<ReviewerSessionDto> for core_flight::ReviewerSession {
+    fn from(value: ReviewerSessionDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            provider: value.provider,
+            model: value.model,
+        }
+    }
+}
+
 impl From<core_flight::AttemptReviewGate> for AttemptReviewGateDto {
     fn from(value: core_flight::AttemptReviewGate) -> Self {
         Self {
@@ -2155,6 +2293,12 @@ impl From<core_flight::AttemptReviewGate> for AttemptReviewGateDto {
             reviewer_conversation_id: value.reviewer_conversation_id,
             reviewer_agent_config_id: value.reviewer_agent_config_id,
             reviewer_model: value.reviewer_model,
+            evidence: value.evidence.map(Into::into),
+            reviewer_sessions: value
+                .reviewer_sessions
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             report: value.report.map(Into::into),
             error_message: value.error_message,
             started_at: value.started_at,
@@ -2172,6 +2316,12 @@ impl From<AttemptReviewGateDto> for core_flight::AttemptReviewGate {
             reviewer_conversation_id: value.reviewer_conversation_id,
             reviewer_agent_config_id: value.reviewer_agent_config_id,
             reviewer_model: value.reviewer_model,
+            evidence: value.evidence.map(Into::into),
+            reviewer_sessions: value
+                .reviewer_sessions
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             report: value.report.map(Into::into),
             error_message: value.error_message,
             started_at: value.started_at,
@@ -2471,6 +2621,7 @@ impl From<core_flight::AutonomyRuntime> for AutonomyRuntimeDto {
             stopped_at: value.stopped_at,
             hard_stop_reason: value.hard_stop_reason,
             action_history: value.action_history.into_iter().map(Into::into).collect(),
+            review_retry_counts: value.review_retry_counts,
         }
     }
 }
@@ -2484,6 +2635,7 @@ impl From<AutonomyRuntimeDto> for core_flight::AutonomyRuntime {
             stopped_at: value.stopped_at,
             hard_stop_reason: value.hard_stop_reason,
             action_history: value.action_history.into_iter().map(Into::into).collect(),
+            review_retry_counts: value.review_retry_counts,
         }
     }
 }
@@ -2668,6 +2820,88 @@ impl From<CoordinationMessageDto> for core_flight::CoordinationMessage {
     }
 }
 
+impl From<core_flight::AttemptRecovery> for AttemptRecoveryDto {
+    fn from(value: core_flight::AttemptRecovery) -> Self {
+        Self {
+            state: match value.state {
+                core_flight::RecoveryState::Retained => "retained",
+                core_flight::RecoveryState::Discarded => "discarded",
+            }
+            .into(),
+            reason: value.reason,
+            retained_at: value.retained_at,
+        }
+    }
+}
+impl From<AttemptRecoveryDto> for core_flight::AttemptRecovery {
+    fn from(value: AttemptRecoveryDto) -> Self {
+        Self {
+            state: if value.state == "discarded" {
+                core_flight::RecoveryState::Discarded
+            } else {
+                core_flight::RecoveryState::Retained
+            },
+            reason: value.reason,
+            retained_at: value.retained_at,
+        }
+    }
+}
+impl From<core_flight::FlightDelivery> for FlightDeliveryDto {
+    fn from(value: core_flight::FlightDelivery) -> Self {
+        Self {
+            kind: match value.kind {
+                core_flight::DeliveryKind::Landed => "landed",
+                core_flight::DeliveryKind::PullRequest => "pull_request",
+            }
+            .into(),
+            delivered_at: value.delivered_at,
+            branch: value.branch,
+            base_branch: value.base_branch,
+            commit_sha: value.commit_sha,
+            pr_number: value.pr_number,
+            pr_url: value.pr_url,
+            attempt_id: value.attempt_id,
+        }
+    }
+}
+impl From<FlightDeliveryDto> for core_flight::FlightDelivery {
+    fn from(value: FlightDeliveryDto) -> Self {
+        Self {
+            kind: if value.kind == "pull_request" {
+                core_flight::DeliveryKind::PullRequest
+            } else {
+                core_flight::DeliveryKind::Landed
+            },
+            delivered_at: value.delivered_at,
+            branch: value.branch,
+            base_branch: value.base_branch,
+            commit_sha: value.commit_sha,
+            pr_number: value.pr_number,
+            pr_url: value.pr_url,
+            attempt_id: value.attempt_id,
+        }
+    }
+}
+
+impl From<core_flight::FlightExecutionTarget> for FlightExecutionTargetDto {
+    fn from(value: core_flight::FlightExecutionTarget) -> Self {
+        Self {
+            kind: value.kind,
+            server_id: value.server_id,
+            base_path: value.base_path,
+        }
+    }
+}
+impl From<FlightExecutionTargetDto> for core_flight::FlightExecutionTarget {
+    fn from(value: FlightExecutionTargetDto) -> Self {
+        Self {
+            kind: value.kind,
+            server_id: value.server_id,
+            base_path: value.base_path,
+        }
+    }
+}
+
 impl From<core_flight::Attempt> for AttemptDto {
     fn from(a: core_flight::Attempt) -> Self {
         Self {
@@ -2688,6 +2922,11 @@ impl From<core_flight::Attempt> for AttemptDto {
             error_message: a.error_message,
             failure_category: a.failure_category,
             review_gate: a.review_gate.map(Into::into),
+            session_history: a
+                .session_history
+                .map(|sessions| sessions.into_iter().map(Into::into).collect()),
+            recovery: a.recovery.map(Into::into),
+            delivery: a.delivery.map(Into::into),
             task_id: a.task_id,
             draft_pr_number: a.draft_pr_number,
         }
@@ -2714,6 +2953,11 @@ impl From<AttemptDto> for core_flight::Attempt {
             error_message: a.error_message,
             failure_category: a.failure_category,
             review_gate: a.review_gate.map(Into::into),
+            session_history: a
+                .session_history
+                .map(|sessions| sessions.into_iter().map(Into::into).collect()),
+            recovery: a.recovery.map(Into::into),
+            delivery: a.delivery.map(Into::into),
             task_id: a.task_id,
             draft_pr_number: a.draft_pr_number,
         }
@@ -2743,6 +2987,7 @@ impl From<core_flight::Flight> for FlightDto {
             attempts: value.attempts.into_iter().map(Into::into).collect(),
             review_gate_policy: value.review_gate_policy.map(Into::into),
             execution_mode: value.execution_mode.map(Into::into),
+            execution_target: value.execution_target.map(Into::into),
             integration_branch: value.integration_branch.map(Into::into),
             coordination_inbox: value
                 .coordination_inbox
@@ -2752,6 +2997,9 @@ impl From<core_flight::Flight> for FlightDto {
             autonomy_mode: value.autonomy_mode.map(Into::into),
             autonomy_policy: value.autonomy_policy.map(Into::into),
             autonomy_runtime: value.autonomy_runtime.map(Into::into),
+            delivery: value.delivery.map(Into::into),
+            archived_at: value.archived_at,
+            stopped_at: value.stopped_at,
             planning_conversation_id: value.planning_conversation_id,
             planner_session_id: value.planner_session_id,
             planner_status: value.planner_status.map(Into::into),
@@ -2786,6 +3034,7 @@ impl From<FlightDto> for core_flight::Flight {
             attempts: value.attempts.into_iter().map(Into::into).collect(),
             review_gate_policy: value.review_gate_policy.map(Into::into),
             execution_mode: value.execution_mode.map(Into::into),
+            execution_target: value.execution_target.map(Into::into),
             integration_branch: value.integration_branch.map(Into::into),
             coordination_inbox: value
                 .coordination_inbox
@@ -2795,6 +3044,9 @@ impl From<FlightDto> for core_flight::Flight {
             autonomy_mode: value.autonomy_mode.map(Into::into),
             autonomy_policy: value.autonomy_policy.map(Into::into),
             autonomy_runtime: value.autonomy_runtime.map(Into::into),
+            delivery: value.delivery.map(Into::into),
+            archived_at: value.archived_at,
+            stopped_at: value.stopped_at,
             planning_conversation_id: value.planning_conversation_id,
             planner_session_id: value.planner_session_id,
             planner_status: value.planner_status.map(Into::into),
@@ -2917,6 +3169,8 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(ReviewGateFindingDto);
     push_decl!(ReviewGateReportDto);
     push_decl!(ReviewGatePolicyDto);
+    push_decl!(ReviewGateEvidenceDto);
+    push_decl!(ReviewerSessionDto);
     push_decl!(AttemptReviewGateDto);
     push_decl!(FlightExecutionModeDto);
     push_decl!(IntegrationBranchStatusDto);
@@ -2937,6 +3191,9 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(CoordinationArtifactRefDto);
     push_decl!(CoordinationAcknowledgementDto);
     push_decl!(CoordinationMessageDto);
+    push_decl!(AttemptRecoveryDto);
+    push_decl!(FlightDeliveryDto);
+    push_decl!(FlightExecutionTargetDto);
     push_decl!(AttemptDto);
     push_decl!(FlightDto);
     push_decl!(PersistedStateDto);
@@ -3013,11 +3270,15 @@ mod tests {
                 attempts: vec![],
                 review_gate_policy: None,
                 execution_mode: None,
+                execution_target: None,
                 integration_branch: None,
                 coordination_inbox: Vec::new(),
                 autonomy_mode: None,
                 autonomy_policy: None,
                 autonomy_runtime: None,
+                delivery: None,
+                archived_at: None,
+                stopped_at: None,
                 planning_conversation_id: None,
                 planner_session_id: None,
                 planner_status: None,

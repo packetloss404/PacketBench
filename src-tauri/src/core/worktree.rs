@@ -692,6 +692,32 @@ pub async fn remove_local_worktree(
     Ok(())
 }
 
+/// Git's non-force dirty check protects edits racing an accepted result.
+pub async fn remove_attempt_worktree_safely(
+    base: &str,
+    attempt_id: &str,
+    ssh: Option<&SshConfig>,
+) -> Result<(), String> {
+    let path = worktree_path(base, attempt_id)?;
+    let (output, code) = if let Some(config) = ssh {
+        ssh_git(config, base, &["worktree", "remove", "--", &path]).await?
+    } else {
+        if !std::path::Path::new(&path).exists() {
+            return Ok(());
+        }
+        let (stdout, stderr, code) =
+            run_local_git(base, &["worktree", "remove", "--", &path]).await?;
+        (format!("{stdout}{stderr}"), code)
+    };
+    if code != 0 {
+        return Err(format!(
+            "Worktree retained: non-destructive cleanup refused ({code}): {}",
+            output.trim()
+        ));
+    }
+    Ok(())
+}
+
 // --- Remote (SSH) ---
 
 async fn ssh_git(cfg: &SshConfig, base: &str, args: &[&str]) -> Result<(String, i32), String> {
@@ -1074,6 +1100,40 @@ pub fn land_local_integration_branch(
         return Err(format!("Flight landing failed: {}", err));
     }
     git_stdout(base, &["rev-parse", "HEAD"])
+}
+
+/// Land an independent accepted attempt into its saved remote base checkout.
+/// The command driver is also exercised locally by hermetic Git fixtures.
+pub async fn land_remote_attempt_at_ref(
+    cfg: &SshConfig,
+    base: &str,
+    base_branch: &str,
+    attempt_branch: &str,
+    expected_sha: &str,
+    squash: bool,
+) -> Result<super::git::MergeBranchOutcome, String> {
+    if cfg
+        .host_fingerprint
+        .as_ref()
+        .is_none_or(|fingerprint| fingerprint.trim().is_empty())
+    {
+        return Err("Pin the saved SSH server's host key before landing.".into());
+    }
+    super::flight_landing::merge_at_ref(
+        |args| {
+            let cfg = cfg.clone();
+            let base = base.to_string();
+            async move {
+                let refs: Vec<_> = args.iter().map(String::as_str).collect();
+                ssh_git(&cfg, &base, &refs).await
+            }
+        },
+        base_branch,
+        attempt_branch,
+        expected_sha,
+        squash,
+    )
+    .await
 }
 
 pub async fn land_remote_integration_branch(

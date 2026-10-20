@@ -19,6 +19,7 @@ mod contract_tests;
 pub mod error_classifier;
 pub mod execution;
 pub mod flight;
+pub(crate) mod flight_landing;
 pub mod git;
 pub mod git_host;
 // v0.8-E / v0.8-F: shared home for hand-authored GitHub AI prompts.

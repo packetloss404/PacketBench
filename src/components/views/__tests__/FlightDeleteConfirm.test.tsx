@@ -11,7 +11,7 @@
  * mocked stores and drive the real DOM. Heavy children are stubbed out.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Flight } from "@/types/flight";
 import type { FlightDeleteImpact } from "@/stores/asyncFlightStore";
 
@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
     prepareCooperativeFlight: vi.fn(),
     launchReadyTasks: vi.fn(),
     landCooperativeFlight: vi.fn(),
+    stopFlight: vi.fn(),
   },
 }));
 
@@ -97,6 +98,8 @@ vi.mock("@/components/flights/LaunchAsyncFlightModal", () => ({
 import { FlightsView } from "@/components/views/FlightsView";
 import { summarizeFlightDeleteImpact } from "@/stores/asyncFlightStore";
 import { ToastProvider } from "@/components/ui/Toast";
+import { useAgentTaskStore } from "@/stores/agentTaskStore";
+import type { AgentConversation } from "@/types/agent-conversation";
 
 function makeFlight(overrides: Partial<Flight> = {}): Flight {
   return {
@@ -156,6 +159,36 @@ describe("flight delete confirm", () => {
     mocks.memoryState.events = [];
     mocks.inspectFlightDeleteImpact.mockResolvedValue(summarizeFlightDeleteImpact([]));
     mocks.asyncState.deleteFlightWithAttemptCleanup.mockResolvedValue([]);
+    mocks.asyncState.stopFlight.mockResolvedValue(undefined);
+    useAgentTaskStore.setState({ conversations: [] });
+  });
+
+  it("shows a running planner in Running and exposes unified Stop before any attempt exists", async () => {
+    mocks.flightState.flights = [
+      makeFlight({ status: "planning", planningConversationId: "planner" }),
+    ];
+    useAgentTaskStore.setState({
+      conversations: [
+        {
+          id: "planner",
+          title: "Flight plan",
+          status: "active",
+          mode: "api",
+          messages: [],
+        } as unknown as AgentConversation,
+      ],
+    });
+    renderView();
+    expect(screen.queryByText("Drafts")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop Flight" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Stop active work before archiving" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop Flight" }));
+    await waitFor(() => expect(mocks.asyncState.stopFlight).toHaveBeenCalledWith("flight-1"));
+    act(() => useAgentTaskStore.setState({ conversations: [] }));
+    expect(screen.queryByRole("button", { name: "Stop Flight" })).not.toBeInTheDocument();
+    expect(screen.getByText("Drafts")).toBeInTheDocument();
   });
 
   it("opens the shared confirm naming the flight instead of deleting immediately", async () => {

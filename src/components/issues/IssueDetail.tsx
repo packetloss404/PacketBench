@@ -11,6 +11,7 @@ import {
   UserPlus,
   Check,
   ExternalLink,
+  Plane,
 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { useIssueStore, type Issue, type IssueStatus } from "@/stores/issueStore";
@@ -26,6 +27,8 @@ import { IssueCommentList } from "./IssueCommentList";
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { MarkdownRenderer } from "@/components/common/MarkdownRenderer";
 import { useToast } from "@/components/ui/Toast";
+import { flightContextFromWorkspace } from "@/lib/flightLaunchContext";
+import { projectFlightLifecycle } from "@/lib/flightLifecycle";
 
 interface IssueDetailProps {
   issueId: string;
@@ -456,6 +459,37 @@ export function IssueDetail({ issueId, onClose }: IssueDetailProps) {
         </div>
 
         {/* Flight assignment */}
+        <button
+          type="button"
+          onClick={() => {
+            const workspace =
+              linkedWorkspace ||
+              useWorkspaceStore
+                .getState()
+                .workspaces.find(
+                  (item) => item.id === useWorkspaceStore.getState().activeWorkspaceId,
+                );
+            const assigned = flights.find((flight) => flight.id === issue.flightId);
+            const reusable =
+              assigned &&
+              !["archived", "delivered"].includes(projectFlightLifecycle(assigned).phase);
+            useAppStore.getState().openFlightBrief({
+              ...(workspace
+                ? flightContextFromWorkspace(workspace)
+                : { projectPath: useLayoutStore.getState().projectPath }),
+              flightId: reusable ? assigned.id : undefined,
+              title: issue.title,
+              objective: `${issue.ticketId}: ${issue.title}${issue.description ? `\n\n${issue.description}` : ""}`,
+              acceptanceCriteria: issue.acceptanceCriteria.map((criterion) => criterion.text),
+              issueId: issue.id,
+              sourceLabel: issue.ticketId,
+            });
+            onClose();
+          }}
+          className="flex items-center justify-center gap-2 rounded border border-accent-line bg-accent-soft px-3 py-2 text-xs font-medium text-accent-green"
+        >
+          <Plane size={12} /> Send to Flight
+        </button>
         <div>
           <label className="mb-1.5 block text-[10px] uppercase tracking-wider text-text-muted">
             Flight

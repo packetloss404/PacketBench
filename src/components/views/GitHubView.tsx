@@ -30,7 +30,7 @@ import { useIssueStore } from "@/stores/issueStore";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useAppStore } from "@/stores/appStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useFlightStore } from "@/stores/flightStore";
+
 import { gitCreateBranch } from "@/lib/tauri";
 import { PRModal } from "@/components/views/PRModal";
 import { DiffViewer } from "@/components/views/DiffViewer";
@@ -386,7 +386,7 @@ export function GitHubView() {
               <button
                 type="button"
                 onClick={() => openSettings({ section: "github" })}
-                className="bg-accent-green/15 border-accent-green/30 hover:bg-accent-green/25 rounded border px-4 py-1.5 text-xs font-medium text-accent-green transition-colors"
+                className="rounded border border-accent-green/30 bg-accent-green/15 px-4 py-1.5 text-xs font-medium text-accent-green transition-colors hover:bg-accent-green/25"
               >
                 Open Settings
               </button>
@@ -394,9 +394,7 @@ export function GitHubView() {
             {error && <p className="mt-3 text-[11px] text-accent-red">{error}</p>}
           </div>
         </div>
-        {showSetupWizard && (
-          <GitHostSetupWizard onClose={() => setShowSetupWizard(false)} />
-        )}
+        {showSetupWizard && <GitHostSetupWizard onClose={() => setShowSetupWizard(false)} />}
       </div>
     );
   }
@@ -453,7 +451,7 @@ export function GitHubView() {
       />
 
       {error && (
-        <div className="bg-accent-red/10 border-accent-red/20 flex flex-shrink-0 items-center gap-2 border-b px-4 py-2">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-accent-red/20 bg-accent-red/10 px-4 py-2">
           <AlertCircle size={12} className="text-accent-red" />
           <span className="flex-1 text-[11px] text-accent-red">{error}</span>
           <button onClick={clearError} className="text-accent-red/60 hover:text-accent-red">
@@ -736,12 +734,12 @@ function ReleasesList({
             </span>
             <span className="font-mono text-[10px] text-text-muted">{r.tag_name}</span>
             {r.draft && (
-              <span className="bg-accent-amber/15 rounded px-1.5 py-0.5 text-[9px] text-accent-amber">
+              <span className="rounded bg-accent-amber/15 px-1.5 py-0.5 text-[9px] text-accent-amber">
                 draft
               </span>
             )}
             {r.prerelease && (
-              <span className="bg-accent-blue/15 rounded px-1.5 py-0.5 text-[9px] text-accent-blue">
+              <span className="rounded bg-accent-blue/15 px-1.5 py-0.5 text-[9px] text-accent-blue">
                 pre-release
               </span>
             )}
@@ -804,7 +802,7 @@ function HeaderBand({
         <RefreshCw size={11} className={isLoading ? "animate-spin" : ""} />
       </button>
 
-      <span className="bg-accent-green/10 inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium text-accent-green">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-green/10 px-1.5 py-0.5 text-[10px] font-medium text-accent-green">
         <span className="h-1.5 w-1.5 rounded-full bg-accent-green" />
         Connected · {username}
       </span>
@@ -814,7 +812,7 @@ function HeaderBand({
       <button
         type="button"
         onClick={onNewPR}
-        className="bg-accent-purple/15 border-accent-purple/30 hover:bg-accent-purple/25 inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[10.5px] font-medium text-accent-purple transition-colors"
+        className="inline-flex items-center gap-1.5 rounded border border-accent-purple/30 bg-accent-purple/15 px-2.5 py-1 text-[10.5px] font-medium text-accent-purple transition-colors hover:bg-accent-purple/25"
       >
         <GitPullRequest size={10} />
         New PR
@@ -979,9 +977,9 @@ function IssueDetail({
   // v0.8-D — store hooks for Plan flight + Branch from issue. Hooks must
   // run in stable order on every render, so they're called BEFORE the
   // `!issue` early-return below.
-  const setActiveView = useAppStore((s) => s.setActiveView);
-  const addFlight = useFlightStore((s) => s.addFlight);
-  const setActiveFlight = useFlightStore((s) => s.setActiveFlight);
+
+  const openFlightBrief = useAppStore((s) => s.openFlightBrief);
+
   const projectPathFromLayout = useLayoutStore((s) => s.projectPath);
   const activeWorkspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId),
@@ -1015,41 +1013,15 @@ function IssueDetail({
 
   async function handlePlanFlight() {
     if (!issue || actionBusy) return;
-    setActionBusy("plan");
-    setFeedback(null);
-    try {
-      // Stage the flight from the issue, seeding the objective with the
-      // issue body so it's a useful prefill when the user hits "Launch
-      // attempt" in the Flights view (asyncFlightStore worktree-attempt
-      // path — see AsyncFlightGrid's empty state).
-      const body = issue.body?.trim();
-      const objective = body
-        ? `GitHub issue #${issue.number}: ${issue.title}\n\n${body}`
-        : `Linked to GitHub issue #${issue.number}: ${issue.title}`;
-      const flight = addFlight({
-        title: issue.title,
-        objective,
-        priority: "medium",
-        projectPath: resolvedProjectPath,
-        workspaceId: activeWorkspace?.id ?? null,
-        issueIds: [],
-      });
-      setActiveFlight(flight.id);
-      setActiveView("flights");
-      setFeedback({
-        tone: "success",
-        message: `Staged flight for #${issue.number} — click "Launch attempt" in the Flights view to run it`,
-        linkLabel: "Open",
-        onLinkClick: () => setActiveView("flights"),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setFeedback({ tone: "error", message: `Plan flight failed: ${msg}` });
-    } finally {
-      setActionBusy(null);
-    }
+    openFlightBrief({
+      title: issue.title,
+      objective: `GitHub issue #${issue.number}: ${issue.title}${issue.body?.trim() ? `\n\n${issue.body.trim()}` : ""}`,
+      projectPath: resolvedProjectPath,
+      workspaceId: activeWorkspace?.id,
+      serverId: activeWorkspace?.serverId,
+      sourceLabel: `GitHub issue #${issue.number}`,
+    });
   }
-
   async function handleBranchFromIssue() {
     if (!issue || actionBusy) return;
     if (workspaceIsRemote) {
@@ -1093,11 +1065,11 @@ function IssueDetail({
           <div className="min-w-0 flex-1">
             <div className="mb-1.5 flex items-center gap-2">
               {issueIsOpen ? (
-                <span className="bg-accent-green/15 border-accent-green/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold text-accent-green">
+                <span className="inline-flex items-center gap-1 rounded-full border border-accent-green/30 bg-accent-green/15 px-2 py-0.5 text-[10px] font-semibold text-accent-green">
                   <AlertCircle size={9} /> Open
                 </span>
               ) : (
-                <span className="bg-accent-purple/15 border-accent-purple/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold text-accent-purple">
+                <span className="inline-flex items-center gap-1 rounded-full border border-accent-purple/30 bg-accent-purple/15 px-2 py-0.5 text-[10px] font-semibold text-accent-purple">
                   <Check size={9} /> Closed
                 </span>
               )}
@@ -1148,7 +1120,7 @@ function IssueDetail({
         <button
           type="button"
           onClick={() => onImport(issue)}
-          className="bg-accent-green/15 border-accent-green/30 hover:bg-accent-green/25 inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[10.5px] font-medium text-accent-green transition-colors"
+          className="inline-flex items-center gap-1.5 rounded border border-accent-green/30 bg-accent-green/15 px-2.5 py-1 text-[10.5px] font-medium text-accent-green transition-colors hover:bg-accent-green/25"
         >
           <Diamond size={10} /> Import to board
         </button>
@@ -1161,7 +1133,7 @@ function IssueDetail({
               ? "Investigate this issue with the configured AI route"
               : "AI investigation is available for local GitHub Workspaces only"
           }
-          className="bg-accent-blue/15 border-accent-blue/30 hover:bg-accent-blue/25 inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[10.5px] font-medium text-accent-blue transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded border border-accent-blue/30 bg-accent-blue/15 px-2.5 py-1 text-[10.5px] font-medium text-accent-blue transition-colors hover:bg-accent-blue/25 disabled:opacity-50"
         >
           {isInvestigating ? <Loader2 size={10} className="animate-spin" /> : <Brain size={10} />}
           Investigate with AI
@@ -1173,14 +1145,14 @@ function IssueDetail({
           type="button"
           onClick={() => void handlePlanFlight()}
           disabled={actionBusy === "plan"}
-          className="hover:bg-accent-green/15 inline-flex items-center gap-1.5 rounded border border-accent-line bg-accent-soft px-2.5 py-1 text-[10.5px] font-medium text-accent-green transition-colors disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded border border-accent-line bg-accent-soft px-2.5 py-1 text-[10.5px] font-medium text-accent-green transition-colors hover:bg-accent-green/15 disabled:opacity-50"
         >
           {actionBusy === "plan" ? (
             <Loader2 size={10} className="animate-spin" />
           ) : (
             <Plane size={10} />
           )}{" "}
-          Plan flight
+          Send to Flight
         </button>
         <div className="flex-1" />
         {/* v0.8-D — Branch from issue: create `issue-{N}-{slug}` in the

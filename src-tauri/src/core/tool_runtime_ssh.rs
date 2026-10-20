@@ -7,6 +7,64 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
+tokio::task_local! {
+    pub(crate) static SSH_TOOL_OWNER: String;
+}
+
+type CleanupResult = Option<Result<(), String>>;
+type CleanupReceiver = tokio::sync::watch::Receiver<CleanupResult>;
+type CleanupOwners = std::collections::HashMap<String, Vec<CleanupReceiver>>;
+static SSH_CLEANUPS: std::sync::OnceLock<std::sync::Mutex<CleanupOwners>> =
+    std::sync::OnceLock::new();
+
+fn cleanup_owners() -> std::sync::MutexGuard<'static, CleanupOwners> {
+    SSH_CLEANUPS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+fn register_cleanup(owner: String, receiver: CleanupReceiver) {
+    let mut owners = cleanup_owners();
+    owners.retain(|_, receivers| {
+        receivers.retain(|receiver| !matches!(*receiver.borrow(), Some(Ok(()))));
+        !receivers.is_empty()
+    });
+    owners.entry(owner).or_default().push(receiver);
+}
+
+/// A cancelled API turn must not release its owner or admit a replacement
+/// before its SSH transport acknowledges group cleanup. Errors stay visible
+/// to every reader, including Stop and a subsequent recovery admission.
+pub(crate) async fn drain_session(session_id: &str) -> Result<(), String> {
+    let receivers = cleanup_owners()
+        .get(session_id)
+        .cloned()
+        .unwrap_or_default();
+    for mut receiver in receivers {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if let Some(result) = receiver.borrow().clone() {
+                    return result;
+                }
+                receiver.changed().await.map_err(|_| {
+                    "SSH cleanup ended without an acknowledgement; worktree retained.".to_string()
+                })?;
+            }
+        })
+        .await
+        .map_err(|_| "SSH cleanup has not acknowledged Stop; worktree retained.".to_string())??;
+    }
+    let mut owners = cleanup_owners();
+    if let Some(receivers) = owners.get_mut(session_id) {
+        receivers.retain(|receiver| !matches!(*receiver.borrow(), Some(Ok(()))));
+        if receivers.is_empty() {
+            owners.remove(session_id);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) const MAX_FILE_SIZE: u64 = 2_000_000;
 const MAX_OUTPUT_SIZE: usize = 262_144;
 const DEFAULT_BASH_TIMEOUT: u64 = 30;
@@ -160,38 +218,24 @@ async fn ssh_run(
     remote_cmd: &str,
     timeout_secs: u64,
 ) -> Result<std::process::Output, String> {
-    ssh_run_inner(config, remote_cmd, timeout_secs, false).await
+    ssh_run_inner(config, remote_cmd, timeout_secs, None).await
 }
 
-/// Inner SSH runner. `request_tty` forces a remote pseudo-terminal (`ssh -tt`)
-/// so that when we kill the local ssh client on timeout, the dropped connection
-/// hangs up the remote pty and the kernel delivers SIGHUP to the whole remote
-/// job — reaping grandchildren the plain channel-close would orphan (S1, the
-/// remote analogue of the local process-group kill / sidecar `killTree`).
-///
-/// Only the unconfined `bash` tool opts in: a TTY applies line-discipline (CR
-/// translation, echo) that would corrupt the file tools' `cat` output and
-/// heredoc bodies, so those keep the clean piped channel. TTY is also skipped
-/// under password auth, where stdin is already reserved for the secret.
+/// Bash keeps SSH stdin open as a lifetime lease. Its remote supervisor kills
+/// only that invocation's isolated process group when the lease reaches EOF.
+/// A pseudo-terminal alone cannot stop descendants which ignore SIGHUP.
 async fn ssh_run_inner(
     config: &SshConfig,
     remote_cmd: &str,
     timeout_secs: u64,
-    request_tty: bool,
+    completion_marker: Option<&str>,
 ) -> Result<std::process::Output, String> {
+    let keep_stdin_open = completion_marker.is_some();
+    let completion_marker = completion_marker.map(str::to_owned);
     let password = load_password(config);
     let password_auth = password.is_some();
 
     let mut cmd = tokio::process::Command::new("ssh");
-    // `-tt` must precede the host; ssh options come before `user@host` in the
-    // arg vector (host is last, remote_cmd is appended after). `LogLevel=ERROR`
-    // suppresses ssh's own "Connection to <host> closed." teardown notice, which
-    // otherwise lands on the client's stderr and pollutes the tool result.
-    if request_tty && !password_auth {
-        cmd.arg("-tt");
-        cmd.arg("-o");
-        cmd.arg("LogLevel=ERROR");
-    }
     cmd.args(config.ssh_args(password_auth));
     cmd.arg(remote_cmd);
     cmd.stdout(std::process::Stdio::piped());
@@ -216,6 +260,7 @@ async fn ssh_run_inner(
         .spawn()
         .map_err(|e| format!("Failed to spawn ssh: {}", e))?;
 
+    let mut stdin_lease = None;
     if let Some(mut stdin) = child.stdin.take() {
         // F06/F11: only OpenSSH-for-Windows reads the auth password from a
         // non-TTY stdin. On Unix, ssh reads it from /dev/tty instead, so writing
@@ -224,27 +269,172 @@ async fn ssh_run_inner(
         // and forwards those stdin bytes straight to the remote command, leaking
         // the password. So feed the password only on Windows; elsewhere just
         // close stdin so the remote sees EOF.
-        #[cfg(windows)]
-        {
+        if keep_stdin_open {
+            stdin_lease = Some(stdin);
+        } else {
+            #[cfg(windows)]
             if let Some(pw) = password.as_ref() {
                 stdin
                     .write_all(format!("{}\n", pw).as_bytes())
                     .await
                     .map_err(|e| format!("Failed to write ssh stdin: {}", e))?;
             }
+            stdin.shutdown().await.ok();
         }
-        stdin.shutdown().await.ok();
     }
 
-    let output = tokio::time::timeout(
-        Duration::from_secs(timeout_secs + SSH_OVERHEAD_SECS),
-        child.wait_with_output(),
-    )
-    .await
-    .map_err(|_| format!("SSH command timed out after {} seconds", timeout_secs))?
-    .map_err(|e| format!("SSH failed: {}", e))?;
+    let finished = if keep_stdin_open {
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        if let Ok(owner) = SSH_TOOL_OWNER.try_with(Clone::clone) {
+            register_cleanup(owner, receiver);
+        }
+        Some(sender)
+    } else {
+        None
+    };
+    let collect = async move {
+        let result = match tokio::time::timeout(
+            Duration::from_secs(timeout_secs + SSH_OVERHEAD_SECS),
+            child.wait_with_output(),
+        )
+        .await
+        {
+            Ok(Ok(mut output)) => {
+                if let Some(marker) = completion_marker {
+                    let marker = marker.as_bytes();
+                    if let Some(offset) = output
+                        .stderr
+                        .windows(marker.len())
+                        .rposition(|window| window == marker)
+                    {
+                        output.stderr.drain(offset..offset + marker.len());
+                        Ok(output)
+                    } else {
+                        Err("SSH ended without confirmed remote process cleanup; worktree retained.".into())
+                    }
+                } else {
+                    Ok(output)
+                }
+            }
+            Ok(Err(error)) => Err(format!("SSH failed: {error}")),
+            Err(_) => Err(format!(
+                "SSH command timed out after {timeout_secs} seconds"
+            )),
+        };
+        if let Some(finished) = finished {
+            finished.send_replace(Some(result.as_ref().map(|_| ()).map_err(Clone::clone)));
+        }
+        result
+    };
+    let output = if keep_stdin_open {
+        // Cancellation must close the lease while ssh is still alive to send
+        // EOF. Dropping Child here kills the transport before it forwards EOF.
+        // This bounded collector survives its caller only long enough to reap
+        // the supervised remote group and collect its cancellation response.
+        let collector = tokio::spawn(collect);
+        #[cfg(windows)]
+        if let (Some(pw), Some(stdin)) = (password.as_ref(), stdin_lease.as_mut()) {
+            stdin
+                .write_all(format!("{}\n", pw).as_bytes())
+                .await
+                .map_err(|e| format!("Failed to write ssh stdin: {}", e))?;
+        }
+        collector
+            .await
+            .map_err(|e| format!("SSH collector failed: {}", e))??
+    } else {
+        collect.await?
+    };
+
+    drop(stdin_lease);
 
     Ok(output)
+}
+
+/// The group leader stays alive until completion is acknowledged, so its PID
+/// cannot be reused while a cancellation can still target the group. A single
+/// mkdir claim prevents timeout and EOF from issuing two kills. Successful
+/// commands release the leader without killing intentional background work.
+fn supervised_bash_script(command: &str, timeout_secs: u64, completion_marker: &str) -> String {
+    let runner = r#"__pkt_dir=$1
+trap ':' HUP INT TERM
+printf '%s\n' "$$" > "$__pkt_dir/group.tmp" && mv -- "$__pkt_dir/group.tmp" "$__pkt_dir/group" || exit 125
+while [ ! -f "$__pkt_dir/go" ] && [ ! -f "$__pkt_dir/cancel-requested" ]; do sleep 0.1; done
+if [ -f "$__pkt_dir/cancel-requested" ]; then
+  __pkt_status=124
+else
+  sh -c "$2" </dev/null
+  __pkt_status=$?
+fi
+printf '%s\n' "$__pkt_status" > "$__pkt_dir/status.tmp"
+mv -- "$__pkt_dir/status.tmp" "$__pkt_dir/status"
+while [ ! -f "$__pkt_dir/release" ]; do sleep 0.1; done
+exit "$__pkt_status""#;
+    format!(
+        r#"command -v setsid >/dev/null 2>&1 || {{ printf '%s\n' 'Remote bash requires setsid for safe cancellation' >&2; exit 125; }}
+__pkt_dir=$(mktemp -d) || exit 125
+trap ':' HUP INT TERM
+__pkt_kill_group() {{
+  : > "$__pkt_dir/cancel-requested"
+  if [ -s "$__pkt_dir/group" ] && mkdir "$__pkt_dir/kill" 2>/dev/null; then
+    if [ ! -f "$__pkt_dir/status" ] && [ -s "$__pkt_dir/group" ]; then
+      IFS= read -r __pkt_group < "$__pkt_dir/group"
+      case "$__pkt_group" in ''|*[!0-9]*) : ;; *) kill -KILL "-$__pkt_group" 2>/dev/null || : ;; esac
+    fi
+  fi
+}}
+exec 3<&0
+(
+  trap ':' HUP INT TERM
+  while IFS= read -r __pkt_line <&3; do :; done
+  : > "$__pkt_dir/cancel-requested"
+  __pkt_start=0
+  while [ ! -s "$__pkt_dir/group" ] && [ "$__pkt_start" -lt 100 ]; do
+    sleep 0.1
+    __pkt_start=$((__pkt_start + 1))
+  done
+  __pkt_kill_group
+  : > "$__pkt_dir/cancelled"
+  exec sleep 86400
+) &
+__pkt_watcher=$!
+setsid sh -c {runner} sh "$__pkt_dir" {command} </dev/null 3<&- &
+__pkt_job=$!
+__pkt_start=0
+while [ ! -s "$__pkt_dir/group" ] && [ ! -f "$__pkt_dir/cancel-requested" ] && [ "$__pkt_start" -lt 100 ]; do
+  sleep 0.1
+  __pkt_start=$((__pkt_start + 1))
+done
+if [ -s "$__pkt_dir/group" ] && [ ! -f "$__pkt_dir/cancel-requested" ]; then
+  : > "$__pkt_dir/go"
+else
+  __pkt_kill_group
+fi
+__pkt_ticks=0
+while [ ! -f "$__pkt_dir/status" ] && [ ! -f "$__pkt_dir/cancelled" ] && [ "$__pkt_ticks" -lt {ticks} ]; do
+  sleep 0.1
+  __pkt_ticks=$((__pkt_ticks + 1))
+done
+if [ -f "$__pkt_dir/status" ]; then
+  IFS= read -r __pkt_status < "$__pkt_dir/status"
+else
+  __pkt_kill_group
+  __pkt_status=124
+fi
+kill -KILL "$__pkt_watcher" 2>/dev/null || :
+wait "$__pkt_watcher" 2>/dev/null || :
+: > "$__pkt_dir/release"
+wait "$__pkt_job" 2>/dev/null || :
+rm -f -- "$__pkt_dir/group.tmp" "$__pkt_dir/group" "$__pkt_dir/go" "$__pkt_dir/cancel-requested" "$__pkt_dir/status.tmp" "$__pkt_dir/status" "$__pkt_dir/cancelled" "$__pkt_dir/release"
+rmdir "$__pkt_dir/kill" 2>/dev/null || :
+rmdir "$__pkt_dir" 2>/dev/null || :
+printf '%s' {completion_marker} >&2
+exit "$__pkt_status""#,
+        runner = sh_quote(runner),
+        command = sh_quote(command),
+        completion_marker = sh_quote(completion_marker),
+        ticks = timeout_secs.saturating_mul(10).max(1),
+    )
 }
 
 /// Public wrapper around `ssh_run` for non-tool consumers (e.g., worktree
@@ -440,12 +630,16 @@ pub async fn execute_bash(args: &serde_json::Value, config: &SshConfig) -> Resul
 
     info!(command = %command, timeout = %timeout_secs, "Tool(ssh): bash");
 
-    let remote_cmd = format!("cd {} && {}", sh_quote(&config.remote_path), command);
+    let command = format!("cd {} && {}", sh_quote(&config.remote_path), command);
+    let marker = format!(
+        "\n__SSH_GROUP_FINISHED_{}__\n",
+        uuid::Uuid::new_v4().simple()
+    );
+    let remote_cmd = supervised_bash_script(&command, timeout_secs, &marker);
 
-    // S1: request a remote TTY so a timeout hangs up the remote job tree (SIGHUP)
-    // instead of orphaning grandchildren. `-tt` line-discipline turns bare `\n`
-    // into `\r\n`, so normalize it back out of the captured output below.
-    let output = ssh_run_inner(config, &remote_cmd, timeout_secs, true).await?;
+    // Keep stdin's lease alive while collecting output. Dropping this future
+    // closes it, triggering remote group cancellation before any late writes.
+    let output = ssh_run_inner(config, &remote_cmd, timeout_secs, Some(&marker)).await?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -541,6 +735,187 @@ pub async fn execute_grep(args: &serde_json::Value, config: &SshConfig) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cleanup_drain_waits_only_for_its_pending_owner() {
+        let owner = uuid::Uuid::new_v4().to_string();
+        let unrelated = uuid::Uuid::new_v4().to_string();
+        let (finished, receiver) = tokio::sync::watch::channel(None);
+        register_cleanup(owner.clone(), receiver);
+        let (_other_finished, other_receiver) = tokio::sync::watch::channel(None);
+        register_cleanup(unrelated.clone(), other_receiver);
+        let mut drain = Box::pin(drain_session(&owner));
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut drain)
+            .await
+            .is_err());
+        finished.send_replace(Some(Ok(())));
+        tokio::time::timeout(Duration::from_secs(1), drain)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!cleanup_owners().contains_key(&owner));
+        cleanup_owners().remove(&unrelated);
+    }
+
+    #[tokio::test]
+    async fn cleanup_failure_is_sticky_for_stop_and_recovery_readers() {
+        let owner = uuid::Uuid::new_v4().to_string();
+        let (_finished, receiver) =
+            tokio::sync::watch::channel(Some(Err("not acknowledged".into())));
+        register_cleanup(owner.clone(), receiver);
+        for _ in 0..2 {
+            assert_eq!(drain_session(&owner).await.unwrap_err(), "not acknowledged");
+        }
+        cleanup_owners().remove(&owner);
+    }
+
+    /// Opt-in integration against an existing disposable, pinned SSH fixture.
+    /// Every file/process belongs to a fresh directory, never a live attempt.
+    #[tokio::test]
+    #[ignore = "requires PACKETBENCH_SSH_TEST_FIXTURE pointing at a disposable SSH fixture"]
+    async fn real_ssh_bash_cancellation_timeout_and_background_lifetimes() {
+        let fixture: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(std::env::var("PACKETBENCH_SSH_TEST_FIXTURE").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let root = format!(
+            "/work/flight-runtime-stop-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let config = SshConfig {
+            host: fixture["server"]["host"].as_str().unwrap().into(),
+            port: fixture["port"].as_u64().unwrap() as u16,
+            user: fixture["server"]["username"].as_str().unwrap().into(),
+            remote_path: root.clone(),
+            key_path: Some(fixture["keyPath"].as_str().unwrap().into()),
+            auth_method: Some("key".into()),
+            target_id: None,
+            host_fingerprint: Some(fixture["hostFingerprint"].as_str().unwrap().into()),
+        };
+        async fn read(config: &SshConfig, command: &str) -> String {
+            let output = ssh_run(config, command, 15).await.unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        }
+        let setup = format!(
+            "mkdir -- {root} && cd {root} && git init -q && printf 'staged content\\n' > staged.txt && printf 'preserved untracked\\n' > untouched.txt && git add staged.txt",
+            root = sh_quote(&root),
+        );
+        read(&config, &setup).await;
+        let evidence = format!("cd {} && sha256sum .git/index && git diff --cached --binary && cat staged.txt untouched.txt", sh_quote(&root));
+        let before = read(&config, &evidence).await;
+        fn command(root: &str, label: &str, delay_ms: u64, background: bool) -> String {
+            let child = format!(
+                "process.on('SIGHUP',()=>{{}});process.on('SIGTERM',()=>{{}});const fs=require('node:fs');fs.writeFileSync({ready},String(process.pid));setTimeout(()=>fs.writeFileSync({late},'survived'),{delay_ms});",
+                ready = serde_json::to_string(&format!("{root}/{label}.ready")).unwrap(),
+                late = serde_json::to_string(&format!("{root}/{label}.late")).unwrap(),
+            );
+            let parent = format!(
+                "const fs=require('node:fs');const child=require('node:child_process').spawn(process.execPath,['-e',{child}],{{stdio:'ignore'}});fs.writeFileSync({owner},JSON.stringify([process.pid,child.pid]));{finish}",
+                child = serde_json::to_string(&child).unwrap(),
+                owner = serde_json::to_string(&format!("{root}/{label}.owners")).unwrap(),
+                finish = if background { "child.unref();" } else { "setTimeout(()=>{},20000);" },
+            );
+            format!("node -e {}", sh_quote(&parent))
+        }
+        let config_for_task = config.clone();
+        let args = serde_json::json!({"command":command(&root,"abort",6000,false),"timeout":20});
+        let owner = uuid::Uuid::new_v4().to_string();
+        let task_owner = owner.clone();
+        let task = tokio::spawn(async move {
+            SSH_TOOL_OWNER
+                .scope(task_owner, execute_bash(&args, &config_for_task))
+                .await
+        });
+        let mut ready = false;
+        for _ in 0..30 {
+            let output = ssh_run(
+                &config,
+                &format!("test -f {}", sh_quote(&format!("{root}/abort.ready"))),
+                5,
+            )
+            .await
+            .unwrap();
+            if output.status.success() {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(ready, "remote grandchild did not start");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        drain_session(&owner)
+            .await
+            .expect("Stop must await remote cancellation acknowledgement");
+        let check_stopped = format!(
+            "const fs=require('node:fs');const root={root};const pids=JSON.parse(fs.readFileSync(root+'/abort.owners'));if(pids.some(pid=>{{try{{return fs.readFileSync('/proc/'+pid+'/cmdline','utf8').includes(root)}}catch{{return false}}}}))process.exit(1);",
+            root = serde_json::to_string(&root).unwrap(),
+        );
+        read(&config, &format!("node -e {}", sh_quote(&check_stopped))).await;
+        let timeout_args =
+            serde_json::json!({"command":command(&root,"timeout",3000,false),"timeout":1});
+        let timeout_error = execute_bash(&timeout_args, &config).await.unwrap_err();
+        assert!(timeout_error.contains("124"), "{timeout_error}");
+        let normal_args =
+            serde_json::json!({"command":command(&root,"background",500,true),"timeout":10});
+        execute_bash(&normal_args, &config).await.unwrap();
+        let started = std::time::Instant::now();
+        let signal_args = serde_json::json!({"command":"timeout 1 sleep 5","timeout":10});
+        let signal_error = execute_bash(&signal_args, &config).await.unwrap_err();
+        assert!(signal_error.contains("124"), "{signal_error}");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "user command inherited ignored TERM"
+        );
+        tokio::time::sleep(Duration::from_secs(7)).await;
+        let verify = format!(
+            "const fs=require('node:fs');const root={root};const active=label=>JSON.parse(fs.readFileSync(root+'/'+label+'.owners')).filter(pid=>{{try{{return fs.readFileSync('/proc/'+pid+'/cmdline','utf8').includes(root)}}catch{{return false}}}});console.log(JSON.stringify({{abortLate:fs.existsSync(root+'/abort.late'),timeoutLate:fs.existsSync(root+'/timeout.late'),backgroundLate:fs.existsSync(root+'/background.late'),abortActive:active('abort'),timeoutActive:active('timeout')}}));",
+            root = serde_json::to_string(&root).unwrap(),
+        );
+        let result: serde_json::Value =
+            serde_json::from_str(&read(&config, &format!("node -e {}", sh_quote(&verify))).await)
+                .unwrap();
+        assert_eq!(result["abortLate"], false, "{result}");
+        assert_eq!(result["timeoutLate"], false, "{result}");
+        assert_eq!(result["backgroundLate"], true, "{result}");
+        assert_eq!(
+            result["abortActive"].as_array().unwrap().len(),
+            0,
+            "{result}"
+        );
+        assert_eq!(
+            result["timeoutActive"].as_array().unwrap().len(),
+            0,
+            "{result}"
+        );
+        assert_eq!(
+            read(&config, &evidence).await,
+            before,
+            "Stop changed staged or untracked files"
+        );
+        let failed_owner = uuid::Uuid::new_v4().to_string();
+        let missing_marker = format!("\nmissing-{}\n", uuid::Uuid::new_v4());
+        let unacknowledged = SSH_TOOL_OWNER
+            .scope(
+                failed_owner.clone(),
+                ssh_run_inner(&config, "exit 255", 5, Some(&missing_marker)),
+            )
+            .await
+            .unwrap_err();
+        assert!(unacknowledged.contains("without confirmed"));
+        for _ in 0..2 {
+            assert!(drain_session(&failed_owner)
+                .await
+                .unwrap_err()
+                .contains("without confirmed"));
+        }
+        cleanup_owners().remove(&failed_owner);
+    }
 
     #[test]
     fn parent_confine_also_rejects_existing_symlinked_leaf() {

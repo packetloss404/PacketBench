@@ -10,7 +10,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
 use super::agent_config::AgentConfig;
-use super::flight::{Attempt, Flight, FlightApprovalRequest, Issue};
+use super::flight::{Attempt, AttemptTarget, Flight, FlightApprovalRequest, Issue};
 use super::orchestrator::OrchestratorSettings;
 use super::shared::home_dir;
 use super::workspace::Workspace;
@@ -581,11 +581,28 @@ where
 {
     let _guard = ASYNC_STATE_LOCK.lock().await;
     let mut state = load_state();
+    let flight_watermarks = flight_update_watermarks(&state.flights);
     let result = action(&mut state).await?;
+    preserve_flight_update_watermarks(&mut state.flights, &flight_watermarks);
     let _lock = lock_state_mutex();
     state.version += 1;
     save_state_inner(&state)?;
     Ok(result)
+}
+
+fn flight_update_watermarks(flights: &[Flight]) -> BTreeMap<String, u64> {
+    flights
+        .iter()
+        .map(|flight| (flight.id.clone(), flight.updated_at))
+        .collect()
+}
+
+fn preserve_flight_update_watermarks(flights: &mut [Flight], watermarks: &BTreeMap<String, u64>) {
+    for flight in flights {
+        if let Some(previous) = watermarks.get(&flight.id) {
+            flight.updated_at = flight.updated_at.max(*previous);
+        }
+    }
 }
 
 fn merge_attempts_for_frontend_save(existing: &[Attempt], incoming: Vec<Attempt>) -> Vec<Attempt> {
@@ -645,6 +662,81 @@ fn merge_flights_for_frontend_save(existing: &[Flight], incoming: Vec<Flight>) -
                 merge_attempts_for_frontend_save(&current.attempts, candidate.attempts);
             candidate.total_tokens = candidate.total_tokens.max(current.total_tokens);
             candidate.total_cost = candidate.total_cost.max(current.total_cost);
+            candidate.stopped_at = current.stopped_at;
+            candidate.delivery = current.delivery.clone();
+            // Executed task identities and accepted integration membership are
+            // backend references. A stale plan cannot orphan their attempts.
+            if !current.attempts.is_empty() || current.integration_branch.is_some() {
+                if current.execution_target.is_some() {
+                    candidate.execution_target = current.execution_target.clone();
+                } else if let Some(target) = &candidate.execution_target {
+                    let matches_attempt =
+                        current
+                            .attempts
+                            .iter()
+                            .any(|attempt| match &attempt.target {
+                                AttemptTarget::Local { base_path, .. } => {
+                                    target.kind == "local"
+                                        && target.server_id.is_none()
+                                        && &target.base_path == base_path
+                                }
+                                AttemptTarget::Ssh {
+                                    server_id,
+                                    base_path,
+                                    ..
+                                } => {
+                                    target.kind == "ssh"
+                                        && target.server_id.as_ref() == Some(server_id)
+                                        && &target.base_path == base_path
+                                }
+                            });
+                    let matches_integration =
+                        current
+                            .integration_branch
+                            .as_ref()
+                            .is_some_and(|integration| {
+                                target.kind == integration.target_kind
+                                    && target.server_id == integration.target_id
+                                    && target.base_path == current.project_path
+                            });
+                    if !matches_attempt && !matches_integration {
+                        candidate.execution_target = None;
+                    }
+                }
+                candidate.git_branch = current
+                    .git_branch
+                    .clone()
+                    .or_else(|| {
+                        current
+                            .integration_branch
+                            .as_ref()
+                            .map(|integration| integration.base_branch.clone())
+                    })
+                    .or_else(|| {
+                        current
+                            .attempts
+                            .first()
+                            .map(|attempt| attempt.base_branch.clone())
+                    });
+                candidate.project_path = current.project_path.clone();
+                candidate.execution_mode = current.execution_mode;
+                let old_ids: Vec<_> = current
+                    .milestones
+                    .iter()
+                    .map(|m| (&m.id, m.tasks.iter().map(|t| &t.id).collect::<Vec<_>>()))
+                    .collect();
+                let new_ids: Vec<_> = candidate
+                    .milestones
+                    .iter()
+                    .map(|m| (&m.id, m.tasks.iter().map(|t| &t.id).collect::<Vec<_>>()))
+                    .collect();
+                if old_ids != new_ids {
+                    candidate.milestones = current.milestones.clone();
+                }
+            }
+            if current.delivery.is_some() {
+                candidate.integration_branch = current.integration_branch.clone();
+            }
             candidate.updated_at = candidate.updated_at.max(current.updated_at);
             if candidate.prompt.is_none() {
                 candidate.prompt = current.prompt.clone();
@@ -1193,11 +1285,15 @@ mod tests {
             attempts: Vec::new(),
             review_gate_policy: None,
             execution_mode: None,
+            execution_target: None,
             integration_branch: None,
             coordination_inbox: Vec::new(),
             autonomy_mode: None,
             autonomy_policy: None,
             autonomy_runtime: None,
+            delivery: None,
+            archived_at: None,
+            stopped_at: None,
             planning_conversation_id: None,
             planner_session_id: None,
             planner_status: None,
@@ -1231,9 +1327,47 @@ mod tests {
             error_message: None,
             failure_category: None,
             review_gate: None,
+            session_history: None,
+            recovery: None,
+            delivery: None,
             task_id: None,
             draft_pr_number: None,
         }
+    }
+
+    #[test]
+    fn native_flight_writes_preserve_stop_timestamp_high_watermark() {
+        let mut flight = test_flight("flight-1");
+        flight.updated_at = 124;
+        let watermarks = flight_update_watermarks(std::slice::from_ref(&flight));
+        // A repair start or cost callback can run in the millisecond before
+        // Stop's logical stamp. Native writes may not roll that stamp back.
+        flight.updated_at = 123;
+        preserve_flight_update_watermarks(std::slice::from_mut(&mut flight), &watermarks);
+        assert_eq!(flight.updated_at, 124);
+    }
+
+    #[test]
+    fn frontend_save_cannot_reopen_stop_drop_delivery_or_replace_executed_plan() {
+        let mut current = test_flight("flight-1");
+        current.stopped_at = Some(99);
+        current.delivery = Some(serde_json::from_value(serde_json::json!({"kind":"landed","delivered_at":42,"branch":"pkt/a","base_branch":"main","commit_sha":"abc","attempt_id":"a"})).unwrap());
+        current.attempts = vec![test_attempt("a", AttemptStatus::Completed)];
+        current.milestones = vec![serde_json::from_value(serde_json::json!({"id":"executed","flight_id":"flight-1","title":"Original","description":"","order":0,"status":"done","tasks":[],"validation_criteria":[]})).unwrap()];
+        let merged =
+            merge_flights_for_frontend_save(&[current.clone()], vec![test_flight("flight-1")]);
+        assert_eq!(merged[0].stopped_at, Some(99));
+        assert_eq!(
+            merged[0].delivery.as_ref().unwrap().commit_sha.as_deref(),
+            Some("abc")
+        );
+        assert_eq!(merged[0].milestones[0].id, "executed");
+        // An explicit backend begin is the only operation that clears the fence.
+        current.stopped_at = None;
+        let mut stale = current.clone();
+        stale.stopped_at = Some(99);
+        let merged = merge_flights_for_frontend_save(&[current], vec![stale]);
+        assert_eq!(merged[0].stopped_at, None);
     }
 
     #[test]
@@ -1286,6 +1420,8 @@ mod tests {
 
     fn passed_gate() -> crate::core::flight::AttemptReviewGate {
         crate::core::flight::AttemptReviewGate {
+            evidence: None,
+            reviewer_sessions: Vec::new(),
             status: crate::core::flight::ReviewGateStatus::Passed,
             reviewer_conversation_id: Some("review-1".to_string()),
             reviewer_agent_config_id: Some("api-claude".to_string()),

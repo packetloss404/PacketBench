@@ -67,7 +67,7 @@ impl Default for OrchestratorSettings {
 pub const ATTEMPT_INTERRUPTED_BY_RESTART: &str = "Interrupted by app restart";
 
 /// An attempt demoted by [`recover_flights_on_startup`], carried out so the
-/// caller can sweep the worktree it left behind once the async runtime is up.
+/// caller can report the exact retained worktree without deleting any files.
 #[derive(Debug, Clone)]
 pub struct InterruptedAttempt {
     pub flight_id: String,
@@ -91,8 +91,7 @@ pub struct InterruptedAttempt {
 /// and `pkt/*` branch leak (teardown only runs on a terminal transition), and
 /// `validate_target_claims_against_active_attempts` blocks every future launch
 /// on that repo + branch with a path-collision error until the user cancels
-/// each ghost by hand. Demoted attempts are returned so the caller can sweep
-/// their worktrees; see `commands::flight_attempts::sweep_interrupted_attempts`.
+/// each ghost by hand. Demoted attempts are returned for retained-path reporting; see `commands::flight_attempts::sweep_interrupted_attempts`.
 pub fn recover_flights_on_startup(flights: &mut [Flight]) -> Vec<InterruptedAttempt> {
     let mut interrupted_attempts = Vec::new();
 
@@ -116,6 +115,25 @@ pub fn recover_flights_on_startup(flights: &mut [Flight]) -> Vec<InterruptedAtte
         let mut interrupted = false;
 
         for attempt in &mut flight.attempts {
+            if attempt.status == AttemptStatus::Reviewing {
+                attempt.recovery = Some(AttemptRecovery {
+                    state: RecoveryState::Retained,
+                    reason: ATTEMPT_INTERRUPTED_BY_RESTART.into(),
+                    retained_at: now(),
+                });
+                if let Some(gate) = &mut attempt.review_gate {
+                    if matches!(
+                        gate.status,
+                        ReviewGateStatus::Running | ReviewGateStatus::Pending
+                    ) {
+                        gate.status = ReviewGateStatus::Error;
+                        gate.error_message = Some(
+                            "Reviewer interrupted by app restart. Retry the reviewer explicitly."
+                                .into(),
+                        );
+                    }
+                }
+            }
             if !matches!(
                 attempt.status,
                 AttemptStatus::Queued | AttemptStatus::Provisioning | AttemptStatus::Running
@@ -123,6 +141,11 @@ pub fn recover_flights_on_startup(flights: &mut [Flight]) -> Vec<InterruptedAtte
                 continue;
             }
             attempt.status = AttemptStatus::Failed;
+            attempt.recovery = Some(crate::core::flight::AttemptRecovery {
+                state: crate::core::flight::RecoveryState::Retained,
+                reason: ATTEMPT_INTERRUPTED_BY_RESTART.into(),
+                retained_at: now(),
+            });
             if attempt.error_message.is_none() {
                 attempt.error_message = Some(ATTEMPT_INTERRUPTED_BY_RESTART.to_string());
             }
@@ -230,11 +253,15 @@ mod tests {
             attempts: Vec::new(),
             review_gate_policy: None,
             execution_mode: None,
+            execution_target: None,
             integration_branch: None,
             coordination_inbox: Vec::new(),
             autonomy_mode: None,
             autonomy_policy: None,
             autonomy_runtime: None,
+            delivery: None,
+            archived_at: None,
+            stopped_at: None,
             planning_conversation_id: None,
             planner_session_id: None,
             planner_status: None,
@@ -286,6 +313,7 @@ mod tests {
         flight.autonomy_mode = Some(AutonomyFlightMode::Yolo);
         flight.autonomy_policy = Some(AutonomyPolicy::default());
         flight.autonomy_runtime = Some(AutonomyRuntime {
+            review_retry_counts: None,
             status: AutonomyRunStatus::Running,
             started_at: Some(1),
             paused_at: None,
@@ -329,6 +357,9 @@ mod tests {
             error_message: None,
             failure_category: None,
             review_gate: None,
+            session_history: None,
+            recovery: None,
+            delivery: None,
             task_id: None,
             draft_pr_number: None,
         }
@@ -360,6 +391,10 @@ mod tests {
                 Some(ATTEMPT_INTERRUPTED_BY_RESTART)
             );
             assert!(demoted.completed_at.is_some(), "{}", demoted.id);
+            assert!(matches!(
+                demoted.recovery.as_ref().unwrap().state,
+                RecoveryState::Retained
+            ));
         }
     }
 

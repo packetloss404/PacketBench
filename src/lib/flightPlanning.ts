@@ -1,7 +1,6 @@
-import { generateId } from "@/lib/storage";
 import { APP_NAME, APP_NAME_LOWER } from "@/lib/brand";
 import type { AgentMessage } from "@/types/agent-conversation";
-import type { Milestone, TaskRole, TaskType } from "@/types/flight";
+import type { Flight, Milestone, TaskRole, TaskType } from "@/types/flight";
 
 export const FLIGHT_PLANNING_ALLOWED_TOOLS = ["read_file", "list_directory", "grep"];
 export const FLIGHT_PLAN_FENCE = `${APP_NAME_LOWER}-flight-plan`;
@@ -179,11 +178,12 @@ export function materializeFlightPlan(
 ): MaterializedFlightPlan {
   const taskIds = new Map<string, string>();
   for (const milestone of plan.milestones) {
-    for (const task of milestone.tasks) taskIds.set(task.key, generateId("task"));
+    for (const task of milestone.tasks)
+      taskIds.set(task.key, `${flightId}:task:${encodeURIComponent(task.key)}`);
   }
 
   const milestones = plan.milestones.map((milestone, milestoneIndex): Milestone => {
-    const milestoneId = generateId("milestone");
+    const milestoneId = `${flightId}:milestone:${encodeURIComponent(milestone.key)}`;
     return {
       id: milestoneId,
       flightId,
@@ -214,6 +214,25 @@ export function materializeFlightPlan(
   });
 
   return { title: plan.title, objective: plan.objective, milestones, taskCount: taskIds.size };
+}
+
+export function hasFlightPlanExecution(flight: Flight): boolean {
+  return Boolean(
+    flight.attempts?.length ||
+    flight.integrationBranch ||
+    flight.delivery ||
+    flight.milestones.some((milestone) =>
+      milestone.tasks.some(
+        (task) =>
+          task.sessionId ||
+          task.startedAt ||
+          task.completedAt ||
+          task.cost ||
+          task.tokens ||
+          !["pending", "blocked"].includes(task.status),
+      ),
+    ),
+  );
 }
 
 export function buildFlightPlanningSystemPrompt(flightId: string): string {

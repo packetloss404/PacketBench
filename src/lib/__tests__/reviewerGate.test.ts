@@ -118,6 +118,81 @@ describe("Reviewer Gate", () => {
     expect(bundle.patchTruncated).toBe(true);
   });
 
+  it("uses the captured immutable base and refuses a moving reviewed HEAD", async () => {
+    const loadGitEvidence = vi.fn().mockResolvedValue({
+      baseRef: "pinned",
+      headRef: "head",
+      diffSummary: "",
+      changedPaths: [],
+      patch: "",
+      patchTruncated: false,
+    });
+    const snapshot = {
+      fingerprint: "full-tree",
+      contextFingerprint: "criteria",
+      contextJson: JSON.stringify({
+        objective: "Captured objective",
+        prompt: "Captured prompt",
+        criteria: ["Captured criterion"],
+        task: null,
+        branch: "pkt/attempt-1",
+        target: { kind: "local", worktree_path: "/repo/.pkt-worktrees/attempt-1" },
+      }),
+      baseSha: "pinned",
+      headSha: "head",
+    };
+    const bundle = await buildReviewEvidenceBundle(
+      flight({ objective: "Frontend changed while capture awaited" }),
+      attempt(),
+      {
+        lookupServer: () => undefined,
+        loadGitEvidence,
+        snapshot,
+      },
+    );
+    expect(loadGitEvidence.mock.calls[0][1]).toBe("pinned");
+    expect(loadGitEvidence.mock.calls[0][4]).toBe("head");
+    expect(bundle.objective).toBe("Captured objective");
+    expect(bundle.acceptanceCriteria).toEqual(["Captured criterion"]);
+    loadGitEvidence.mockResolvedValueOnce({
+      baseRef: "pinned",
+      headRef: "later",
+      diffSummary: "",
+      changedPaths: [],
+      patch: "",
+      patchTruncated: false,
+    });
+    await expect(
+      buildReviewEvidenceBundle(flight(), attempt(), {
+        lookupServer: () => undefined,
+        loadGitEvidence,
+        snapshot,
+      }),
+    ).rejects.toThrow("changed");
+  });
+
+  it("rejects oversized required context instead of silently dropping criteria", async () => {
+    const loadGitEvidence = vi.fn();
+    const oversized = flight();
+    oversized.reviewGatePolicy!.acceptanceCriteria = Array.from(
+      { length: 41 },
+      (_, index) => `criterion ${index}`,
+    );
+    await expect(
+      buildReviewEvidenceBundle(oversized, attempt(), {
+        lookupServer: () => undefined,
+        loadGitEvidence,
+      }),
+    ).rejects.toThrow("cannot be omitted");
+    await expect(
+      buildReviewEvidenceBundle(flight({ objective: "x".repeat(8_001) }), attempt(), {
+        lookupServer: () => undefined,
+        loadGitEvidence,
+      }),
+    ).rejects.toThrow("evidence limit");
+    expect(loadGitEvidence).not.toHaveBeenCalled();
+  });
+
   it("uses the pinned SSH server for remote evidence and fails closed when it is missing", async () => {
     const server: ServerConfig = {
       id: "server-1",
@@ -169,6 +244,22 @@ describe("Reviewer Gate", () => {
     ).toBe(false);
     expect(
       reviewerGateAllowsAcceptance(base, attempt({ reviewGate: { status: "passed" } })).allowed,
+    ).toBe(false);
+    expect(
+      reviewerGateAllowsAcceptance(
+        base,
+        attempt({
+          reviewGate: {
+            status: "passed",
+            evidence: {
+              fingerprint: "snapshot",
+              contextFingerprint: "criteria",
+              baseSha: "base",
+              headSha: "head",
+            },
+          },
+        }),
+      ).allowed,
     ).toBe(true);
     expect(
       reviewerGateAllowsAcceptance(

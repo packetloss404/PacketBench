@@ -242,7 +242,9 @@ describe("API conversation restart recovery", () => {
     const first = await loadStore();
     const id = await first.useAgentTaskStore.getState().createApiConversation(launch);
     settingMock.mockRejectedValue(new Error("No active session"));
-    await expect(first.useAgentTaskStore.getState().setPlanMode(id, true)).rejects.toThrow("No active session");
+    await expect(first.useAgentTaskStore.getState().setPlanMode(id, true)).rejects.toThrow(
+      "No active session",
+    );
     first.releaseApiConversationListeners(id);
     vi.resetModules();
     const restarted = await loadStore();
@@ -252,59 +254,108 @@ describe("API conversation restart recovery", () => {
     await restarted.useAgentTaskStore.getState().setPermissionMode(id, "deny_all");
     await restarted.useAgentTaskStore.getState().setApproveWrites(id, true);
     expect(settingMock).not.toHaveBeenCalled();
-    expect(saved(id)).toMatchObject({ planMode: true, permissionMode: "deny_all", approveWrites: true });
+    expect(saved(id)).toMatchObject({
+      planMode: true,
+      permissionMode: "deny_all",
+      approveWrites: true,
+    });
   });
 
   it("applies the budget gate on both existing turns and restored launches", async () => {
     const first = await loadStore();
     const id = await first.useAgentTaskStore.getState().createApiConversation(launch);
-    first.useAgentTaskStore.setState((state) => ({ conversations: state.conversations.map((conv) => ({ ...conv, status: "done" })) }));
+    first.useAgentTaskStore.setState((state) => ({
+      conversations: state.conversations.map((conv) => ({ ...conv, status: "done" })),
+    }));
     budgetMock.mockRejectedValue(new Error("Session budget reached"));
     first.useAgentTaskStore.getState().sendMessage(id, "Keep this blocked prompt");
-    await vi.waitFor(() => expect(first.useAgentTaskStore.getState().conversations[0].status).toBe("failed"));
+    await vi.waitFor(() =>
+      expect(first.useAgentTaskStore.getState().conversations[0].status).toBe("failed"),
+    );
     expect(sendMock).not.toHaveBeenCalled();
-    expect(first.useAgentTaskStore.getState().conversations[0].messages.some((m) => m.content.includes("Session budget reached"))).toBe(true);
+    expect(
+      first.useAgentTaskStore
+        .getState()
+        .conversations[0].messages.some((m) => m.content.includes("Session budget reached")),
+    ).toBe(true);
     first.releaseApiConversationListeners(id);
     await first.useAgentTaskStore.getState().resumeApiConversation(id, "Resume");
     expect(startMock).toHaveBeenCalledTimes(1);
     expect(first.useAgentTaskStore.getState().conversations[0].status).toBe("failed");
   });
 
-  it.each(["active", "done", "failed"] as const)("preserves %s status in Monitor projections", async (status) => {
-    const { useAgentTaskStore, refreshConversationProjection } = await loadStore();
-    const id = await useAgentTaskStore.getState().createApiConversation(launch);
-    disk.set(id, JSON.stringify({ ...saved(id), status, messages: [{ id: "m", role: "assistant", content: "Live", timestamp: 1, isStreaming: status === "active" }] }));
-    await refreshConversationProjection();
-    expect(useAgentTaskStore.getState().conversations[0]).toMatchObject({ status, messages: [expect.objectContaining({ isStreaming: status === "active" })] });
-  });
+  it.each(["active", "done", "failed"] as const)(
+    "preserves %s status in Monitor projections",
+    async (status) => {
+      const { useAgentTaskStore, refreshConversationProjection } = await loadStore();
+      const id = await useAgentTaskStore.getState().createApiConversation(launch);
+      disk.set(
+        id,
+        JSON.stringify({
+          ...saved(id),
+          status,
+          messages: [
+            {
+              id: "m",
+              role: "assistant",
+              content: "Live",
+              timestamp: 1,
+              isStreaming: status === "active",
+            },
+          ],
+        }),
+      );
+      await refreshConversationProjection();
+      expect(useAgentTaskStore.getState().conversations[0]).toMatchObject({
+        status,
+        messages: [expect.objectContaining({ isStreaming: status === "active" })],
+      });
+    },
+  );
 
-  it.each(["send", "resume", "retry"])("Stop revokes a pending %s admission before any provider dispatch", async (kind) => {
-    const { useAgentTaskStore, releaseApiConversationListeners } = await loadStore();
-    const id = await useAgentTaskStore.getState().createApiConversation(launch);
-    useAgentTaskStore.setState((state) => ({ conversations: state.conversations.map((conv) => ({ ...conv, status: "done" })) }));
-    const check = deferred();
-    budgetMock.mockReturnValueOnce(check.promise);
-    if (kind === "resume") releaseApiConversationListeners(id);
-    const pending = kind === "retry" ? useAgentTaskStore.getState().retryLastTurn(id)
-      : kind === "resume" ? useAgentTaskStore.getState().resumeApiConversation(id, "resume")
-      : useAgentTaskStore.getState().sendMessage(id, "send");
-    await useAgentTaskStore.getState().cancelActiveConversation(id);
-    expect(useAgentTaskStore.getState().conversations[0].status).toBe("idle");
-    check.resolve();
-    await pending;
-    await Promise.resolve();
-    expect(startMock).toHaveBeenCalledTimes(1);
-    expect(sendMock).not.toHaveBeenCalled();
-    expect(retryMock).not.toHaveBeenCalled();
-    expect(useAgentTaskStore.getState().conversations[0].messages.some((m) => m.isStreaming)).toBe(false);
-  });
+  it.each(["send", "resume", "retry"])(
+    "Stop revokes a pending %s admission before any provider dispatch",
+    async (kind) => {
+      const { useAgentTaskStore, releaseApiConversationListeners } = await loadStore();
+      const id = await useAgentTaskStore.getState().createApiConversation(launch);
+      useAgentTaskStore.setState((state) => ({
+        conversations: state.conversations.map((conv) => ({ ...conv, status: "done" })),
+      }));
+      const check = deferred();
+      budgetMock.mockReturnValueOnce(check.promise);
+      if (kind === "resume") releaseApiConversationListeners(id);
+      const pending =
+        kind === "retry"
+          ? useAgentTaskStore.getState().retryLastTurn(id)
+          : kind === "resume"
+            ? useAgentTaskStore.getState().resumeApiConversation(id, "resume")
+            : useAgentTaskStore.getState().sendMessage(id, "send");
+      await useAgentTaskStore.getState().cancelActiveConversation(id);
+      expect(useAgentTaskStore.getState().conversations[0].status).toBe("idle");
+      check.resolve();
+      await pending;
+      await Promise.resolve();
+      expect(startMock).toHaveBeenCalledTimes(1);
+      expect(sendMock).not.toHaveBeenCalled();
+      expect(retryMock).not.toHaveBeenCalled();
+      expect(
+        useAgentTaskStore.getState().conversations[0].messages.some((m) => m.isStreaming),
+      ).toBe(false);
+    },
+  );
 
   it("a cancelled budget read cannot fail a newer turn when its rejection arrives late", async () => {
     const { useAgentTaskStore } = await loadStore();
     const id = await useAgentTaskStore.getState().createApiConversation(launch);
-    useAgentTaskStore.setState((state) => ({ conversations: state.conversations.map((conv) => ({ ...conv, status: "done" })) }));
+    useAgentTaskStore.setState((state) => ({
+      conversations: state.conversations.map((conv) => ({ ...conv, status: "done" })),
+    }));
     let reject!: (error: Error) => void;
-    budgetMock.mockReturnValueOnce(new Promise<void>((_resolve, fail) => { reject = fail; }));
+    budgetMock.mockReturnValueOnce(
+      new Promise<void>((_resolve, fail) => {
+        reject = fail;
+      }),
+    );
     useAgentTaskStore.getState().sendMessage(id, "Old cancelled prompt");
     await useAgentTaskStore.getState().cancelActiveConversation(id);
     useAgentTaskStore.getState().sendMessage(id, "New turn");
@@ -313,35 +364,93 @@ describe("API conversation restart recovery", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(useAgentTaskStore.getState().conversations[0].status).toBe("active");
-    expect(useAgentTaskStore.getState().conversations[0].messages.some((m) => m.content.includes("Late budget failure"))).toBe(false);
+    expect(
+      useAgentTaskStore
+        .getState()
+        .conversations[0].messages.some((m) => m.content.includes("Late budget failure")),
+    ).toBe(false);
   });
 
-  it.each(["create", "resume"])("Stop during %s listener installation releases the abandoned session and permits resume", async (kind) => {
-    const { useAgentTaskStore, releaseApiConversationListeners } = await loadStore();
-    let id: string;
-    let pending: Promise<unknown>;
-    const install = deferred();
-    const cleanup = vi.fn();
-    if (kind === "resume") {
-      id = await useAgentTaskStore.getState().createApiConversation(launch);
-      releaseApiConversationListeners(id);
-      listenerMock.mockImplementationOnce(async () => { await install.promise; return cleanup; });
-      pending = useAgentTaskStore.getState().resumeApiConversation(id, "Resume");
-    } else {
-      listenerMock.mockImplementationOnce(async () => { await install.promise; return cleanup; });
-      pending = useAgentTaskStore.getState().createApiConversation(launch);
-      await vi.waitFor(() => expect(useAgentTaskStore.getState().conversations).toHaveLength(1));
-      id = useAgentTaskStore.getState().conversations[0].id;
-    }
-    await vi.waitFor(() => expect(listenerMock).toHaveBeenCalledTimes(kind === "resume" ? 2 : 1));
-    const starts = startMock.mock.calls.length;
-    await useAgentTaskStore.getState().cancelActiveConversation(id);
-    install.resolve();
-    await pending;
-    expect(startMock).toHaveBeenCalledTimes(starts);
-    expect(cleanup).toHaveBeenCalledOnce();
-    useAgentTaskStore.getState().sendMessage(id, "User retries explicitly");
-    await vi.waitFor(() => expect(startMock).toHaveBeenCalledTimes(starts + 1));
-    expect(sendMock).not.toHaveBeenCalled();
-  });
+  it.each(["send", "resume"] as const)(
+    "rejects a cancelled %s receipt without failing the newer turn",
+    async (kind) => {
+      const { useAgentTaskStore, releaseApiConversationListeners } = await loadStore();
+      const id = await useAgentTaskStore.getState().createApiConversation(launch);
+      useAgentTaskStore.setState((state) => ({
+        conversations: state.conversations.map((conv) => ({ ...conv, status: "done" })),
+      }));
+      if (kind === "resume") releaseApiConversationListeners(id);
+      let reject!: (error: Error) => void;
+      budgetMock.mockReturnValueOnce(
+        new Promise<void>((_resolve, fail) => {
+          reject = fail;
+        }),
+      );
+      const cancelled = useAgentTaskStore
+        .getState()
+        .sendMessageWithReceipt(id, "Old cancelled receipt")
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      await useAgentTaskStore.getState().cancelActiveConversation(id);
+      await useAgentTaskStore.getState().sendMessageWithReceipt(id, "New live turn");
+      expect(useAgentTaskStore.getState().conversations[0].status).toBe("active");
+      reject(new Error("Late cancelled admission failure"));
+
+      expect(await cancelled).toMatchObject({
+        message: "The turn was cancelled before provider dispatch.",
+      });
+      const current = useAgentTaskStore.getState().conversations[0];
+      expect(current.status).toBe("active");
+      expect(current.messages.filter((message) => message.isStreaming)).toHaveLength(1);
+      expect(
+        current.messages.some(
+          (message) =>
+            message.content.includes("Late cancelled admission failure") ||
+            message.content.includes("Error: The turn was cancelled"),
+        ),
+      ).toBe(false);
+      expect(startMock).toHaveBeenCalledTimes(kind === "resume" ? 2 : 1);
+      expect(sendMock).toHaveBeenCalledTimes(kind === "resume" ? 0 : 1);
+    },
+  );
+
+  it.each(["create", "resume"])(
+    "Stop during %s listener installation releases the abandoned session and permits resume",
+    async (kind) => {
+      const { useAgentTaskStore, releaseApiConversationListeners } = await loadStore();
+      let id: string;
+      let pending: Promise<unknown>;
+      const install = deferred();
+      const cleanup = vi.fn();
+      if (kind === "resume") {
+        id = await useAgentTaskStore.getState().createApiConversation(launch);
+        releaseApiConversationListeners(id);
+        listenerMock.mockImplementationOnce(async () => {
+          await install.promise;
+          return cleanup;
+        });
+        pending = useAgentTaskStore.getState().resumeApiConversation(id, "Resume");
+      } else {
+        listenerMock.mockImplementationOnce(async () => {
+          await install.promise;
+          return cleanup;
+        });
+        pending = useAgentTaskStore.getState().createApiConversation(launch);
+        await vi.waitFor(() => expect(useAgentTaskStore.getState().conversations).toHaveLength(1));
+        id = useAgentTaskStore.getState().conversations[0].id;
+      }
+      await vi.waitFor(() => expect(listenerMock).toHaveBeenCalledTimes(kind === "resume" ? 2 : 1));
+      const starts = startMock.mock.calls.length;
+      await useAgentTaskStore.getState().cancelActiveConversation(id);
+      install.resolve();
+      await pending;
+      expect(startMock).toHaveBeenCalledTimes(starts);
+      expect(cleanup).toHaveBeenCalledOnce();
+      useAgentTaskStore.getState().sendMessage(id, "User retries explicitly");
+      await vi.waitFor(() => expect(startMock).toHaveBeenCalledTimes(starts + 1));
+      expect(sendMock).not.toHaveBeenCalled();
+    },
+  );
 });

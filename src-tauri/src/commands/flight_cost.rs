@@ -144,6 +144,50 @@ pub fn flight_for_executor_session(
                 provider: a.provider.clone(),
             });
         }
+        if let Some(owner) = f
+            .attempts
+            .iter()
+            .flat_map(|attempt| attempt.session_history.iter().flatten())
+            .find(|owner| owner.session_id == session_id)
+        {
+            return Some(ExecutorSessionOwner {
+                flight_id: f.id.clone(),
+                model: owner.model.clone(),
+                provider: owner.provider.clone(),
+            });
+        }
+        for gate in f
+            .attempts
+            .iter()
+            .filter_map(|attempt| attempt.review_gate.as_ref())
+        {
+            if let Some(session) = gate
+                .reviewer_sessions
+                .iter()
+                .find(|session| session.session_id == session_id)
+            {
+                return Some(ExecutorSessionOwner {
+                    flight_id: f.id.clone(),
+                    model: session.model.clone(),
+                    provider: session.provider.clone(),
+                });
+            }
+            // Older runs have no session ledger, but their active reviewer is
+            // still attributable without guessing the builder's model/provider.
+            if gate.reviewer_conversation_id.as_deref() == Some(session_id) {
+                let agent = gate.reviewer_agent_config_id.as_deref().unwrap_or_default();
+                let provider = if agent == "api-claude" {
+                    "anthropic"
+                } else {
+                    agent.trim_start_matches("api-")
+                };
+                return Some(ExecutorSessionOwner {
+                    flight_id: f.id.clone(),
+                    model: gate.reviewer_model.clone().unwrap_or_default(),
+                    provider: provider.to_string(),
+                });
+            }
+        }
         if let Some(t) = f
             .milestones
             .iter()
@@ -233,11 +277,15 @@ mod e8_accum {
                 attempts: Vec::new(),
                 review_gate_policy: None,
                 execution_mode: None,
+            execution_target: None,
                 integration_branch: None,
                 coordination_inbox: Vec::new(),
                 autonomy_mode: None,
                 autonomy_policy: None,
                 autonomy_runtime: None,
+                delivery: None,
+                archived_at: None,
+                stopped_at: None,
                 planning_conversation_id: None,
                 planner_session_id: None,
                 planner_status: None,
@@ -354,11 +402,15 @@ mod hermetic_money_path {
             attempts: Vec::new(),
             review_gate_policy: None,
             execution_mode: None,
+            execution_target: None,
             integration_branch: None,
             coordination_inbox: Vec::new(),
             autonomy_mode: None,
             autonomy_policy: None,
             autonomy_runtime: None,
+            delivery: None,
+            archived_at: None,
+            stopped_at: None,
             planning_conversation_id: None,
             planner_session_id: None,
             planner_status: None,
@@ -392,6 +444,9 @@ mod hermetic_money_path {
             error_message: None,
             failure_category: None,
             review_gate: None,
+            session_history: None,
+            recovery: None,
+            delivery: None,
             task_id: None,
             draft_pr_number: None,
         }
@@ -468,6 +523,61 @@ mod hermetic_money_path {
             .expect("attempt-linked session must resolve");
         assert_eq!(owner.flight_id, "flight-a");
         assert_eq!(owner.model, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn reviewer_lookup_keeps_old_sessions_and_actual_model_after_retry() {
+        let mut flight = base_flight("review-flight");
+        let mut attempt = attempt_with("builder", "builder-model");
+        attempt.review_gate = Some(
+            serde_json::from_value(serde_json::json!({
+                "status": "running", "reviewer_conversation_id": "new-review",
+                "reviewer_agent_config_id": "api-openai-agents", "reviewer_model": "new-model",
+                "reviewer_sessions": [
+                    {"session_id": "old-review", "provider": "claude-oauth", "model": "old-model"},
+                    {"session_id": "new-review", "provider": "openai-agents", "model": "new-model"}
+                ]
+            }))
+            .unwrap(),
+        );
+        flight.attempts.push(attempt);
+        let state = state_with(vec![flight]);
+        let old = flight_for_executor_session(&state, "old-review").unwrap();
+        assert_eq!(
+            (
+                old.flight_id.as_str(),
+                old.provider.as_str(),
+                old.model.as_str()
+            ),
+            ("review-flight", "claude-oauth", "old-model")
+        );
+        let new = flight_for_executor_session(&state, "new-review").unwrap();
+        assert_eq!(
+            (new.provider.as_str(), new.model.as_str()),
+            ("openai-agents", "new-model")
+        );
+        assert_eq!(
+            flight_for_executor_session(&state, "builder")
+                .unwrap()
+                .model,
+            "builder-model"
+        );
+        assert!(flight_for_executor_session(&state, "unrelated").is_none());
+    }
+
+    #[test]
+    fn legacy_reviewer_lookup_never_uses_builder_pricing() {
+        let mut flight = base_flight("legacy-review");
+        let mut attempt = attempt_with("builder", "builder-model");
+        attempt.review_gate = Some(serde_json::from_value(serde_json::json!({
+            "status": "error", "reviewer_conversation_id": "review", "reviewer_agent_config_id": "api-claude", "reviewer_model": "review-model"
+        })).unwrap());
+        flight.attempts.push(attempt);
+        let owner = flight_for_executor_session(&state_with(vec![flight]), "review").unwrap();
+        assert_eq!(
+            (owner.provider.as_str(), owner.model.as_str()),
+            ("anthropic", "review-model")
+        );
     }
 
     /// Legacy milestone-task linkage: a session id living on

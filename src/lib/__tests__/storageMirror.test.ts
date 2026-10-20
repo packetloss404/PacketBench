@@ -109,10 +109,9 @@ describe("bundle-identifier change", () => {
       const { create } = await import("zustand");
       const { persist } = await import("zustand/middleware");
       return create<{ label: string; setLabel: (v: string) => void }>()(
-        persist(
-          (set) => ({ label: "", setLabel: (label: string) => set({ label }) }),
-          { name: storageKey("proof-persist-store") },
-        ),
+        persist((set) => ({ label: "", setLabel: (label: string) => set({ label }) }), {
+          name: storageKey("proof-persist-store"),
+        }),
       );
     };
     (await makePersistStore()).getState().setLabel("written-before-the-rename");
@@ -181,10 +180,7 @@ describe("bundle-identifier change", () => {
 
     expect(disk.file).not.toBeNull();
     expect(Object.keys(disk.file ?? {})).toEqual(
-      expect.arrayContaining([
-        storageKey("issue-flight-mirrors"),
-        storageKey("packet-agent"),
-      ]),
+      expect.arrayContaining([storageKey("issue-flight-mirrors"), storageKey("packet-agent")]),
     );
     expect(disk.file?.[storageKey("issue-flight-mirrors")]).toContain("flight-1");
   });
@@ -240,6 +236,121 @@ describe("restore", () => {
 // ---------------------------------------------------------------------------
 // Failure modes
 // ---------------------------------------------------------------------------
+
+describe("warm-origin project history", () => {
+  const historyKey = storageKey("project-history");
+
+  it("unions both origins before hydration and keeps that union in the initial mirror flush", async () => {
+    const live = [
+      { path: "/warm-only", lastOpened: 40 },
+      { path: "/shared", lastOpened: 20 },
+    ];
+    const durable = [
+      { path: "/baseline-only", lastOpened: 30 },
+      { path: "/shared", lastOpened: 50 },
+    ];
+    disk.file = {
+      [historyKey]: JSON.stringify(durable),
+      [storageKey("settings")]: '{"theme":"old"}',
+      [storageKey("routing")]: '{"mode":"auto"}',
+      "unrelated:key": "leave outside the origin",
+    };
+    const settings = ' { "theme": "current", "privacy": "current" } ';
+    localStorage.setItem(historyKey, JSON.stringify(live));
+    localStorage.setItem(storageKey("settings"), settings);
+    localStorage.setItem("unrelated:key", "live unrelated value");
+    await freshMirrorModule();
+    const result = await mirror.bootStorageMirror();
+    const expected = [
+      { path: "/shared", lastOpened: 50 },
+      { path: "/warm-only", lastOpened: 40 },
+      { path: "/baseline-only", lastOpened: 30 },
+    ];
+    expect(JSON.parse(localStorage.getItem(historyKey)!)).toEqual(expected);
+    expect(result.restored).toBe(2);
+    await mirror.flushStorageMirrorNow();
+    expect(JSON.parse(disk.file![historyKey])).toEqual(expected);
+    expect(localStorage.getItem(storageKey("settings"))).toBe(settings);
+    expect(disk.file![storageKey("settings")]).toBe(settings);
+    expect(localStorage.getItem(storageKey("routing"))).toBe('{"mode":"auto"}');
+    expect(localStorage.getItem("unrelated:key")).toBe("live unrelated value");
+    expect(disk.file!["unrelated:key"]).toBeUndefined();
+  });
+
+  it("uses maximum timestamps for duplicates while preserving case and separators as distinct paths", async () => {
+    localStorage.setItem(
+      historyKey,
+      JSON.stringify([
+        { path: "C:/Repo", lastOpened: 10 },
+        { path: "/same", lastOpened: 80 },
+        { path: "/same", lastOpened: 20 },
+        { path: "/local-tie", lastOpened: 50 },
+      ]),
+    );
+    disk.file = {
+      [historyKey]: JSON.stringify([
+        { path: "C:/Repo", lastOpened: 70 },
+        { path: "c:/repo", lastOpened: 60 },
+        { path: "C:\\Repo", lastOpened: 50 },
+        { path: "/same", lastOpened: 30 },
+      ]),
+    };
+    await freshMirrorModule();
+    await mirror.bootStorageMirror();
+    expect(JSON.parse(localStorage.getItem(historyKey)!)).toEqual([
+      { path: "/same", lastOpened: 80 },
+      { path: "C:/Repo", lastOpened: 70 },
+      { path: "c:/repo", lastOpened: 60 },
+      { path: "/local-tie", lastOpened: 50 },
+      { path: "C:\\Repo", lastOpened: 50 },
+    ]);
+  });
+
+  it.each([
+    "not JSON",
+    "{}",
+    "[null]",
+    '[{"path":"/bad","lastOpened":"new"}]',
+    '[{"path":"","lastOpened":1}]',
+    '[{"path":"/bad","lastOpened":1e999}]',
+  ])("keeps the valid history copy when either input is malformed: %s", async (malformed) => {
+    const valid = JSON.stringify([{ path: "/valid", lastOpened: 1 }]);
+    for (const [live, durable] of [
+      [malformed, valid],
+      [valid, malformed],
+    ]) {
+      mirror.stopStorageMirror();
+      localStorage.clear();
+      localStorage.setItem(historyKey, live);
+      disk.file = { [historyKey]: durable };
+      await mirror.bootStorageMirror();
+      expect(localStorage.getItem(historyKey)).toBe(valid);
+      await mirror.flushStorageMirrorNow();
+      expect(disk.file![historyKey]).toBe(valid);
+    }
+  });
+
+  it("leaves the current value unchanged when neither history copy is valid", async () => {
+    const current = "{current invalid";
+    localStorage.setItem(historyKey, current);
+    disk.file = { [historyKey]: "{mirror invalid" };
+    await freshMirrorModule();
+    expect((await mirror.bootStorageMirror()).restored).toBe(0);
+    expect(localStorage.getItem(historyKey)).toBe(current);
+  });
+
+  it("does not rewrite an already merged history and restores a cold origin as before", async () => {
+    const history = JSON.stringify([{ path: "/existing", lastOpened: 1 }]);
+    disk.file = { [historyKey]: history };
+    localStorage.setItem(historyKey, history);
+    await freshMirrorModule();
+    expect((await mirror.bootStorageMirror()).restored).toBe(0);
+    mirror.stopStorageMirror();
+    localStorage.clear();
+    expect((await mirror.bootStorageMirror()).restored).toBe(1);
+    expect(localStorage.getItem(historyKey)).toBe(history);
+  });
+});
 
 describe("degradation", () => {
   it("is an inert no-op with no Tauri runtime", async () => {

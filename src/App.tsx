@@ -37,6 +37,7 @@ import { initializeApp, persistUiState } from "@/lib/bootstrap";
 import { requestNotificationPermission } from "@/lib/notifications";
 import type { AppView } from "@/stores/appStore";
 import { APP_NAME } from "@/lib/brand";
+import { useFlightStore } from "@/stores/flightStore";
 
 // Lazy-loaded views — split into separate chunks to reduce initial bundle size
 const IssueBoard = lazy(() =>
@@ -63,6 +64,11 @@ const AgentsView = lazy(() =>
 const FlightsView = lazy(() =>
   import("@/components/views/FlightsView").then((m) => ({ default: m.FlightsView })),
 );
+const LaunchAsyncFlightModal = lazy(() =>
+  import("@/components/flights/LaunchAsyncFlightModal").then((m) => ({
+    default: m.LaunchAsyncFlightModal,
+  })),
+);
 
 const DictationView = lazy(() =>
   import("@/components/views/DictationView").then((m) => ({ default: m.DictationView })),
@@ -82,6 +88,8 @@ function ViewLoader() {
 }
 
 export default function App() {
+  const flightLaunchContext = useAppStore((s) => s.flightLaunchContext);
+  const closeFlightBrief = useAppStore((s) => s.closeFlightBrief);
   const activeView = useAppStore((s) => s.activeView);
   const setActiveView = useAppStore((s) => s.setActiveView);
   const theme = useAppStore((s) => s.theme);
@@ -289,6 +297,18 @@ export default function App() {
             />
           )}
           <SideChatOverlay />
+          {flightLaunchContext && (
+            <Suspense fallback={null}>
+              <LaunchAsyncFlightModal
+                initialContext={flightLaunchContext}
+                onClose={closeFlightBrief}
+                onLaunched={(id) => {
+                  useFlightStore.getState().setActiveFlight(id);
+                  setActiveView("flights");
+                }}
+              />
+            </Suspense>
+          )}
           {/* P1-9: blocking approvals in conversations that aren't on screen
             stay pinned at the viewport edge until answered. */}
           <PinnedApprovalBanner />

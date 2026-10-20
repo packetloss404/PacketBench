@@ -8,9 +8,20 @@
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { useEffect, useState } from "react";
 
 const getGitBranch = vi.hoisted(() => vi.fn());
 const getGitBranchRemote = vi.hoisted(() => vi.fn());
+vi.mock("@/components/flights/FlightAgentPicker", () => ({
+  FlightAgentPicker: ({
+    onReadinessChange,
+  }: {
+    onReadinessChange?: (error: string | null) => void;
+  }) => {
+    useEffect(() => onReadinessChange?.(null), [onReadinessChange]);
+    return null;
+  },
+}));
 
 vi.mock("@/lib/tauri", () => ({
   getGitBranch: (...args: unknown[]) => getGitBranch(...args),
@@ -164,5 +175,66 @@ describe("MultiTargetPicker base-branch seeding", () => {
     await waitFor(() => expect(getGitBranch).toHaveBeenCalled());
     // Only the original add reached onChange — the late probe stood down.
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("Flight repository readiness", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useWorkspaceStore.setState({ workspaces: [] });
+    useServerStore.setState({ servers: [] });
+  });
+
+  function EditableTarget({ onValidation }: { onValidation: (errors: string[]) => void }) {
+    const [picked, setPicked] = useState<PickedTarget[]>([localTarget()]);
+    return (
+      <MultiTargetPicker picked={picked} onChange={setPicked} onValidationChange={onValidation} />
+    );
+  }
+
+  it("requires verification of an edited repository before marking the target ready", async () => {
+    getGitBranch.mockResolvedValue("trunk");
+    const validation = vi.fn();
+    render(<EditableTarget onValidation={validation} />);
+    await waitFor(() => expect(validation).toHaveBeenLastCalledWith([]));
+
+    getGitBranch.mockRejectedValue(new Error("not a repository"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Repository path for example" }), {
+      target: { value: "D:/not-a-repository" },
+    });
+    expect(validation.mock.lastCall?.[0]).not.toEqual([]);
+    await waitFor(() => expect(screen.getByText(/Repository could not be verified/)).toBeTruthy());
+    expect(getGitBranch).toHaveBeenLastCalledWith("D:/not-a-repository");
+    expect(validation.mock.lastCall?.[0]).not.toEqual([]);
+  });
+
+  it("reverifies a changed SSH host even when its repository path is unchanged", async () => {
+    getGitBranchRemote.mockResolvedValue("main");
+    const validation = vi.fn();
+    const target: PickedTarget = {
+      ...localTarget(),
+      kind: "ssh",
+      key: "ssh:server",
+      server: SERVER,
+      basePath: "/srv/repo",
+    };
+    const props = { onChange: vi.fn(), onValidationChange: validation };
+    const { rerender } = render(<MultiTargetPicker {...props} picked={[target]} />);
+    await waitFor(() => expect(validation).toHaveBeenLastCalledWith([]));
+
+    getGitBranchRemote.mockReturnValue(new Promise(() => {}));
+    rerender(
+      <MultiTargetPicker
+        {...props}
+        picked={[
+          {
+            ...target,
+            server: { ...SERVER, host: "replacement.example.com", hostFingerprint: "SHA256:new" },
+          },
+        ]}
+      />,
+    );
+    await waitFor(() => expect(validation.mock.lastCall?.[0]).not.toEqual([]));
+    expect(screen.getByText("Checking repository…")).toBeTruthy();
   });
 });

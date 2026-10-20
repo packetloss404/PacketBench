@@ -1,11 +1,5 @@
 import { useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  CirclePause,
-  CirclePlay,
-  ShieldAlert,
-  Square,
-} from "lucide-react";
+import { AlertTriangle, CirclePause, CirclePlay, ShieldAlert, Square } from "lucide-react";
 import {
   pauseFlightAutonomy,
   startFlightAutonomy,
@@ -21,14 +15,15 @@ function formatCost(value: number): string {
 export function FlightAutonomyCard({ flight }: { flight: Flight }) {
   const [error, setError] = useState<string | null>(null);
   const [stopArmed, setStopArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
   const runtime = flight.autonomyRuntime;
   const policy = flight.autonomyPolicy;
   const modeLabel =
     flight.autonomyMode === "yolo"
-      ? "YOLO"
+      ? "Bounded automatic actions"
       : flight.autonomyMode === "settings_default"
         ? policy
-          ? "YOLO · Settings snapshot"
+          ? "Bounded automatic actions · Settings snapshot"
           : "Assisted · Settings snapshot"
         : "Assisted";
   const recentActions = useMemo(
@@ -40,24 +35,23 @@ export function FlightAutonomyCard({ flight }: { flight: Flight }) {
       ? Math.max(0, Math.floor((Date.now() - runtime.startedAt) / 60_000))
       : 0;
 
-  function run(action: () => void | Promise<void>) {
+  async function run(action: () => void | Promise<void>) {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
-      void Promise.resolve(action()).catch((reason) =>
-        setError(reason instanceof Error ? reason.message : String(reason)),
-      );
+      await action();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="rounded border border-bg-border bg-bg-secondary/35 px-3 py-2.5">
       <div className="flex items-center gap-2">
-        <ShieldAlert
-          size={12}
-          className={policy ? "text-accent-amber" : "text-text-muted"}
-        />
+        <ShieldAlert size={12} className={policy ? "text-accent-amber" : "text-text-muted"} />
         <span className="text-[11px] font-medium text-text-secondary">
           Supervision · {modeLabel}
         </span>
@@ -110,7 +104,7 @@ export function FlightAutonomyCard({ flight }: { flight: Flight }) {
           </p>
 
           {runtime?.hardStopReason && (
-            <div className="border-accent-amber/30 bg-accent-amber/10 mt-2 flex items-start gap-1.5 rounded border px-2 py-1 text-[10px] text-accent-amber">
+            <div className="mt-2 flex items-start gap-1.5 rounded border border-accent-amber/30 bg-accent-amber/10 px-2 py-1 text-[10px] text-accent-amber">
               <AlertTriangle size={10} className="mt-px shrink-0" />
               {runtime.hardStopReason}
             </div>
@@ -120,8 +114,9 @@ export function FlightAutonomyCard({ flight }: { flight: Flight }) {
             {runtime && ["idle", "paused", "needs_attention"].includes(runtime.status) && (
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => run(() => startFlightAutonomy(flight.id))}
-                className="border-accent-green/35 bg-accent-green/10 flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] text-accent-green"
+                className="flex items-center gap-1 rounded border border-accent-green/35 bg-accent-green/10 px-2 py-0.5 text-[10px] text-accent-green"
               >
                 <CirclePlay size={10} /> {runtime.status === "idle" ? "Start" : "Resume"}
               </button>
@@ -129,6 +124,7 @@ export function FlightAutonomyCard({ flight }: { flight: Flight }) {
             {runtime?.status === "running" && (
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => run(() => pauseFlightAutonomy(flight.id))}
                 className="flex items-center gap-1 rounded border border-bg-border px-2 py-0.5 text-[10px] text-text-secondary"
               >
@@ -138,6 +134,7 @@ export function FlightAutonomyCard({ flight }: { flight: Flight }) {
             {runtime && !["stopped", "completed"].includes(runtime.status) && (
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => {
                   if (!stopArmed) {
                     setStopArmed(true);
@@ -147,9 +144,9 @@ export function FlightAutonomyCard({ flight }: { flight: Flight }) {
                   setStopArmed(false);
                 }}
                 onBlur={() => setStopArmed(false)}
-                className="border-accent-red/30 flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] text-accent-red"
+                className="flex items-center gap-1 rounded border border-accent-red/30 px-2 py-0.5 text-[10px] text-accent-red"
               >
-                <Square size={9} /> {stopArmed ? "Confirm stop & cancel" : "Stop"}
+                <Square size={9} /> {stopArmed ? "Confirm stop & retain work" : "Stop"}
               </button>
             )}
           </div>
@@ -173,9 +170,7 @@ export function FlightAutonomyCard({ flight }: { flight: Flight }) {
                     >
                       {action.status}
                     </span>
-                    <span className="text-text-secondary">
-                      {action.kind.replace(/_/g, " ")}
-                    </span>
+                    <span className="text-text-secondary">{action.kind.replace(/_/g, " ")}</span>
                     {action.subjectId && (
                       <span className="truncate font-mono">{action.subjectId}</span>
                     )}

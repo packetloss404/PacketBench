@@ -283,6 +283,7 @@ impl SidecarManager {
     }
 
     pub(super) async fn forget_owned_session(&self, session_id: &str) {
+        crate::commands::flight_runtime::sidecar_active(session_id, false);
         {
             let mut sessions = self.owned_sessions.lock().await;
             sessions.remove(session_id);

@@ -753,8 +753,8 @@ async fn execute_list_directory(
 ///
 /// `execute_bash` runs `sh -c` / `cmd /C`, which routinely fork grandchildren
 /// (`foo &`, pipelines, sub-shells). `kill_on_drop` only reaps the direct child,
-/// orphaning those. On timeout we kill the whole tree so nothing outlives the
-/// deadline — parity with the sidecar's `killTree`.
+/// orphaning those. Cancellation and timeout both kill the whole tree before
+/// dropping the root — parity with the sidecar's `killTree`.
 #[cfg(unix)]
 pub(crate) fn kill_process_tree(pid: u32) {
     // The child leads its own process group (see `process_group(0)` at spawn),
@@ -776,6 +776,70 @@ pub(crate) fn kill_process_tree(pid: u32) {
         .status();
 }
 
+/// Own the root until cancellation cleanup has killed its descendants. A guard
+/// containing only the PID can run after `Child`'s kill-on-drop has already
+/// killed cmd.exe, when Windows can no longer walk the original process tree.
+struct CommandProcessTree {
+    child: tokio::process::Child,
+    #[cfg(unix)]
+    group: Option<u32>,
+    armed: bool,
+}
+
+impl CommandProcessTree {
+    fn new(child: tokio::process::Child) -> Self {
+        Self {
+            #[cfg(unix)]
+            group: child.id(),
+            child,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CommandProcessTree {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Unix process groups survive the root's exit while descendants remain.
+        // Windows needs the still-owned root; never reuse a reaped child's PID.
+        #[cfg(unix)]
+        let pid = self.group;
+        #[cfg(windows)]
+        let pid = self.child.id();
+        if let Some(pid) = pid {
+            kill_process_tree(pid);
+        }
+        // `child` drops only after this method, retaining kill_on_drop as the
+        // direct-child backstop if process-tree termination itself fails.
+    }
+}
+
+fn local_shell_command(command: &str) -> tokio::process::Command {
+    #[cfg(windows)]
+    {
+        let mut shell = tokio::process::Command::new("cmd.exe");
+        // cmd parses shell text, not C-style argv. Ordinary .arg(command)
+        // inserts backslashes around inner quotes, breaking quoted paths and
+        // literals. /s removes only our extra outer quote pair; raw_arg keeps
+        // the intended quotes, operators and redirects inside it unchanged.
+        shell.args(["/d", "/s", "/c"]);
+        shell.raw_arg(format!("\"{command}\""));
+        shell
+    }
+    #[cfg(not(windows))]
+    {
+        let mut shell = tokio::process::Command::new("sh");
+        shell.args(["-c", command]);
+        shell
+    }
+}
+
 async fn execute_bash(args: &serde_json::Value, project_path: &str) -> Result<String, String> {
     let command = args
         .get("command")
@@ -790,21 +854,12 @@ async fn execute_bash(args: &serde_json::Value, project_path: &str) -> Result<St
 
     info!(command = %command, timeout = %timeout_secs, "Tool: bash");
 
-    let mut cmd = if cfg!(target_os = "windows") {
-        let mut c = tokio::process::Command::new("cmd");
-        c.args(["/C", command]);
-        c
-    } else {
-        let mut c = tokio::process::Command::new("sh");
-        c.args(["-c", command]);
-        c
-    };
+    let mut cmd = local_shell_command(command);
 
     cmd.current_dir(project_path);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    // Backstop reap of the direct child if the `Child` is dropped; the timeout
-    // path below additionally kills the whole tree (grandchildren included).
+    // Backstop reap of the direct child after CommandProcessTree kills the tree.
     cmd.kill_on_drop(true);
 
     // S1: give the child its own process group so a timeout can signal every
@@ -817,18 +872,17 @@ async fn execute_bash(args: &serde_json::Value, project_path: &str) -> Result<St
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    let mut child = cmd
+    let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn command: {}", e))?;
-    // Captured before `wait()` — `Child::id()` returns `None` once it has exited.
-    let child_pid = child.id();
+    let mut process = CommandProcessTree::new(child);
 
     // Drain stdout/stderr concurrently with the wait so a command that fills the
     // OS pipe buffer (>64 KB) can't deadlock into a false timeout. The pipe
     // handles are taken out of `child` so awaiting exit only borrows the child —
     // we keep ownership so the tree can be killed while it's still alive.
-    let mut stdout_pipe = child.stdout.take();
-    let mut stderr_pipe = child.stderr.take();
+    let mut stdout_pipe = process.child.stdout.take();
+    let mut stderr_pipe = process.child.stderr.take();
     let read_stdout = async {
         use tokio::io::AsyncReadExt;
         let mut buf = Vec::new();
@@ -846,21 +900,20 @@ async fn execute_bash(args: &serde_json::Value, project_path: &str) -> Result<St
         buf
     };
 
-    let run = async { tokio::join!(child.wait(), read_stdout, read_stderr) };
+    let run = async { tokio::join!(process.child.wait(), read_stdout, read_stderr) };
     let (status, out_bytes, err_bytes) =
         match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), run).await {
-            Ok((status_res, out, err)) => (
-                status_res.map_err(|e| format!("Command failed: {}", e))?,
-                out,
-                err,
-            ),
+            Ok((status_res, out, err)) => {
+                let status = status_res.map_err(|e| format!("Command failed: {}", e))?;
+                // A normally completed command may intentionally leave a
+                // background process with detached output. Preserve that
+                // existing shell behavior; cancellation alone revokes the tree.
+                process.disarm();
+                (status, out, err)
+            }
             Err(_) => {
-                // S1: kill the whole tree before the `Child` is dropped, so
-                // grandchildren don't outlive the deadline.
-                if let Some(pid) = child_pid {
-                    kill_process_tree(pid);
-                }
-                let _ = child.start_kill();
+                // Returning drops the guard before its Child, just as dropping
+                // this whole future in the API agent's Stop select does.
                 return Err(format!("Command timed out after {} seconds", timeout_secs));
             }
         };
@@ -1026,6 +1079,30 @@ mod tests {
     use crate::core::llm_types::ToolCall;
     use serde_json::json;
     use uuid::Uuid;
+
+    static BASH_PROCESS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn bash_process_test_command(script: &str) -> String {
+        // Cargo's Windows test launcher can omit the user's Node PATH entry.
+        // Prefer the same bundled runtime build.rs places beside the app.
+        let executable = std::env::current_exe().unwrap();
+        let bundled = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(if cfg!(windows) { "node.exe" } else { "node" });
+        if !bundled.is_file() {
+            return format!("node {script}");
+        }
+        #[cfg(windows)]
+        return format!("\"{}\" {script}", bundled.display());
+        #[cfg(unix)]
+        return format!(
+            "'{}' {script}",
+            bundled.to_string_lossy().replace('\'', "'\\''")
+        );
+    }
 
     fn temp_workspace(name: &str) -> (PathBuf, PathBuf) {
         let base = std::env::temp_dir().join("packetbench-tests").join(format!(
@@ -1577,6 +1654,200 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("[exit code: 7]"));
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn local_bash_windows_runs_checkpoint_in_quoted_space_path() {
+        let (base, workspace) = temp_workspace("bash-quoted-path");
+        let project = workspace.join("project with spaces");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(
+            project.join("checkpoint.cmd"),
+            "@echo off\r\necho checkpoint-ok\r\necho checkpoint-ran>checkpoint-ran.txt\r\n",
+        )
+        .unwrap();
+        let command = format!("cd \"{}\" && checkpoint.cmd", project.display());
+        let result = execute_bash(&json!({"command": command}), workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(result.contains("checkpoint-ok"), "{result}");
+        assert_eq!(
+            std::fs::read_to_string(project.join("checkpoint-ran.txt"))
+                .unwrap()
+                .trim(),
+            "checkpoint-ran"
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn local_bash_windows_preserves_quoted_literal_arguments_and_chain() {
+        let (base, workspace) = temp_workspace("bash-quoted-args");
+        std::fs::write(
+            workspace.join("report args.cjs"),
+            "console.log(JSON.stringify(process.argv.slice(2)));\n",
+        )
+        .unwrap();
+        let literal = "quoted & pipe | angles < > caret ^ and (parentheses)";
+        let command = bash_process_test_command(&format!(
+            "\"report args.cjs\" \"{literal}\" && echo shell-chain"
+        ));
+        let result = execute_bash(&json!({"command": command}), workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        let reported: Vec<String> = serde_json::from_str(result.lines().next().unwrap()).unwrap();
+        assert_eq!(reported, vec![literal]);
+        assert!(result.contains("shell-chain"), "{result}");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn local_bash_windows_preserves_pipe_and_quoted_redirection() {
+        let (base, workspace) = temp_workspace("bash-quoted-redirect");
+        // Exercise shell parsing independently of the launching app's PATH.
+        let findstr = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("findstr.exe");
+        let command = format!(
+            "echo pipe-ok | \"{}\" pipe-ok > \"pipe output.txt\" && type \"pipe output.txt\"",
+            findstr.display()
+        );
+        let result = execute_bash(&json!({"command": command}), workspace.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(result.contains("pipe-ok"), "{result}");
+        assert!(std::fs::read_to_string(workspace.join("pipe output.txt"))
+            .unwrap()
+            .contains("pipe-ok"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn local_bash_windows_keeps_explicit_child_path_without_global_mutation() {
+        let expected = "C:\\fixture node with spaces;C:\\fixture tools";
+        let output = local_shell_command("echo %PATH%")
+            .env("Path", expected)
+            .creation_flags(0x08000000)
+            .output()
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), expected);
+    }
+
+    #[tokio::test]
+    async fn local_bash_cancellation_kills_grandchildren_and_preserves_staged_files() {
+        let _process_test = BASH_PROCESS_TEST_LOCK.lock().await;
+        let (base, workspace) = temp_workspace("bash-cancel-tree");
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&workspace)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        };
+        git(&["init", "--quiet"]);
+        std::fs::write(workspace.join("preserved.txt"), "staged work\n").unwrap();
+        git(&["add", "--", "preserved.txt"]);
+        let staged_before = git(&["diff", "--cached", "--binary"]);
+        std::fs::write(
+            workspace.join("parent.cjs"),
+            "const fs = require('node:fs');\nconst {spawn} = require('node:child_process');\nfs.writeFileSync('parent.pid', String(process.pid));\nspawn(process.execPath, ['child.cjs'], {stdio: 'inherit'});\nsetTimeout(() => {}, 60000);\n",
+        ).unwrap();
+        std::fs::write(
+            workspace.join("child.cjs"),
+            "const fs = require('node:fs');\nfs.writeFileSync('child.ready', 'ready');\nsetTimeout(() => fs.writeFileSync('survived.txt', 'must not survive cancellation'), 2000);\n",
+        ).unwrap();
+        let path = workspace.to_string_lossy().to_string();
+        let command = bash_process_test_command("parent.cjs");
+        let run = tokio::spawn(async move {
+            execute_bash(&json!({"command": command, "timeout": 30}), &path).await
+        });
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !workspace.join("child.ready").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        run.abort();
+        let aborted = run.await.unwrap_err();
+        assert!(aborted.is_cancelled());
+        tokio::time::sleep(std::time::Duration::from_millis(2400)).await;
+        let survived = workspace.join("survived.txt").exists();
+        // Keep a failing regression test from leaking its deliberately long-lived
+        // parent. Only the test-owned process can have written this sentinel.
+        if survived {
+            let pid: u32 = std::fs::read_to_string(workspace.join("parent.pid"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            #[cfg(windows)]
+            kill_process_tree(pid);
+            #[cfg(unix)]
+            unsafe {
+                let group = libc::getpgid(pid as i32);
+                if group > 0 {
+                    kill_process_tree(group as u32);
+                }
+            }
+        }
+        assert_eq!(git(&["diff", "--cached", "--binary"]), staged_before);
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("preserved.txt")).unwrap(),
+            "staged work\n"
+        );
+        let _ = std::fs::remove_dir_all(base);
+        assert!(
+            ready.is_ok(),
+            "the test grandchild must start before cancellation"
+        );
+        assert!(
+            !survived,
+            "grandchild wrote its sentinel after the tool future was cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_bash_normal_completion_preserves_background_processes() {
+        let _process_test = BASH_PROCESS_TEST_LOCK.lock().await;
+        let (base, workspace) = temp_workspace("bash-completed-tree");
+        std::fs::write(
+            workspace.join("parent.cjs"),
+            "const {spawn} = require('node:child_process');\nspawn(process.execPath, ['child.cjs'], {stdio: 'ignore', detached: process.platform === 'win32'}).unref();\nconsole.log('command completed');\n",
+        ).unwrap();
+        std::fs::write(
+            workspace.join("child.cjs"),
+            "setTimeout(() => require('node:fs').writeFileSync('completed.txt', 'background result'), 500);\n",
+        ).unwrap();
+        let result = execute_bash(
+            &json!({"command": bash_process_test_command("parent.cjs"), "timeout": 10}),
+            workspace.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(result.contains("command completed"));
+        let completed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !workspace.join("completed.txt").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        let _ = std::fs::remove_dir_all(base);
+        assert!(
+            completed.is_ok(),
+            "normal shell completion must not cancel an intentional background process"
+        );
     }
 
     // S1: a timed-out bash command must take its whole process tree with it —

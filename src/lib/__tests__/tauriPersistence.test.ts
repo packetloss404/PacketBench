@@ -14,6 +14,8 @@ import {
   saveFlightsSlice,
   saveUiSlice,
   saveWorkspacesSlice,
+  launchFlightAsync,
+  resumeFlightAttempt,
 } from "@/lib/tauri";
 
 function makeFlight(overrides: Partial<Flight> = {}): Flight {
@@ -64,6 +66,136 @@ describe("Tauri persistence DTO mapping", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
     mockInvoke.mockResolvedValue(undefined);
+  });
+
+  it("prepares first-launch sessions and maps the camelCase attempt wire contract", async () => {
+    const dto = {
+      id: "attempt-wire",
+      flightId: "flight-1",
+      sessionId: "builder-wire",
+      target: { kind: "local", basePath: "/repo", worktreePath: "/repo/retained" },
+      agentConfigId: "api-openai",
+      provider: "openai",
+      model: "test-model",
+      branch: "pkt/a",
+      baseBranch: "main",
+      status: "provisioning",
+      cost: 0,
+      tokens: 0,
+    };
+    mockInvoke.mockResolvedValueOnce([dto]);
+    const [prepared] = await launchFlightAsync("flight-1", "task brief", [
+      {
+        kind: "local",
+        basePath: "/repo",
+        baseBranch: "main",
+        agentConfigId: "api-openai",
+        provider: "openai",
+        model: "test-model",
+      },
+    ]);
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "launch_flight_async",
+      expect.objectContaining({ prepareOnly: true }),
+    );
+    expect(prepared).toEqual(
+      expect.objectContaining({
+        sessionId: "builder-wire",
+        agentConfigId: "api-openai",
+        target: dto.target,
+      }),
+    );
+    mockInvoke.mockResolvedValueOnce({ ...dto, sessionId: "resumed-builder" });
+    expect(await resumeFlightAttempt("flight-1", "attempt-wire", 10)).toEqual(
+      expect.objectContaining({ sessionId: "resumed-builder", target: dto.target }),
+    );
+    expect(mockInvoke).toHaveBeenCalledWith("resume_flight_attempt", {
+      flightId: "flight-1",
+      attemptId: "attempt-wire",
+      expectedStoppedAt: 10,
+    });
+  });
+
+  it("rejects a snake_case core attempt response instead of silently losing the conversation identity", async () => {
+    mockInvoke.mockResolvedValueOnce([
+      {
+        id: "a",
+        flight_id: "flight-1",
+        session_id: "builder",
+        agent_config_id: "api-openai",
+        target: { kind: "local", worktree_path: "/repo/a" },
+      },
+    ]);
+    await expect(launchFlightAsync("flight-1", "brief", [])).rejects.toThrow(
+      "missing its conversation or worktree identity",
+    );
+  });
+
+  it("round-trips delivery, recovery, stopped state, saved target and old builder owners", async () => {
+    const delivery = {
+      kind: "pull_request" as const,
+      deliveredAt: 25,
+      branch: "pkt/a",
+      baseBranch: "main",
+      prNumber: 42,
+      prUrl: "https://example.invalid/pr/42",
+      attemptId: "a",
+    };
+    const recovery = {
+      state: "retained" as const,
+      reason: "Restart interrupted the builder",
+      retainedAt: 10,
+    };
+    const sessionHistory = [
+      { sessionId: "old-builder", provider: "anthropic", model: "old-model" },
+    ];
+    const executionTarget = { kind: "ssh" as const, serverId: "saved-server", basePath: "/repo" };
+    const flight = makeFlight({
+      stoppedAt: 30,
+      archivedAt: 40,
+      delivery,
+      executionTarget,
+      attempts: [
+        {
+          id: "a",
+          flightId: "flight-1",
+          target: {
+            kind: "ssh",
+            serverId: "saved-server",
+            basePath: "/repo",
+            worktreePath: "/repo/retained",
+          },
+          agentConfigId: "api-openai",
+          provider: "openai",
+          model: "builder-model",
+          branch: "pkt/a",
+          baseBranch: "main",
+          sessionId: "new-builder",
+          status: "completed",
+          cost: 0,
+          tokens: 0,
+          recovery,
+          delivery,
+          sessionHistory,
+        },
+      ],
+    });
+    await saveFlightsSlice([flight]);
+    const dtoFlights = mockInvoke.mock.calls[mockInvoke.mock.calls.length - 1][1]
+      .flights as PersistedStateDto["flights"];
+    expect(dtoFlights[0]).toEqual(
+      expect.objectContaining({ stoppedAt: 30, archivedAt: 40, delivery, executionTarget }),
+    );
+    expect(dtoFlights[0].attempts[0]).toEqual(
+      expect.objectContaining({ recovery, delivery, sessionHistory }),
+    );
+    mockInvoke.mockResolvedValue(makePersistedStateDto({ flights: dtoFlights }));
+    const hydrated = (await loadPersistedState()).flights[0];
+    expect(hydrated.executionTarget).toEqual(executionTarget);
+    expect(hydrated.delivery).toEqual(delivery);
+    expect(hydrated.attempts?.[0]).toEqual(
+      expect.objectContaining({ recovery, delivery, sessionHistory }),
+    );
   });
 
   it("round-trips flight workspace, planning conversation, and legacy planner fields", async () => {
@@ -118,6 +250,7 @@ describe("Tauri persistence DTO mapping", () => {
     };
     const reviewGate = {
       status: "changes_requested" as const,
+      reviewerSessions: [],
       reviewerConversationId: "review-1",
       reviewerAgentConfigId: "api-openai-codex",
       reviewerModel: "gpt-5.5",
@@ -183,6 +316,65 @@ describe("Tauri persistence DTO mapping", () => {
     const state = await loadPersistedState();
     expect(state.flights[0].reviewGatePolicy).toEqual(reviewGatePolicy);
     expect(state.flights[0].attempts?.[0].reviewGate).toEqual(reviewGate);
+
+    // Older snapshots have no frozen context or ownership ledger. Keep them
+    // explicitly unbound rather than manufacturing freshness on serialization.
+    await saveFlightsSlice([
+      makeFlight({
+        attempts: [
+          {
+            ...attempt,
+            reviewGate: {
+              status: "passed",
+              evidence: {
+                fingerprint: "old",
+                contextFingerprint: "old",
+                headSha: "head",
+                baseSha: "base",
+              },
+            },
+          },
+        ],
+      }),
+    ]);
+    expect(mockInvoke).toHaveBeenLastCalledWith("save_flights_slice", {
+      flights: [
+        expect.objectContaining({
+          attempts: [
+            expect.objectContaining({
+              reviewGate: expect.objectContaining({
+                evidence: expect.objectContaining({ contextJson: "" }),
+                reviewerSessions: [],
+              }),
+            }),
+          ],
+        }),
+      ],
+    });
+  });
+
+  it("keeps retry counts across DTO hydration and exhausts an unknown counter", async () => {
+    mockInvoke.mockResolvedValue(
+      makePersistedStateDto({
+        flights: [
+          {
+            ...makeFlight(),
+            attempts: [],
+            publishAttemptsAsPrs: false,
+            autonomyRuntime: {
+              status: "paused",
+              actionHistory: [],
+              reviewRetryCounts: { valid: 2, unknown: undefined },
+            },
+          } as unknown as PersistedStateDto["flights"][number],
+        ],
+      }),
+    );
+    const state = await loadPersistedState();
+    expect(state.flights[0].autonomyRuntime?.reviewRetryCounts).toEqual({
+      valid: 2,
+      unknown: 0xffff_ffff,
+    });
   });
 
   it("hydrates legacy Flights with the Reviewer Gate disabled", async () => {

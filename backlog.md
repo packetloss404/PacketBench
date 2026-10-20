@@ -10,31 +10,121 @@ earlier provider checks; the packaged helper passed two protocol-12 echo turns.
 Full native Workspace acceptance remains open.
 
 - [x] Connect Sugar, test the real native adapter and make Sugar/Conduit the
-  default for new API chats, Flight targets and workflow roles. Preserve
-  existing conversation/provider pins. Installed executable hash verified.
+      default for new API chats, Flight targets and workflow roles. Preserve
+      existing conversation/provider pins. Installed executable hash verified.
 - [x] Select a working auxiliary route: all fifteen task classes are
-  explicitly pinned to Sugar/Conduit for this user.
+      explicitly pinned to Sugar/Conduit for this user.
 - [x] Migrate `issue-investigate` and Insights `agent-chat` onto the selected
-  auxiliary provider with bounded read-only file tools. Both are pinned to
-  Sugar/Conduit locally and passed live Sugar acceptance. Insights chat is
-  reachable from Settings; the installed UI and saved routes were verified.
+      auxiliary provider with bounded read-only file tools. Both are pinned to
+      Sugar/Conduit locally and passed live Sugar acceptance. Insights chat is
+      reachable from Settings; the installed UI and saved routes were verified.
 - [x] Verify the installed GUI selects Sugar/Conduit by default, runs an actual
-  `read_file` call and correctly answers a follow-up memory question.
+      `read_file` call and correctly answers a follow-up memory question.
 - [ ] Complete the broader native Workspace acceptance matrix. This focused
-  Sugar conversation does not establish every Workspace workflow.
+      Sugar conversation does not establish every Workspace workflow.
 - [ ] Resolve direct MiniMax account/plan access if that provider is needed.
-  Both M2 and M3 returned HTTP 402, insufficient balance (1008), on October 15.
-  Sugar now supplies the selected API/background routes, so MiniMax is no
-  longer the default path. The older HTTP 429 observation is historical.
+      Both M2 and M3 returned HTTP 402, insufficient balance (1008), on October 15.
+      Sugar now supplies the selected API/background routes, so MiniMax is no
+      longer the default path. The older HTTP 429 observation is historical.
 - [ ] Configure real account keys and run a short tool call plus follow-up turn
-  through ClinePass, OpenCode Go (each protocol family), Ollama Cloud, Google
-  and xAI. Source support and fixture coverage are described in
-  [the integration report](dev/provider-integrations-2026-10-06.md).
+      through ClinePass, OpenCode Go (each protocol family), Ollama Cloud, Google
+      and xAI. Source support and fixture coverage are described in
+      [the integration report](dev/provider-integrations-2026-10-06.md).
 - [ ] Refresh authenticated Anthropic/OpenAI/Google/xAI catalogs in the native
-  app and verify the chosen account's model access. Public plan inventory does
-  not prove subscription entitlement. Paid Claude testing remains deferred.
+      app and verify the chosen account's model access. Public plan inventory does
+      not prove subscription entitlement. Paid Claude testing remains deferred.
 
-Provider status reconciled: 2026-10-15; remaining backlog baseline: 2026-10-06 (dogfooding incomplete)
+## Loop and graph engineering review — October 19
+
+Follow-ups from the [source alignment review](dev/loop-and-graph-engineering-alignment-2026-10-19.md)
+at `4698ca9c`. The owner authorized the three scoped runtime repairs below;
+implementation and quality gates are recorded in the [follow-up review](dev/flight-overhaul-review-2026-10-19.md).
+Broader evidence/graph changes remain unscheduled and do not supersede
+Workspace stabilization or authorize broader autonomy.
+
+- [x] **P2 — Review evidence freshness (source).** Bind review to committed
+      HEAD, pinned base and frozen criteria/task context; reject stale/unbound
+      passes at verdict, acceptance, integration and delivery. Deliver the exact
+      reviewed commit; preserve a retained branch/worktree that advances during
+      landing. Dirty/untracked work must be committed before review. Packaged
+      local/SSH journey proof remains in the existing acceptance item.
+- [x] **P2 — Reviewer accounting and bounded errors (source).** Register
+      reviewer owner/provider/model before startup and retain ownership through
+      retries/resets for delayed usage. Persist per-attempt reviewer retry counts
+      independently of truncated history; save allowance before launch, back off,
+      and stop for attention at the existing round cap. Recheck policy and runtime
+      authorization during automatic retry startup.
+- [ ] **P2 — Independent execution and integration evidence.** Reuse the
+      proposed Packet Control contract for independently captured local/SSH check
+      evidence and a combined integration-tree check pinned through final
+      cooperative landing. A fresh read-only model
+      review does not independently execute builder-reported checks.
+- [ ] **P2 — Feedback runtime behavior proof.** Cover repair/review/pass,
+      repeated reviewer errors, stale evidence and missing graph inputs. Carry
+      native proof into the existing P1 RG8/CG9/CI9/AP9 acceptance item below;
+      do not create a duplicate packaged-proof program.
+- [ ] **P3 — Reusable Flight recipe contracts, after proof.** Evaluate
+      versioned inputs, output artifact references and joins keyed by expected
+      task identity on the existing cooperative DAG. Require measured benefit
+      before adding a general graph editor or recurring discovery scheduler.
+
+## Flight overhaul review — October 19
+
+The owner requested a separate runtime, GUI and end-to-end UX review because
+Flights are unused. The [combined source review](dev/flight-overhaul-review-2026-10-19.md)
+contains the current journey, proposed flow and acceptance criteria. These
+findings led to an explicitly authorized implementation in priority order.
+The source overhaul is implemented; the dated review records local validation
+and the remaining native/provider and adoption evidence boundary.
+
+- [x] **P1 — Preserve interrupted work (source).** Retain dirty/untracked attempt
+      worktrees after a crash; provide Inspect/Resume/Discard instead of automatic
+      forced removal during startup recovery.
+- [x] **P1 — Complete Stop semantics (source).** Cancel reviewer and remediation
+      sessions as well as running builders. Prevent new role sessions after Stop;
+      distinguish admission caps from in-flight watchdog/cancellation behavior.
+- [x] **P1 — Stable task identity and truthful completion (source).** Preserve task IDs
+      and task-scoped prompts during cooperative recovery. Protect plan replacement
+      once execution begins, and derive completion from the graph/delivery state
+      instead of the first set of completed attempts. Prevent premature success
+      memory capture.
+- [x] **P1 — Repair Flight launch controls (source).** Restore New attempt after the
+      first run; use shared authenticated live provider/model selection for
+      builders and cooperative tasks; make the local/SSH repository path editable
+      and validate it before launch.
+- [x] **P2 — One-agent delivery flow (source).** Contextual Workspace/issue/chat entry
+      creates or reuses a Flight, then brief → run → attention → unified diff,
+      checks and reviewer evidence → Land/Open PR → archive. Put blockers/results
+      first; move unused integrations and expert orchestration settings out of the
+      default path. Keep API billing distinct from PTY subscription sessions.
+- [x] **P2 — Cooperative and constrained-layout usability (source).** Permit dependent
+      tasks to reuse owned files while protecting parallel writers; combine task
+      and milestone summaries, improve narrow-pane/keyboard/label semantics, and
+      retain explicit final combined review and landing.
+- [ ] **P1 — Flight native acceptance and adoption evidence.** Exercise the
+      complete builder → review → repair → fresh review → delivery → archive flow
+      in the native app, including pinned SSH, restart with dirty/untracked work,
+      Stop during each role, and a second Flight. Record launch-to-delivery time,
+      interventions, actual cost, abandonment reasons and second-Flight choice.
+      Use the existing packaged/provider acceptance runbook; mocked browser tests
+      and hermetic Git fixtures do not replace this proof. Independent execution
+      of builder checks and combined integration checks remains a separate later
+      evidence adapter; current UI labels these limits explicitly.
+
+      October 19 native follow-up: disposable local and pinned Docker SSH
+      Flights completed Stop/restart/Resume, changes-requested review, repair,
+      fresh passed review, Land and archive/restore/rearchive. Independent file,
+      Git, immutable-commit tests, review identity and usage checks passed on
+      both hosts. The first SSH Stop exposed a surviving grandchild; its failed
+      proof remains alongside the corrected actual-runtime tests and passing
+      native rerun. A provider HTTP 522 also exposed failed-worktree cleanup;
+      source fixes retain failed/cancelled work and preserve recovery state on
+      rejected cleanup. This scoped proof does not close the broader
+      role/provider, billing or adoption matrix. See the dated Flight review
+      for exact build and evidence boundaries.
+
+Provider status reconciled: 2026-10-15; loop/graph and Flight reviews: 2026-10-19;
+remaining backlog baseline: 2026-10-06 (dogfooding incomplete)
 
 This is the single task register for work that has not shipped or has not yet
 earned its required real/package proof. Completed implementation history belongs
@@ -78,6 +168,7 @@ These are the only current product decisions blocking implementation.
    the security review — and the vendor field should be re-surveyed rather
    than reusing the 2026-06 comparison. Full record in
    [`dev/remoteagents/09-open-decisions.md`](./dev/remoteagents/09-open-decisions.md).
+
 2. **RESOLVED 2026-08-16 - Remote Agents payload encryption timing.** The
    recommendation was ratified: plaintext (TLS-only) is acceptable only for
    local/internal development; encrypted agent, approval, and file payloads
@@ -92,7 +183,7 @@ These are the only current product decisions blocking implementation.
 
    **Trigger to revisit:** the first time a build goes to anyone who is not the
    owner. Until then unsigned local builds are fine (SmartScreen's
-   *More info -> Run anyway* is one click per build).
+   _More info -> Run anyway_ is one click per build).
 
    **Cheapest path when triggered** (the day-0 "apply for everything
    immediately" advice in the Fable 5 review was scoped to a 2-week v1.0.0
@@ -280,7 +371,7 @@ environment or packaged matrix has actually run.
   restored this launch, and the migration count. The record lives under the
   mirrored prefix, so the fact survives the next origin change. "Found zero"
   and "migrated before this was recorded" are deliberately distinct states — an
-  install that upgraded before the record existed reports *unknown* rather than
+  install that upgraded before the record existed reports _unknown_ rather than
   claiming zero.
 
   Worth noting the shape: `bootPersistedStorage()` already returned a typed
@@ -303,6 +394,7 @@ environment or packaged matrix has actually run.
   (regenerable caches such as `packetbench:workspaces-cache`), and only the
   `packetbench:` prefix is mirrored, so a future unprefixed key would be
   missed.
+
 - **DONE 2026-08-28 - Memory capture for remote workspaces.** Records are
   stamped through a single write choke point, with the scope resolved from the
   workspace the work ran in rather than the active one. Scope keys render as
@@ -800,7 +892,7 @@ citations is in
 
 **This section is a review snapshot, not a task list that maintains itself.**
 It was reconciled against source on 2026-08-27 and eleven findings were closed;
-they are listed under *Landed since the review* at the end of this section so
+they are listed under _Landed since the review_ at the end of this section so
 nobody re-opens them. What follows is only what is still open — each entry
 below was re-read in source on that date unless it says otherwise.
 
@@ -817,7 +909,7 @@ below was re-read in source on that date unless it says otherwise.
   `max()` merge, it takes the backend value for any id the backend knows
   (`stores/flightStore.ts:353-366`). The double-apply half survives:
   `applyBackendCostDelta` still **adds** (`totalCost: (f.totalCost ?? 0) +
-  costUsd`, `stores/flightStore.ts:371-383`), so a delta that interleaves with
+costUsd`, `stores/flightStore.ts:371-383`), so a delta that interleaves with
   a hydrate is counted twice until the next hydrate corrects it. Emit
   authoritative totals and make the listener set rather than add. The three
   companion items are **unverified** this pass: `pkt/*` branch cleanup after
@@ -1121,7 +1213,6 @@ from the original report, which still lists them as findings.
   `terminated` is respected: a killed session is not a crash, but it is not
   scored as a successful completion either.
 
-
 - **P2 - MS4 accessibility/responsiveness.** Align Git Hosts, Workspaces,
   Dictation, and handoff labels; remove duplicate ellipsis chrome; add
   navigation/tab/menu ARIA; and prove responsive overflow from 800 px through
@@ -1136,7 +1227,7 @@ from the original report, which still lists them as findings.
   `IssueDetailView.tsx`, `useServerConnection`, and `ConnectionProgress`. All
   three still exist as of 2026-08-27 (`src/components/issues/IssueDetailView.tsx`,
   `src/hooks/useServerConnection.ts`, `src/components/servers/ConnectionProgress.tsx`).
-  Overlaps the Fable 5 *Dead code and hygiene* P3 — resolve them together.
+  Overlaps the Fable 5 _Dead code and hygiene_ P3 — resolve them together.
 - **P3 - Format enforcement.** Normalize the known Rust formatting drift and
   decide whether `cargo fmt --check` joins the local/release gates. Re-verified
   2026-08-27: no `cargo fmt` / `fmt:check` script exists in `package.json`, so
@@ -1155,8 +1246,8 @@ from the original report, which still lists them as findings.
   probed and memoised (`commands/ollama.rs:62,201`; `core/llm_ollama.rs:62,76`)
   and `ModelSelector` disables tool-less models while leaving
   unknown-capability ones selectable (`ModelSelector.tsx:78,230`). The residual
-  staleness of the memo is tracked as its own P3 under *Three-track build-out
-  residue*; do not re-open this item for it.
+  staleness of the memo is tracked as its own P3 under _Three-track build-out
+  residue_; do not re-open this item for it.
 - **LANDED 2026-08-26 - Custom OpenAI-compatible provider.** Shipped as the
   `api-custom` row (`src/lib/api-models.ts:189`) backed by
   `src-tauri/src/core/llm_custom_compat.rs`, and documented in `CLAUDE.md`'s
@@ -1201,8 +1292,8 @@ from the original report, which still lists them as findings.
   rejections that vitest flags as possible false positives; the fix was to move
   the classifier out to `src/lib/liveModelErrors.ts`, where no transport mock
   can reach it. `parsePtyExitPayload` (`src/lib/tauri.ts:227`) hit the identical
-  trap earlier and is tracked separately under *Main shell and daily-driver
-  polish*. Patching 92 files is the wrong fix: sweep `tauri.ts` for the
+  trap earlier and is tracked separately under _Main shell and daily-driver
+  polish_. Patching 92 files is the wrong fix: sweep `tauri.ts` for the
   remaining pure helpers and relocate them beside the two that already escaped.
 
 ### Flight, Git host, and runtime debt
@@ -1234,7 +1325,7 @@ from the original report, which still lists them as findings.
   corpus size no index is either.
 - **P3 - Instrument Ask to measure the real miss rate.** The one number that
   decides whether retrieval ever needs more than lexical matching is the share
-  of *real* queries that are surface-anchor-free, and it cannot be obtained from
+  of _real_ queries that are surface-anchor-free, and it cannot be obtained from
   synthetic data. Log zero-result and single-result Ask queries locally (no
   content leaves the machine). Suggested trigger to revisit: >20% of real
   queries returning nothing while the answer was in the corpus — and reach for
@@ -1291,7 +1382,7 @@ Do not reopen these from historical plans:
   `d87fb125`. Do not rebuild it here; the controller protocol continues in
   Syndicate's own repos. **PacketRelay does not** — per Owner decision 6 it
   stayed with PacketBench (`D:\projects\packetrelay`, deploying to Railway).
-  The boundary that closed is the Syndicate *execution target*, not the relay.
+  The boundary that closed is the Syndicate _execution target_, not the relay.
 
 - Workspace/Agents restructuring and WA0-WA4 are complete: Workspaces are
   CLI/PacketCode-first; Agents is a first-class same-window GUI-agent surface;

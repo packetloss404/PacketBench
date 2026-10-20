@@ -4,13 +4,11 @@ import {
   evaluateAutonomyAction,
   pathWithinAllowedRoots,
   pauseAutonomyForRestart,
+  reviewerRetryCount,
+  reviewerRetryDelayMs,
   validateAutonomyPolicy,
 } from "@/lib/autonomyPolicy";
-import type {
-  AutonomyActionRecord,
-  AutonomyPolicy,
-  Flight,
-} from "@/types/flight";
+import type { AutonomyActionRecord, AutonomyPolicy, Flight } from "@/types/flight";
 
 function policy(overrides: Partial<AutonomyPolicy> = {}): AutonomyPolicy {
   return {
@@ -105,9 +103,11 @@ describe("bounded autonomy policy", () => {
 
   it("hard-stops on cost and wall-clock limits", () => {
     const cost = flight({ totalCost: 25 });
-    expect(
-      evaluateAutonomyAction(cost, { action: "continue", now: 2_000 }),
-    ).toMatchObject({ allowed: false, hardStop: true, reason: expect.stringContaining("Cost") });
+    expect(evaluateAutonomyAction(cost, { action: "continue", now: 2_000 })).toMatchObject({
+      allowed: false,
+      hardStop: true,
+      reason: expect.stringContaining("Cost"),
+    });
 
     const duration = flight({
       autonomyRuntime: {
@@ -169,6 +169,66 @@ describe("bounded autonomy policy", () => {
     ).toMatchObject({ allowed: false, hardStop: false });
   });
 
+  it("bounds reviewer restarts across changing session ids and preserves earned acceptance", () => {
+    const value = flight();
+    value.autonomyRuntime!.actionHistory = [
+      action("retry_review", "attempt-1", 1),
+      action("retry_review", "attempt-1", 2),
+    ];
+    expect(
+      evaluateAutonomyAction(value, {
+        action: "retry_review",
+        subjectId: "attempt-1",
+        now: 2_000,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      hardStop: true,
+      reason: expect.stringContaining("retry limit"),
+    });
+    expect(
+      evaluateAutonomyAction(value, {
+        action: "accept_review_pass",
+        subjectId: "attempt-1",
+        now: 2_000,
+      }).allowed,
+    ).toBe(true);
+    expect(
+      evaluateAutonomyAction(value, {
+        action: "retry_review",
+        subjectId: "another-attempt",
+        now: 2_000,
+      }).allowed,
+    ).toBe(true);
+  });
+
+  it("keeps the retry limit after activity eviction and fails closed on corrupt counts", () => {
+    const value = flight();
+    value.autonomyRuntime!.reviewRetryCounts = { "attempt-1": 2 };
+    expect(value.autonomyRuntime!.actionHistory).toEqual([]);
+    expect(reviewerRetryCount(value, "attempt-1")).toBe(2);
+    expect(
+      evaluateAutonomyAction(value, {
+        action: "retry_review",
+        subjectId: "attempt-1",
+        now: 2_000,
+      }).allowed,
+    ).toBe(false);
+    value.autonomyRuntime!.reviewRetryCounts["attempt-1"] = -1;
+    expect(reviewerRetryCount(value, "attempt-1")).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("migrates legacy retry history conservatively and caps exponential backoff", () => {
+    const value = flight();
+    expect(reviewerRetryDelayMs(value, "attempt-1")).toBe(1_000);
+    value.autonomyRuntime!.actionHistory = [action("retry_review", "attempt-1", 1)];
+    value.autonomyRuntime!.reviewRetryCounts = { "attempt-1": 0 };
+    expect(reviewerRetryCount(value, "attempt-1")).toBe(1);
+    expect(reviewerRetryDelayMs(value, "attempt-1")).toBe(2_000);
+    value.autonomyRuntime!.reviewRetryCounts["attempt-1"] = 20;
+    expect(reviewerRetryDelayMs(value, "attempt-1")).toBe(60_000);
+  });
+
   it("rejects root, SSH target, reviewer, graph, and publish policy expansion", () => {
     expect(pathWithinAllowedRoots("D:\\repo\\src", ["D:\\repo"])).toBe(true);
     expect(pathWithinAllowedRoots("D:\\other", ["D:\\repo"])).toBe(false);
@@ -188,15 +248,12 @@ describe("bounded autonomy policy", () => {
         now: 2_000,
       }),
     ).toMatchObject({ allowed: false, hardStop: true });
-    expect(
-      validateAutonomyPolicy(policy(), flight({ executionMode: "independent" })),
-    ).toContain("Auto-run task graph requires Cooperative execution mode.");
-    expect(
-      validateAutonomyPolicy(
-        policy(),
-        flight({ reviewGatePolicy: undefined }),
-      ),
-    ).toContain("Auto-run task graph requires an independent Reviewer Gate.");
+    expect(validateAutonomyPolicy(policy(), flight({ executionMode: "independent" }))).toContain(
+      "Auto-run task graph requires Cooperative execution mode.",
+    );
+    expect(validateAutonomyPolicy(policy(), flight({ reviewGatePolicy: undefined }))).toContain(
+      "Auto-run task graph requires an independent Reviewer Gate.",
+    );
     expect(
       validateAutonomyPolicy(
         policy({ allowDraftPrPublishing: false }),

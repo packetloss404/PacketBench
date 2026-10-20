@@ -1,7 +1,20 @@
 import { create } from "zustand";
 import { generateId as genId } from "@/lib/storage";
 import { loadPersistedState, saveFlightsSlice, saveUiSlice } from "@/lib/tauri";
-import type { CoordinationEvent, Flight, FlightStatus, Task } from "@/types/flight";
+import type { CoordinationEvent, Flight, FlightStatus } from "@/types/flight";
+import {
+  flightLifecycleStatus,
+  attemptHasActiveWork,
+  flightOwnedSessionIds,
+} from "@/lib/flightLifecycle";
+import { useAgentApprovalStore } from "@/stores/agentApprovalStore";
+import { useAgentTaskStore } from "@/stores/agentTaskStore";
+import { validateCooperativeGraph } from "@/lib/cooperativeFlight";
+import {
+  hasFlightPlanExecution,
+  materializeFlightPlan,
+  type FlightPlanInput,
+} from "@/lib/flightPlanning";
 import { derivedArtifactProvenance } from "@/lib/provenance";
 import { useIssueStore } from "@/stores/issueStore";
 
@@ -40,56 +53,20 @@ async function syncFlightsToBackend(state: FlightState) {
 
 // === Helpers ===
 
-function getAllTasks(flight: Flight): Task[] {
-  return flight.milestones.flatMap((m) => m.tasks);
-}
-
-function computeStatusFromTasks(flight: Flight): FlightStatus | null {
-  if (flight.milestones.length === 0) return null;
-  const tasks = getAllTasks(flight);
-  if (tasks.length === 0) return null;
-  if (tasks.some((t) => t.status === "approval_needed")) return "active";
-  if (tasks.some((t) => t.status === "failed")) return "failed";
-  if (tasks.every((t) => t.status === "done")) return "review";
-  if (tasks.some((t) => t.status === "running" || t.status === "queued")) return "active";
-  if (tasks.some((t) => t.status === "blocked")) return "active";
-  return null;
-}
-
-function computeStatusFromIssues(flight: Flight): FlightStatus | null {
-  if (!flight.issueIds || flight.issueIds.length === 0) return null;
-  const { issues } = useIssueStore.getState();
-  const linked = issues.filter((i) => flight.issueIds.includes(i.id));
-  if (linked.length === 0) return null;
-  if (linked.some((i) => i.status === "needs_human")) return "paused";
-  if (linked.some((i) => i.status === "blocked")) return "paused";
-  if (linked.every((i) => i.status === "done")) return "done";
-  if (linked.some((i) => i.status === "in_progress" || i.status === "qa")) return "active";
-  return null;
-}
-
-function computeStatusFromAttempts(flight: Flight): FlightStatus | null {
-  const attempts = flight.attempts;
-  if (!attempts || attempts.length === 0) return null;
-  const all = (s: string) => attempts.every((a) => a.status === s);
-  const some = (s: string) => attempts.some((a) => a.status === s);
-  if (all("cancelled")) return "paused";
-  if (all("failed")) return "failed";
-  if (all("completed")) return "done";
-  if (some("running") || some("provisioning") || some("queued")) return "active";
-  if (some("reviewing")) return "review";
-  // Mixed terminal states (e.g. some completed, some failed, some cancelled).
-  if (some("failed")) return "failed";
-  if (some("completed")) return "done";
-  return null;
-}
-
-function computeStatus(flight: Flight): FlightStatus {
-  return (
-    computeStatusFromAttempts(flight) ??
-    computeStatusFromTasks(flight) ??
-    computeStatusFromIssues(flight) ??
-    flight.status
+function planIdentity(flight: Pick<Flight, "milestones">): string {
+  return JSON.stringify(
+    flight.milestones
+      .map((milestone) => ({
+        id: milestone.id,
+        tasks: milestone.tasks
+          .map((task) => ({
+            id: task.id,
+            milestoneId: task.milestoneId,
+            dependsOn: [...task.dependsOn].sort(),
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id)),
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
   );
 }
 
@@ -144,6 +121,7 @@ interface FlightStore {
         Pick<
           Flight,
           | "gitBranch"
+          | "executionTarget"
           | "issueIds"
           | "workspaceId"
           | "publishAttemptsAsPrs"
@@ -157,6 +135,9 @@ interface FlightStore {
       >,
   ) => Flight;
   updateFlight: (id: string, updates: Partial<Flight>) => void;
+  applyFlightPlan: (id: string, plan: FlightPlanInput) => void;
+  archiveFlight: (id: string) => void;
+  unarchiveFlight: (id: string) => void;
   /** Wait for every Flight mutation queued before this call to reach Rust. */
   flushPersistence: () => Promise<void>;
   /** N2: append a coordination event (task_failed / escalation suggestion / …)
@@ -213,6 +194,7 @@ export const useFlightStore = create<FlightStore>((set, get) => ({
       projectPath: input.projectPath,
       workspaceId: input.workspaceId ?? null,
       gitBranch: input.gitBranch,
+      executionTarget: input.executionTarget,
       milestones: [],
       linkedSessionIds: [],
       issueIds: input.issueIds ?? [],
@@ -238,6 +220,17 @@ export const useFlightStore = create<FlightStore>((set, get) => ({
   },
 
   updateFlight: (id, updates) => {
+    const current = get().flights.find((flight) => flight.id === id);
+    if (
+      current &&
+      updates.milestones &&
+      hasFlightPlanExecution(current) &&
+      planIdentity(current) !== planIdentity({ milestones: updates.milestones })
+    ) {
+      throw new Error(
+        "The task plan cannot be replaced after execution starts. Create a new Flight for a revised graph.",
+      );
+    }
     set((s) => {
       const flights = s.flights.map((f) =>
         f.id === id ? { ...f, ...updates, updatedAt: Date.now() } : f,
@@ -246,6 +239,63 @@ export const useFlightStore = create<FlightStore>((set, get) => ({
       return { flights };
     });
   },
+
+  applyFlightPlan: (id, plan) => {
+    const flight = get().flights.find((candidate) => candidate.id === id);
+    if (!flight) throw new Error("This Flight no longer exists.");
+    if (flight.archivedAt || hasFlightPlanExecution(flight))
+      throw new Error(
+        "The task plan cannot be replaced after execution starts. Create a new Flight for a revised graph.",
+      );
+    const materialized = materializeFlightPlan(id, plan);
+    const issues = validateCooperativeGraph({ ...flight, milestones: materialized.milestones });
+    if (issues.length) throw new Error(issues[0].message);
+    const previous = new Map(
+      flight.milestones.flatMap((milestone) => milestone.tasks).map((task) => [task.id, task]),
+    );
+    get().updateFlight(id, {
+      title: materialized.title ?? flight.title,
+      objective: materialized.objective ?? flight.objective,
+      status: "ready",
+      milestones: materialized.milestones.map((milestone) => ({
+        ...milestone,
+        tasks: milestone.tasks.map((task) => {
+          const old = previous.get(task.id);
+          return old
+            ? {
+                ...task,
+                agentConfigId: old.agentConfigId,
+                model: old.model,
+                createdAt: old.createdAt,
+              }
+            : task;
+        }),
+      })),
+    });
+  },
+
+  archiveFlight: (id) => {
+    const flight = get().flights.find((candidate) => candidate.id === id);
+    if (!flight) throw new Error("This Flight no longer exists.");
+    if (
+      useAgentTaskStore
+        .getState()
+        .conversations.some(
+          (conversation) =>
+            conversation.status === "active" &&
+            flightOwnedSessionIds(flight).includes(conversation.id),
+        ) ||
+      (flight.attempts ?? []).some(attemptHasActiveWork) ||
+      flight.milestones.some((milestone) =>
+        milestone.tasks.some((task) => ["queued", "running"].includes(task.status)),
+      )
+    )
+      throw new Error(
+        "Stop the Flight before archiving it. Worktrees and history will be preserved.",
+      );
+    get().updateFlight(id, { archivedAt: Date.now() });
+  },
+  unarchiveFlight: (id) => get().updateFlight(id, { archivedAt: undefined }),
 
   flushPersistence: () => latestPersistence,
 
@@ -333,7 +383,21 @@ export const useFlightStore = create<FlightStore>((set, get) => ({
   computeFlightStatus: (flightId) => {
     const flight = get().flights.find((f) => f.id === flightId);
     if (!flight) return "draft";
-    return computeStatus(flight);
+    const approvals = useAgentApprovalStore.getState();
+    const pendingApprovalCount = flightOwnedSessionIds(flight).reduce(
+      (count, id) =>
+        count +
+        (approvals.permissions.get(id)?.length ?? 0) +
+        (approvals.edits.get(id)?.length ?? 0),
+      0,
+    );
+    const owned = new Set(flightOwnedSessionIds(flight));
+    const activeSessionCount = useAgentTaskStore
+      .getState()
+      .conversations.filter(
+        (conversation) => owned.has(conversation.id) && conversation.status === "active",
+      ).length;
+    return flightLifecycleStatus(flight, { pendingApprovalCount, activeSessionCount });
   },
 
   reconcileIssueLinks: (options = {}) => {

@@ -608,7 +608,9 @@ fn parse_changed_paths(diff_names: &str, untracked: &str) -> Vec<String> {
 }
 
 fn local_git_read(path: &str, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    super::shared::hide_window(&mut command);
+    let output = command
         .args(args)
         .current_dir(path)
         .output()
@@ -629,36 +631,46 @@ fn build_local_review_evidence(
     project_path: &str,
     base_ref: &str,
     patch_limit: usize,
+    requested_head: Option<&str>,
 ) -> Result<GitReviewEvidenceDto, String> {
     super::validate_project_path(project_path)?;
-    let head_ref = local_git_read(project_path, &["rev-parse", "HEAD"])?
-        .trim()
-        .to_string();
+    let head_ref = local_git_read(
+        project_path,
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("{}^{{commit}}", requested_head.unwrap_or("HEAD")),
+        ],
+    )?
+    .trim()
+    .to_string();
     // Verify the requested base explicitly. Falling back to HEAD would turn a
     // missing/typoed base into an incomplete review.
     local_git_read(
         project_path,
         &["rev-parse", "--verify", &format!("{}^{{commit}}", base_ref)],
     )?;
-    let summary = local_git_read(project_path, &["diff", "--stat", base_ref, "--"])?;
-    let names = local_git_read(
-        project_path,
-        &[
-            "diff",
-            "--name-only",
-            "--diff-filter=ACDMRTUXB",
-            base_ref,
-            "--",
-        ],
-    )?;
-    let untracked = local_git_read(
-        project_path,
-        &["ls-files", "--others", "--exclude-standard"],
-    )?;
-    let patch = local_git_read(
-        project_path,
-        &["diff", "--no-ext-diff", "--unified=3", base_ref, "--"],
-    )?;
+    let diff = |flags: &[&str]| {
+        let mut args = vec!["diff"];
+        args.extend_from_slice(flags);
+        args.push(base_ref);
+        if requested_head.is_some() {
+            args.push(&head_ref);
+        }
+        args.push("--");
+        local_git_read(project_path, &args)
+    };
+    let summary = diff(&["--stat"])?;
+    let names = diff(&["--name-only", "--diff-filter=ACDMRTUXB"])?;
+    let patch = diff(&["--no-ext-diff", "--unified=3"])?;
+    let untracked = if requested_head.is_none() {
+        local_git_read(
+            project_path,
+            &["ls-files", "--others", "--exclude-standard"],
+        )?
+    } else {
+        String::new()
+    };
     let (patch, patch_truncated) = truncate_utf8(patch, patch_limit);
     Ok(GitReviewEvidenceDto {
         base_ref: base_ref.to_string(),
@@ -676,11 +688,15 @@ pub async fn get_git_review_evidence(
     base_ref: String,
     server_config: Option<GitServerConfigDto>,
     max_patch_bytes: Option<usize>,
+    head_ref: Option<String>,
 ) -> Result<GitReviewEvidenceDto, String> {
     if base_ref.trim().is_empty() {
         return Err("Review base ref cannot be empty".to_string());
     }
     super::validate_input_size(&base_ref, 512, "Review base ref")?;
+    if let Some(head) = &head_ref {
+        super::validate_input_size(head, 512, "Review head ref")?;
+    }
     let patch_limit = max_patch_bytes
         .unwrap_or(REVIEW_PATCH_DEFAULT_BYTES)
         .clamp(REVIEW_PATCH_MIN_BYTES, REVIEW_PATCH_MAX_BYTES);
@@ -708,40 +724,39 @@ pub async fn get_git_review_evidence(
                 Ok(output)
             }
         };
-        let head_ref = run(vec!["rev-parse".into(), "HEAD".into()])
-            .await?
-            .trim()
-            .to_string();
+        let pinned = head_ref.is_some();
+        let head_ref = run(vec![
+            "rev-parse".into(),
+            "--verify".into(),
+            format!("{}^{{commit}}", head_ref.as_deref().unwrap_or("HEAD")),
+        ])
+        .await?
+        .trim()
+        .to_string();
         run(vec!["rev-parse".into(), "--verify".into(), verify]).await?;
-        let summary = run(vec![
-            "diff".into(),
-            "--stat".into(),
-            base_ref.clone(),
-            "--".into(),
-        ])
-        .await?;
-        let names = run(vec![
-            "diff".into(),
-            "--name-only".into(),
-            "--diff-filter=ACDMRTUXB".into(),
-            base_ref.clone(),
-            "--".into(),
-        ])
-        .await?;
-        let untracked = run(vec![
-            "ls-files".into(),
-            "--others".into(),
-            "--exclude-standard".into(),
-        ])
-        .await?;
-        let patch = run(vec![
-            "diff".into(),
-            "--no-ext-diff".into(),
-            "--unified=3".into(),
-            base_ref.clone(),
-            "--".into(),
-        ])
-        .await?;
+        let diff = |flags: &[&str]| {
+            let mut args: Vec<String> = vec!["diff".into()];
+            args.extend(flags.iter().map(|flag| (*flag).to_string()));
+            args.push(base_ref.clone());
+            if pinned {
+                args.push(head_ref.clone());
+            }
+            args.push("--".into());
+            run(args)
+        };
+        let summary = diff(&["--stat"]).await?;
+        let names = diff(&["--name-only", "--diff-filter=ACDMRTUXB"]).await?;
+        let patch = diff(&["--no-ext-diff", "--unified=3"]).await?;
+        let untracked = if !pinned {
+            run(vec![
+                "ls-files".into(),
+                "--others".into(),
+                "--exclude-standard".into(),
+            ])
+            .await?
+        } else {
+            String::new()
+        };
         let (patch, patch_truncated) = truncate_utf8(patch, patch_limit);
         return Ok(GitReviewEvidenceDto {
             base_ref,
@@ -754,7 +769,7 @@ pub async fn get_git_review_evidence(
     }
 
     tokio::task::spawn_blocking(move || {
-        build_local_review_evidence(&project_path, &base_ref, patch_limit)
+        build_local_review_evidence(&project_path, &base_ref, patch_limit, head_ref.as_deref())
     })
     .await
     .map_err(|e| format!("Review evidence task failed: {}", e))?
@@ -841,6 +856,12 @@ pub async fn integrate_flight_attempt(
     server_config: Option<GitServerConfigDto>,
 ) -> Result<FlightIntegrationMergeResult, String> {
     let _guard = integration_lock().lock().await;
+    let reviewed_head = super::flight_review::validate_integration(
+        &integration_path,
+        &attempt_path,
+        &attempt_branch,
+    )
+    .await?;
     let result = if let Some(server_config) = server_config {
         let cfg = server_config.into_ssh_config(integration_path.clone());
         worktree::integrate_remote_attempt(
@@ -848,14 +869,14 @@ pub async fn integrate_flight_attempt(
             &integration_path,
             &integration_branch,
             &attempt_path,
-            &attempt_branch,
+            &reviewed_head,
         )
         .await?
     } else {
         let integration_path_for_task = integration_path.clone();
         let integration_branch_for_task = integration_branch.clone();
         let attempt_path_for_task = attempt_path.clone();
-        let attempt_branch_for_task = attempt_branch.clone();
+        let attempt_branch_for_task = reviewed_head;
         tokio::task::spawn_blocking(move || {
             super::validate_project_path(&integration_path_for_task)?;
             super::validate_project_path(&attempt_path_for_task)?;
@@ -875,32 +896,270 @@ pub async fn integrate_flight_attempt(
     })
 }
 
+fn landing_attempts<'a>(
+    flight: &'a crate::core::flight::Flight,
+    expected_head_sha: &str,
+    integration_branch: &str,
+    base_branch: &str,
+) -> Result<Vec<&'a crate::core::flight::Attempt>, String> {
+    use crate::core::flight::{
+        AttemptStatus, FlightExecutionMode, IntegrationBranchStatus, TaskStatus,
+    };
+    let integration = flight
+        .integration_branch
+        .as_ref()
+        .ok_or("Flight integration is unavailable.")?;
+    if flight.execution_mode != Some(FlightExecutionMode::Cooperative)
+        || integration.status != IntegrationBranchStatus::Ready
+        || integration.head_sha != expected_head_sha
+        || integration.branch != integration_branch
+        || integration.base_branch != base_branch
+    {
+        return Err("The Flight integration state changed. Review the current combined result before landing.".into());
+    }
+    let tasks: Vec<_> = flight
+        .milestones
+        .iter()
+        .flat_map(|milestone| &milestone.tasks)
+        .collect();
+    if tasks.is_empty() || tasks.iter().any(|task| task.status != TaskStatus::Done) {
+        return Err(
+            "Every current Flight task must be accepted and integrated before final landing."
+                .into(),
+        );
+    }
+    let unique: std::collections::HashSet<_> = tasks.iter().map(|task| &task.id).collect();
+    if unique.len() != tasks.len() {
+        return Err("The current Flight plan contains duplicate task identities.".into());
+    }
+    if flight.attempts.iter().any(|attempt| {
+        attempt
+            .task_id
+            .as_ref()
+            .is_none_or(|id| !unique.contains(id))
+    }) {
+        return Err("The Flight has attempts outside its current task plan. Resolve the retained legacy work before final delivery.".into());
+    }
+    if flight.attempts.iter().any(|attempt| {
+        matches!(
+            attempt.status,
+            AttemptStatus::Queued
+                | AttemptStatus::Provisioning
+                | AttemptStatus::Running
+                | AttemptStatus::Reviewing
+        ) || attempt
+            .review_gate
+            .as_ref()
+            .is_some_and(|gate| gate.status == crate::core::flight::ReviewGateStatus::Running)
+    }) {
+        return Err("Stop or settle every builder and reviewer before final delivery.".into());
+    }
+    let mut latest = Vec::new();
+    for task in &tasks {
+        if task.depends_on.iter().any(|id| {
+            id == &task.id
+                || !tasks
+                    .iter()
+                    .any(|dependency| &dependency.id == id && dependency.status == TaskStatus::Done)
+        }) {
+            return Err("The current task graph has an unresolved dependency.".into());
+        }
+        let attempt = flight
+            .attempts
+            .iter()
+            .filter(|attempt| attempt.task_id.as_deref() == Some(&task.id))
+            .max_by_key(|attempt| attempt.started_at.unwrap_or(0))
+            .ok_or("A completed task has no accepted attempt.")?;
+        if attempt.status != AttemptStatus::Completed {
+            return Err(
+                "The latest attempt for every task must be accepted before landing.".into(),
+            );
+        }
+        latest.push(attempt);
+    }
+    Ok(latest)
+}
+
 /// Explicitly land the reviewed Flight integration branch into its base
 /// checkout. Clean-tree and exact-base-branch checks fail closed.
 #[tauri::command]
 pub async fn land_flight_integration(
+    flight_id: String,
+    expected_head_sha: String,
     project_path: String,
     base_branch: String,
     integration_branch: String,
     server_config: Option<GitServerConfigDto>,
 ) -> Result<String, String> {
+    use crate::core::flight::{
+        AttemptTarget, DeliveryKind, FlightDelivery, IntegrationBranchStatus,
+    };
     let _guard = integration_lock().lock().await;
-    if let Some(server_config) = server_config {
-        let cfg = server_config.into_ssh_config(project_path.clone());
-        return worktree::land_remote_integration_branch(
-            &cfg,
-            &project_path,
-            &base_branch,
-            &integration_branch,
-        )
-        .await;
+    let snapshot = crate::core::storage::load_state();
+    let flight = snapshot
+        .flights
+        .iter()
+        .find(|flight| flight.id == flight_id)
+        .ok_or("Flight not found.")?;
+    let integration = flight
+        .integration_branch
+        .as_ref()
+        .ok_or("Flight integration is unavailable.")?;
+    let latest = landing_attempts(
+        flight,
+        &expected_head_sha,
+        &integration_branch,
+        &base_branch,
+    )?;
+    let mut repository = latest[0].clone();
+    repository.target = match &latest[0].target {
+        AttemptTarget::Local { base_path, .. }
+            if integration.target_kind == "local"
+                && server_config.is_none()
+                && base_path == &project_path =>
+        {
+            AttemptTarget::Local {
+                base_path: base_path.clone(),
+                worktree_path: base_path.clone(),
+            }
+        }
+        AttemptTarget::Ssh {
+            server_id,
+            base_path,
+            ..
+        } if integration.target_kind == "ssh"
+            && integration.target_id.as_ref() == Some(server_id)
+            && server_config
+                .as_ref()
+                .is_some_and(|config| &config.id == server_id)
+            && base_path == &project_path =>
+        {
+            AttemptTarget::Ssh {
+                server_id: server_id.clone(),
+                base_path: base_path.clone(),
+                worktree_path: base_path.clone(),
+            }
+        }
+        _ => {
+            return Err(
+                "The landing target does not match the saved Flight integration target.".into(),
+            )
+        }
+    };
+    if super::flight_review::read(
+        &repository,
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("{}^{{commit}}", integration.branch),
+        ],
+    )
+    .await?
+        != expected_head_sha
+    {
+        return Err("The combined integration branch changed. Review it before landing.".into());
     }
-    tokio::task::spawn_blocking(move || {
-        super::validate_project_path(&project_path)?;
-        worktree::land_local_integration_branch(&project_path, &base_branch, &integration_branch)
-    })
+    let mut combined_worktree = repository.clone();
+    match &mut combined_worktree.target {
+        AttemptTarget::Local { worktree_path, .. } | AttemptTarget::Ssh { worktree_path, .. } => {
+            *worktree_path = integration.worktree_path.clone()
+        }
+    }
+    if !super::flight_review::read(
+        &combined_worktree,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )
+    .await?
+    .is_empty()
+    {
+        return Err("The combined integration worktree has uncommitted files. Commit or resolve them before final landing.".into());
+    }
+    for attempt in latest {
+        let head = super::flight_review::reviewed_delivery_head(flight, attempt).await?;
+        super::flight_review::read(
+            &repository,
+            &["merge-base", "--is-ancestor", &head, &expected_head_sha],
+        )
+        .await
+        .map_err(|_| {
+            "The latest accepted attempt is not included in the combined integration commit."
+        })?;
+    }
+    if super::flight_review::read(
+        &repository,
+        &["merge-base", "--is-ancestor", &expected_head_sha, "HEAD"],
+    )
     .await
-    .map_err(|e| format!("Flight landing task failed: {}", e))?
+    .is_ok()
+    {
+        return Err("The combined result is already included in the base checkout; no new delivery was recorded.".into());
+    }
+    let head = match &repository.target {
+        AttemptTarget::Ssh { server_id, .. } => {
+            let config =
+                super::flight_attempts::resolve_server_ssh_config(server_id, &project_path)
+                    .ok_or("The saved SSH target is unavailable or unverified.")?;
+            if config
+                .host_fingerprint
+                .as_ref()
+                .is_none_or(|fingerprint| fingerprint.trim().is_empty())
+            {
+                return Err("Pin the SSH host key before landing.".into());
+            }
+            worktree::land_remote_integration_branch(
+                &config,
+                &project_path,
+                &base_branch,
+                &expected_head_sha,
+            )
+            .await?
+        }
+        AttemptTarget::Local { .. } => {
+            let path = project_path.clone();
+            let base = base_branch.clone();
+            let pinned = expected_head_sha.clone();
+            tokio::task::spawn_blocking(move || {
+                super::validate_project_path(&path)?;
+                worktree::land_local_integration_branch(&path, &base, &pinned)
+            })
+            .await
+            .map_err(|error| format!("Flight landing task failed: {error}"))??
+        }
+    };
+    let delivered_head = head.clone();
+    crate::core::storage::with_state_lock(move |snapshot| {
+        let result = (|| {
+            let flight = snapshot
+                .flights
+                .iter_mut()
+                .find(|flight| flight.id == flight_id)
+                .ok_or("Flight not found after landing.")?;
+            flight.delivery = Some(FlightDelivery {
+                kind: DeliveryKind::Landed,
+                delivered_at: super::flight_runtime::now(),
+                branch: integration_branch,
+                base_branch,
+                commit_sha: Some(delivered_head.clone()),
+                pr_number: None,
+                pr_url: None,
+                attempt_id: None,
+            });
+            if let Some(integration) = &mut flight.integration_branch {
+                integration.status = IntegrationBranchStatus::Landed;
+                integration.head_sha = delivered_head;
+            }
+            flight.updated_at = super::flight_runtime::now();
+            Ok(())
+        })();
+        std::future::ready(result)
+    })
+    .await?;
+    Ok(head)
 }
 
 /// Result returned to the frontend after a successful remote clone.
@@ -1084,6 +1343,36 @@ pub async fn git_create_branch_remote(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_landing_requires_current_tasks_latest_accepted_attempts_and_pinned_ready_head() {
+        let mut flight: crate::core::flight::Flight = serde_json::from_str(r#"{"id":"f","title":"Final","objective":"Deliver combined work","status":"review","priority":"high","project_path":"fixture","git_branch":null,"linked_session_ids":[],"created_at":0,"updated_at":0,"completed_at":null,"total_cost":0,"total_tokens":0,"execution_mode":"cooperative",
+        "integration_branch":{"branch":"integration","base_branch":"main","base_sha":"base","head_sha":"reviewed","worktree_path":"fixture/combined","target_kind":"local","status":"ready"},
+        "milestones":[{"id":"m","flight_id":"f","title":"M","description":"","order":0,"status":"done","validation_criteria":[],"tasks":[{"id":"t","milestone_id":"m","flight_id":"f","title":"T","description":"","order":0,"status":"done","task_type":"implementation","agent_config_id":"api-openai","agent_args":null,"model":null,"depends_on":[],"session_id":null,"result":null,"review_packet":null,"created_at":0,"started_at":null,"completed_at":null,"cost":0,"tokens":0}]}],
+        "attempts":[{"id":"a","flight_id":"f","target":{"kind":"local","base_path":"fixture","worktree_path":"fixture/a"},"agent_config_id":"api-openai","model":"m","provider":"openai","branch":"pkt/a","base_branch":"integration","session_id":"builder","status":"completed","task_id":"t","started_at":1}]}"#).unwrap();
+        assert_eq!(
+            landing_attempts(&flight, "reviewed", "integration", "main").unwrap()[0].id,
+            "a"
+        );
+        assert!(landing_attempts(&flight, "stale", "integration", "main").is_err());
+        let mut retry = flight.attempts[0].clone();
+        retry.id = "newer".into();
+        retry.started_at = Some(2);
+        retry.status = crate::core::flight::AttemptStatus::Failed;
+        flight.attempts.push(retry);
+        assert!(landing_attempts(&flight, "reviewed", "integration", "main")
+            .unwrap_err()
+            .contains("latest"));
+        flight.attempts.pop();
+        flight.milestones[0].tasks[0].status = crate::core::flight::TaskStatus::Pending;
+        assert!(landing_attempts(&flight, "reviewed", "integration", "main").is_err());
+        flight.milestones[0].tasks[0].status = crate::core::flight::TaskStatus::Done;
+        flight.milestones[0].tasks[0].depends_on = vec!["missing".into()];
+        assert!(landing_attempts(&flight, "reviewed", "integration", "main").is_err());
+        flight.milestones[0].tasks[0].depends_on.clear();
+        flight.milestones[0].tasks[0].id = "replacement".into();
+        assert!(landing_attempts(&flight, "reviewed", "integration", "main").is_err());
+    }
 
     #[test]
     fn parse_fixes_trailers_matches_canonical_trailer() {

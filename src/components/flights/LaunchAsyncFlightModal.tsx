@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   GitPullRequest,
@@ -19,6 +19,8 @@ import {
 } from "@/stores/asyncFlightStore";
 import { useGitHubStore } from "@/stores/githubStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useServerStore } from "@/stores/serverStore";
+import { useIssueStore } from "@/stores/issueStore";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useAgentTaskStore, type AgentCli } from "@/stores/agentTaskStore";
 import { requestConversationSave } from "@/stores/agentConversationPersistence";
@@ -33,18 +35,25 @@ import { selectRecurringErrorHint } from "@/lib/recurringErrorHint";
 import { resolveInitialPublishAsPrs, summarizeLaunchOutcome } from "@/lib/flightLaunch";
 import { MultiTargetPicker, type PickedTarget } from "./MultiTargetPicker";
 import { pickedToSpec } from "./pickedToSpec";
+import { FlightAgentPicker } from "./FlightAgentPicker";
+import {
+  flightContextFromWorkspace,
+  initialFlightTargets,
+  type FlightLaunchContext,
+} from "@/lib/flightLaunchContext";
+import { linkConversationToFlight } from "@/lib/agentHandoffs";
 import type {
   AutonomyFlightMode,
   AutonomyPolicy,
   AutonomyRuntime,
   FlightPriority,
 } from "@/types/flight";
-import { API_PROVIDERS, getDefaultModel } from "@/lib/api-models";
-import { useOllamaModels } from "@/components/agents/hooks/useOllamaModels";
-import { useLiveModels } from "@/components/agents/hooks/useLiveModels";
-import { resolveModelRows } from "@/lib/liveModels";
+import { getDefaultModel } from "@/lib/api-models";
 import { pathWithinAllowedRoots, validateAutonomyPolicy } from "@/lib/autonomyPolicy";
 import { APP_NAME } from "@/lib/brand";
+import { attemptHasActiveWork, projectFlightLifecycle } from "@/lib/flightLifecycle";
+import { generateId } from "@/lib/storage";
+import { registerFlightStartup } from "@/lib/flightRunControl";
 
 interface LaunchAsyncFlightModalProps {
   onClose: () => void;
@@ -54,18 +63,26 @@ interface LaunchAsyncFlightModalProps {
   // pane, or GitHub's "Plan flight" hand-off). The prompt/title fields are
   // pre-filled from the flight's objective/title but remain editable.
   flightId?: string;
+  initialContext?: FlightLaunchContext;
 }
 
 export function LaunchAsyncFlightModal({
   onClose,
   onLaunched,
   flightId,
+  initialContext,
 }: LaunchAsyncFlightModalProps) {
   const addFlight = useFlightStore((s) => s.addFlight);
   const updateFlight = useFlightStore((s) => s.updateFlight);
   const flushFlightPersistence = useFlightStore((s) => s.flushPersistence);
   const flights = useFlightStore((s) => s.flights);
   const launchAsync = useAsyncFlightStore((s) => s.launchAsync);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const servers = useServerStore((s) => s.servers);
+  const [forceNew, setForceNew] = useState(false);
+  const [createdFlightId, setCreatedFlightId] = useState<string | null>(null);
+  const requestedFlightId =
+    createdFlightId || (!forceNew ? flightId || initialContext?.flightId : undefined);
   const activeWorkspace = useWorkspaceStore((s) =>
     s.workspaces.find((w) => w.id === s.activeWorkspaceId),
   );
@@ -78,11 +95,8 @@ export function LaunchAsyncFlightModal({
   const autonomyDefaultPolicy = useOrchestrationSettingsStore((s) => s.autonomyDefaultPolicy);
 
   const existingFlight = useMemo(
-    () => (flightId ? (flights.find((f) => f.id === flightId) ?? null) : null),
-    // flights is a fresh array each render but we only need the lookup to
-    // re-run when the target id or flight count changes; the modal is
-    // short-lived so staleness here is not a concern.
-    [flightId, flights],
+    () => (requestedFlightId ? (flights.find((f) => f.id === requestedFlightId) ?? null) : null),
+    [requestedFlightId, flights],
   );
   const planningConversationExists = useAgentTaskStore((state) =>
     existingFlight?.planningConversationId
@@ -90,10 +104,46 @@ export function LaunchAsyncFlightModal({
       : false,
   );
 
-  const [prompt, setPrompt] = useState(() => existingFlight?.objective ?? "");
-  const [title, setTitle] = useState(() => existingFlight?.title ?? "");
-  const [picked, setPicked] = useState<PickedTarget[]>([]);
+  const [prompt, setPrompt] = useState(
+    () => initialContext?.objective ?? existingFlight?.objective ?? "",
+  );
+  const [title, setTitle] = useState(() => initialContext?.title ?? existingFlight?.title ?? "");
+  const [picked, setPicked] = useState<PickedTarget[]>(() =>
+    initialFlightTargets(
+      {
+        ...(activeWorkspace ? flightContextFromWorkspace(activeWorkspace) : { projectPath }),
+        ...(existingFlight
+          ? {
+              projectPath: existingFlight.executionTarget?.basePath || existingFlight.projectPath,
+              workspaceId: existingFlight.workspaceId,
+              serverId: existingFlight.executionTarget
+                ? existingFlight.executionTarget.serverId
+                : existingFlight.attempts?.[0]?.target.kind === "ssh"
+                  ? existingFlight.attempts[0].target.serverId
+                  : undefined,
+              baseBranch: existingFlight.gitBranch || existingFlight.attempts?.[0]?.baseBranch,
+            }
+          : {}),
+        ...initialContext,
+      },
+      workspaces,
+      servers,
+    ),
+  );
+  const [targetErrors, setTargetErrors] = useState<string[]>([
+    "Checking repository and API access…",
+  ]);
+  const [reviewerError, setReviewerError] = useState<string | null>(
+    "Checking reviewer API access…",
+  );
+  const [intent, setIntent] = useState<"single" | "compare" | "cooperative">(
+    existingFlight?.executionMode === "cooperative" ? "cooperative" : "single",
+  );
+  const [advanced, setAdvanced] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [pendingFlightId, setPendingFlightId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const launchAllowed = useRef(true);
   const [planning, setPlanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // v0.8-G: per-attempt draft-PR publish toggle. When enabled, the
@@ -103,8 +153,12 @@ export function LaunchAsyncFlightModal({
   // Seeding from the global default alone meant re-opening this modal to add an
   // attempt silently rewrote `publishAttemptsAsPrs` on save (`createOrUpdateFlight`).
   const [publishAsPrs, setPublishAsPrs] = useState(() =>
-    resolveInitialPublishAsPrs(existingFlight, defaultPublishAttemptsAsPrs),
+    existingFlight?.executionMode === "cooperative"
+      ? false
+      : resolveInitialPublishAsPrs(existingFlight, defaultPublishAttemptsAsPrs),
   );
+  const perAttemptPublishing =
+    intent !== "cooperative" && existingFlight?.executionMode !== "cooperative" && publishAsPrs;
   const [reviewerEnabled, setReviewerEnabled] = useState(
     existingFlight?.reviewGatePolicy?.enabled ?? false,
   );
@@ -116,7 +170,9 @@ export function LaunchAsyncFlightModal({
     existingFlight?.reviewGatePolicy?.reviewerModel ?? getDefaultModel("api-openai-agents"),
   );
   const [acceptanceCriteria, setAcceptanceCriteria] = useState(
-    existingFlight?.reviewGatePolicy?.acceptanceCriteria.join("\n") ?? "",
+    initialContext?.acceptanceCriteria?.join("\n") ??
+      existingFlight?.reviewGatePolicy?.acceptanceCriteria.join("\n") ??
+      "",
   );
   const [autonomyMode, setAutonomyMode] = useState<AutonomyFlightMode>(
     existingFlight?.autonomyMode ?? "assisted",
@@ -166,44 +222,6 @@ export function LaunchAsyncFlightModal({
     return `Host key not verified for: ${names}. Verify on the Servers page before launching.`;
   }, [unpinnedTargets]);
 
-  const reviewerProvider = API_PROVIDERS.find((provider) => provider.agentCli === reviewerAgent);
-
-  // The reviewer runs a tool-carrying read-only loop, so an Ollama reviewer
-  // must be a tool-capable *installed* model. Fetch the live list when the
-  // Ollama row is selected; fall back to the static catalog when the daemon
-  // is unreachable (the launch will then fail at the backend pre-flight).
-  const { ollamaModels: reviewerOllamaModels } = useOllamaModels(
-    reviewerEnabled ? reviewerAgent : "",
-  );
-  // Every non-Ollama provider's list comes from the shared cache, resolved by
-  // the one precedence function. Cached rows render immediately; a refresh runs
-  // behind the modal and never delays opening it.
-  const { answer: reviewerLiveModels } = useLiveModels(reviewerAgent);
-  const reviewerModelOptions = useMemo<
-    { value: string; label: string; disabled: boolean }[]
-  >(() => {
-    // Ollama keeps its own producer: the daemon reports a tools template per
-    // model, and the reviewer runs a tool-carrying loop, so "installed" is not
-    // the same question as "usable here".
-    if (
-      reviewerAgent === "api-ollama" &&
-      Array.isArray(reviewerOllamaModels) &&
-      reviewerOllamaModels.length > 0
-    ) {
-      return reviewerOllamaModels.map((m) => ({
-        value: m.name,
-        label: m.supportsTools === false ? `${m.name} (no tools)` : m.name,
-        disabled: m.supportsTools === false,
-      }));
-    }
-    // This used to read `reviewerProvider.models` directly — one of three
-    // ad-hoc live/static precedence rules that had drifted apart. All three
-    // now go through `resolveModelRows`.
-    return resolveModelRows({ agent: reviewerAgent, live: reviewerLiveModels }).rows.map(
-      (m) => ({ value: m.value, label: m.label, disabled: false }),
-    );
-  }, [reviewerAgent, reviewerOllamaModels, reviewerLiveModels]);
-
   const parsedAcceptanceCriteria = useMemo(
     () =>
       acceptanceCriteria
@@ -212,24 +230,25 @@ export function LaunchAsyncFlightModal({
         .filter(Boolean),
     [acceptanceCriteria],
   );
-  const reviewerConfigurationError = useMemo(() => {
-    if (!reviewerEnabled) return null;
-    if (!reviewerProvider) return "Choose a supported API reviewer.";
-    const selected = reviewerModelOptions.find((option) => option.value === reviewerModel);
-    if (!selected) {
-      return "Choose a model supported by the selected reviewer.";
-    }
-    if (selected.disabled) {
-      return "That Ollama model has no tools template — the reviewer needs tool calling.";
-    }
-    if (parsedAcceptanceCriteria.length === 0) {
-      return "Add at least one acceptance criterion for the independent reviewer.";
-    }
-    if (parsedAcceptanceCriteria.length > 40) {
-      return "Reviewer Gate supports at most 40 acceptance criteria.";
-    }
-    return null;
-  }, [parsedAcceptanceCriteria, reviewerEnabled, reviewerModel, reviewerModelOptions, reviewerProvider]);
+  const reviewerConfigurationError = !reviewerEnabled
+    ? null
+    : parsedAcceptanceCriteria.length === 0
+      ? "Add at least one acceptance check for the independent reviewer."
+      : parsedAcceptanceCriteria.length > 40
+        ? "Reviewer Gate supports at most 40 acceptance checks."
+        : reviewerError;
+  const criteriaError =
+    parsedAcceptanceCriteria.length > 40 ||
+    parsedAcceptanceCriteria.some((criterion) => criterion.length > 1000)
+      ? "Use up to 40 acceptance checks, at most 1,000 characters each."
+      : null;
+  const phase = existingFlight ? projectFlightLifecycle(existingFlight).phase : null;
+  const launchBlocked =
+    phase === "delivered" || phase === "archived"
+      ? "This Flight is already delivered or archived. Start a new Flight for follow-up work."
+      : requestedFlightId && !existingFlight
+        ? "This Flight is no longer available. Start a new Flight instead."
+        : null;
 
   const explicitYoloPolicy = useMemo<AutonomyPolicy>(
     () => ({
@@ -252,14 +271,14 @@ export function LaunchAsyncFlightModal({
           ...picked.map((target) => (target.kind === "ssh" ? target.server.id : "local")),
         ]),
       ),
-      allowDraftPrPublishing: publishAsPrs,
+      allowDraftPrPublishing: perAttemptPublishing,
     }),
     [
       autonomyDefaultPolicy,
       existingFlight?.executionMode,
       existingFlight?.projectPath,
       picked,
-      publishAsPrs,
+      perAttemptPublishing,
       reviewerEnabled,
     ],
   );
@@ -303,6 +322,10 @@ export function LaunchAsyncFlightModal({
   const canLaunch =
     prompt.trim().length > 0 &&
     picked.length > 0 &&
+    targetErrors.length === 0 &&
+    !launchBlocked &&
+    !criteriaError &&
+    intent !== "cooperative" &&
     launchCollisions.length === 0 &&
     unpinnedTargets.length === 0 &&
     reviewerConfigurationError === null &&
@@ -314,10 +337,15 @@ export function LaunchAsyncFlightModal({
     existingFlight?.planningConversationId && planningConversationExists,
   );
   const canPlan =
+    !launchBlocked &&
+    !criteriaError &&
     !launching &&
     !planning &&
     (canOpenExistingPlan ||
-      (prompt.trim().length > 0 && picked.length > 0 && unpinnedTargets.length === 0));
+      (prompt.trim().length > 0 &&
+        picked.length > 0 &&
+        targetErrors.length === 0 &&
+        unpinnedTargets.length === 0));
 
   function autonomyFields(starting: boolean): {
     autonomyMode: AutonomyFlightMode;
@@ -345,56 +373,95 @@ export function LaunchAsyncFlightModal({
   }
 
   function createOrUpdateFlight(startingAutonomy = false) {
+    if (launchBlocked) throw new Error(launchBlocked);
+    const primaryTarget = picked[0];
+    const executionTarget = {
+      kind: primaryTarget.kind,
+      basePath: primaryTarget.basePath,
+      ...(primaryTarget.kind === "ssh" ? { serverId: primaryTarget.server.id } : {}),
+    };
+    const executionPrompt =
+      parsedAcceptanceCriteria.length > 0
+        ? `${prompt.trim()}\n\nAcceptance checks:\n${parsedAcceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`
+        : prompt.trim();
+    const reviewGatePolicy =
+      reviewerEnabled || parsedAcceptanceCriteria.length > 0
+        ? {
+            enabled: reviewerEnabled,
+            reviewerAgentConfigId: reviewerAgent,
+            reviewerModel,
+            acceptanceCriteria: parsedAcceptanceCriteria,
+          }
+        : undefined;
+    function linkSource(id: string) {
+      if (intent === "cooperative") updateFlight(id, { executionMode: "cooperative" });
+      if (initialContext?.issueId) {
+        const issue = useIssueStore
+          .getState()
+          .issues.find((item) => item.id === initialContext.issueId);
+        if (!issue)
+          throw new Error(
+            "The source issue is no longer available. Close this brief and select the task again.",
+          );
+        useIssueStore.getState().assignToFlight(issue.id, id);
+        useFlightStore.getState().addIssueToFlight(id, issue.id);
+      }
+      if (initialContext?.conversationId) {
+        const result = linkConversationToFlight(initialContext.conversationId, id);
+        if (!result.ok) throw new Error(result.message);
+      }
+    }
     if (existingFlight) {
       const updates = {
         title: title.trim() || existingFlight.title,
         objective: prompt.trim(),
-        prompt: prompt.trim(),
-        publishAttemptsAsPrs: publishAsPrs,
-        reviewGatePolicy: reviewerEnabled
+        prompt: executionPrompt,
+        publishAttemptsAsPrs: perAttemptPublishing,
+        reviewGatePolicy,
+        ...(!existingFlight.attempts?.length && !existingFlight.integrationBranch
           ? {
-              enabled: true,
-              reviewerAgentConfigId: reviewerAgent,
-              reviewerModel,
-              acceptanceCriteria: parsedAcceptanceCriteria,
+              projectPath: primaryTarget.basePath,
+              gitBranch: primaryTarget.baseBranch,
+              executionTarget,
             }
-          : undefined,
+          : {}),
         ...autonomyFields(startingAutonomy),
       };
       updateFlight(existingFlight.id, updates);
+      linkSource(existingFlight.id);
       return { ...existingFlight, ...updates };
     }
-    const primaryTarget = picked[0];
     const targetWorkspaceId =
       primaryTarget.kind === "local"
         ? primaryTarget.workspaceId
         : activeWorkspace?.serverId === primaryTarget.server.id
           ? activeWorkspace.id
           : null;
-    return addFlight({
+    const created = addFlight({
       title: title.trim() || promptShort || "Untitled flight",
       objective: prompt.trim(),
       priority: "medium" as FlightPriority,
       projectPath: primaryTarget.basePath || activeWorkspace?.projectPath || projectPath || "",
       workspaceId: targetWorkspaceId,
+      gitBranch: primaryTarget.baseBranch,
+      executionTarget,
       issueIds: [],
-      publishAttemptsAsPrs: publishAsPrs,
-      reviewGatePolicy: reviewerEnabled
-        ? {
-            enabled: true,
-            reviewerAgentConfigId: reviewerAgent,
-            reviewerModel,
-            acceptanceCriteria: parsedAcceptanceCriteria,
-          }
-        : undefined,
+      publishAttemptsAsPrs: perAttemptPublishing,
+      reviewGatePolicy,
       ...autonomyFields(startingAutonomy),
     });
+    setCreatedFlightId(created.id);
+    updateFlight(created.id, { prompt: executionPrompt });
+    linkSource(created.id);
+    return useFlightStore.getState().flights.find((item) => item.id === created.id)!;
   }
 
   async function handlePlanFirst() {
     if (!canPlan) return;
+    launchAllowed.current = true;
     setPlanning(true);
     setError(null);
+    let startup: ReturnType<typeof registerFlightStartup> | undefined;
     try {
       const currentConversationId = existingFlight?.planningConversationId;
       if (
@@ -411,7 +478,32 @@ export function LaunchAsyncFlightModal({
       }
 
       const flight = createOrUpdateFlight(false);
+      const conversationId = generateId("conv");
+      startup = registerFlightStartup(flight.id);
+      const isCurrent = () => {
+        const current = useFlightStore.getState().flights.find((item) => item.id === flight.id);
+        return Boolean(
+          startup?.isCurrent() &&
+          launchAllowed.current &&
+          current &&
+          !current.stoppedAt &&
+          !current.archivedAt &&
+          !current.delivery &&
+          current.planningConversationId === conversationId,
+        );
+      };
+      // Register ownership before generic API startup so native admission and
+      // Stop can identify the planner even while its startup is pending.
+      updateFlight(flight.id, {
+        planningConversationId: conversationId,
+        linkedSessionIds: Array.from(new Set([...flight.linkedSessionIds, conversationId])),
+        prompt: flight.prompt || prompt.trim(),
+        status: "planning",
+      });
+      setPendingFlightId(flight.id);
       await flushFlightPersistence();
+      if (!isCurrent())
+        throw new Error("Planning was stopped before startup. The Flight brief is retained.");
       const target = picked[0];
       const sshTarget =
         target.kind === "ssh"
@@ -427,11 +519,12 @@ export function LaunchAsyncFlightModal({
               hostFingerprint: target.server.hostFingerprint ?? null,
             }
           : null;
-      const conversationId = await useAgentTaskStore.getState().createApiConversation({
+      await useAgentTaskStore.getState().createApiConversation({
+        explicitId: conversationId,
         agent: target.agent,
         projectPath: target.basePath,
         model: target.model,
-        initialMessage: `Create an implementation-ready upfront plan for this Flight.\n\nObjective:\n${prompt.trim()}`,
+        initialMessage: `Create an implementation-ready upfront plan for this Flight.\n\nObjective:\n${flight.prompt || prompt.trim()}`,
         systemPromptOverride: buildFlightPlanningSystemPrompt(flight.id),
         planMode: false,
         sshTarget,
@@ -442,6 +535,18 @@ export function LaunchAsyncFlightModal({
         approveWrites: false,
       });
 
+      if (!isCurrent()) {
+        await useAgentTaskStore.getState().cancelActiveConversation(conversationId);
+        throw new Error("Planning stopped. Its conversation and Flight brief are retained.");
+      }
+      const conversation = useAgentTaskStore
+        .getState()
+        .conversations.find((item) => item.id === conversationId);
+      if (conversation?.status === "failed")
+        throw new Error(
+          "Planning could not start. Open the retained planning conversation for details, then start a new Flight or retry explicitly.",
+        );
+
       useAgentTaskStore.setState((state) => ({
         conversations: state.conversations.map((conversation) =>
           conversation.id === conversationId
@@ -450,25 +555,26 @@ export function LaunchAsyncFlightModal({
         ),
       }));
       requestConversationSave(conversationId);
-      updateFlight(flight.id, {
-        planningConversationId: conversationId,
-        linkedSessionIds: Array.from(new Set([...flight.linkedSessionIds, conversationId])),
-        prompt: prompt.trim(),
-        status: "planning",
-      });
       await flushFlightPersistence();
+      if (!isCurrent()) {
+        await useAgentTaskStore.getState().cancelActiveConversation(conversationId);
+        throw new Error("Planning stopped. Its conversation and Flight brief are retained.");
+      }
       onLaunched?.(flight.id);
       openConversationInAgents(conversationId);
       onClose();
     } catch (e) {
       setError(typeof e === "string" ? e : ((e as Error)?.message ?? "Planning failed"));
     } finally {
+      startup?.finish();
       setPlanning(false);
+      setPendingFlightId(null);
     }
   }
 
   async function handleLaunch() {
     if (!canLaunch) return;
+    launchAllowed.current = true;
     setLaunching(true);
     setError(null);
     let launchedFlightId: string | null = null;
@@ -483,6 +589,7 @@ export function LaunchAsyncFlightModal({
       // state), reuse it instead of minting a disconnected duplicate.
       const flight = createOrUpdateFlight(true);
       launchedFlightId = flight.id;
+      setPendingFlightId(flight.id);
       attemptIdsBefore = new Set((flight.attempts ?? []).map((attempt) => attempt.id));
 
       // The backend appends Attempts to the persisted Flight. Ensure the
@@ -490,42 +597,84 @@ export function LaunchAsyncFlightModal({
       // "Flight not found" or race a delayed stale whole-slice write.
       await flushFlightPersistence();
 
-      await launchAsync(flight.id, prompt.trim(), targetSpecs);
+      await launchAsync(flight.id, flight.prompt || prompt.trim(), targetSpecs, {
+        explicitResume: true,
+        canStart: () => launchAllowed.current,
+      });
 
       onLaunched?.(flight.id);
       onClose();
     } catch (e) {
+      if (!launchAllowed.current) {
+        setError("Flight stopped. Prepared work is retained for inspection in Flight Deck.");
+        if (launchedFlightId) onLaunched?.(launchedFlightId);
+        return;
+      }
       const message = typeof e === "string" ? e : ((e as Error)?.message ?? "Launch failed");
       // `launchAsync` rehydrates and reattaches attempts that DID provision
       // before the failure, so count them and say so — otherwise the user is
       // told the launch failed while agents are live and spending.
-      const launched = launchedFlightId
+      const prepared = launchedFlightId
         ? (useFlightStore
             .getState()
             .flights.find((f) => f.id === launchedFlightId)
-            ?.attempts?.filter((attempt) => !attemptIdsBefore.has(attempt.id)).length ?? 0)
-        : 0;
-      const outcome = summarizeLaunchOutcome(launched, picked.length, message);
-      setError(outcome.text);
-      if (outcome.partial && launchedFlightId) onLaunched?.(launchedFlightId);
+            ?.attempts?.filter((attempt) => !attemptIdsBefore.has(attempt.id)) ?? [])
+        : [];
+      const outcome = summarizeLaunchOutcome(
+        prepared.filter(attemptHasActiveWork).length,
+        picked.length,
+        message,
+      );
+      setError(
+        !outcome.partial && prepared.length > 0
+          ? `${outcome.text} Prepared work is retained for inspection in Flight Deck.`
+          : outcome.text,
+      );
+      if (prepared.length > 0 && launchedFlightId) onLaunched?.(launchedFlightId);
     } finally {
       setLaunching(false);
+      setPendingFlightId(null);
+    }
+  }
+
+  async function stopLaunch() {
+    launchAllowed.current = false;
+    if (!pendingFlightId || stopping) return;
+    setStopping(true);
+    try {
+      await useAsyncFlightStore.getState().stopFlight(pendingFlightId);
+      onLaunched?.(pendingFlightId);
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setStopping(false);
     }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.ctrlKey && e.key === "Enter") {
       e.preventDefault();
-      void handleLaunch();
+      void (intent === "cooperative" ? handlePlanFirst() : handleLaunch());
     }
   }
 
   const footer = (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-wrap items-center justify-between gap-3">
       <span className="text-[10px] text-text-muted">
-        Ctrl+Enter to launch · Each agent runs in its own git worktree
+        Each run uses an isolated branch · API usage is billed by your provider
       </span>
       <div className="flex items-center gap-2">
+        {(launching || planning) && pendingFlightId && (
+          <button
+            type="button"
+            disabled={stopping}
+            onClick={() => void stopLaunch()}
+            className="rounded border border-accent-red/30 px-3 py-1.5 text-xs text-accent-red"
+          >
+            {stopping ? "Stopping…" : planning ? "Stop planning" : "Stop launch"}
+          </button>
+        )}
         <button
           onClick={onClose}
           disabled={launching || planning}
@@ -536,21 +685,25 @@ export function LaunchAsyncFlightModal({
         <button
           onClick={() => void handlePlanFirst()}
           disabled={!canPlan}
-          className="bg-accent-purple/10 border-accent-purple/30 hover:bg-accent-purple/20 flex items-center gap-1.5 rounded border px-3 py-1.5 text-xs font-medium text-accent-purple transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded border border-accent-purple/30 bg-accent-purple/10 px-3 py-1.5 text-xs font-medium text-accent-purple transition-colors hover:bg-accent-purple/20 disabled:cursor-not-allowed disabled:opacity-40"
           title="Explore the repository and refine a structured plan in a normal agent conversation"
         >
           <Route size={11} />
-          {planning ? "Starting plan…" : canOpenExistingPlan ? "Open plan" : "Plan first"}
+          {planning ? "Starting plan…" : canOpenExistingPlan ? "Open plan" : "Plan before running"}
         </button>
         <button
-          onClick={() => void handleLaunch()}
-          disabled={!canLaunch}
-          className="bg-accent-green/15 border-accent-green/30 hover:bg-accent-green/25 flex items-center gap-1.5 rounded border px-4 py-1.5 text-xs font-medium text-accent-green transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={() => void (intent === "cooperative" ? handlePlanFirst() : handleLaunch())}
+          disabled={intent === "cooperative" ? !canPlan : !canLaunch}
+          className="flex items-center gap-1.5 rounded border border-accent-green/30 bg-accent-green/15 px-4 py-1.5 text-xs font-medium text-accent-green transition-colors hover:bg-accent-green/25 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {launching ? <Loader2 size={11} className="animate-spin" /> : <Rocket size={11} />}
           {launching
             ? `Provisioning ${picked.length} ${picked.length === 1 ? "agent" : "agents"}…`
-            : `Launch ${picked.length || ""} ${picked.length === 1 ? "agent" : "agents"}`}
+            : intent === "cooperative"
+              ? "Plan cooperative work"
+              : intent === "compare"
+                ? `Compare ${picked.length} runs`
+                : "Run Flight"}
         </button>
       </div>
     </div>
@@ -565,27 +718,58 @@ export function LaunchAsyncFlightModal({
       closeDisabled={launching || planning}
       title={
         existingFlight
-          ? `Launch attempt — ${existingFlight.title || "Untitled flight"}`
-          : "Launch parallel agents"
+          ? `New attempt — ${existingFlight.title || "Untitled flight"}`
+          : "Flight brief"
       }
       icon={<Sparkles size={14} className="text-accent-green" />}
       width="w-[820px] max-w-[92vw]"
       footer={footer}
     >
-      <div className="flex flex-col gap-4 px-5 py-4" onKeyDown={handleKeyDown}>
+      <fieldset
+        disabled={launching || planning}
+        className="flex min-w-0 flex-col gap-4 px-5 py-4"
+        onKeyDown={handleKeyDown}
+      >
+        <p className="text-xs leading-relaxed text-text-secondary">
+          Finish one scoped change on an isolated branch, then review the result and choose Land or
+          Open PR.{initialContext?.sourceLabel ? ` From ${initialContext.sourceLabel}.` : ""}
+        </p>
+        {launchBlocked && (
+          <div
+            role="alert"
+            className="rounded border border-accent-amber/30 bg-accent-amber/10 px-3 py-2 text-xs text-accent-amber"
+          >
+            {launchBlocked}
+            <button
+              type="button"
+              onClick={() => {
+                setForceNew(true);
+                setCreatedFlightId(null);
+                setIntent("single");
+                setAutonomyMode("assisted");
+              }}
+              className="ml-2 underline"
+            >
+              Create a new Flight
+            </button>
+          </div>
+        )}
         {/* Prompt */}
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-text-secondary">Prompt</label>
+          <label htmlFor="flight-outcome" className="text-[11px] font-medium text-text-secondary">
+            Desired outcome
+          </label>
           <textarea
+            id="flight-outcome"
             autoFocus
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="What should the agents work on? Each agent runs the same prompt independently."
+            placeholder="What should be different when this work is finished? Include the scope and anything the agent should preserve."
             rows={4}
-            className="focus:border-accent-green/50 w-full resize-none rounded border border-bg-border bg-bg-primary px-3 py-2 text-xs text-text-primary outline-none placeholder:text-text-muted"
+            className="w-full resize-none rounded border border-bg-border bg-bg-primary px-3 py-2 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent-green/50"
           />
           {recurringHint && (
-            <div className="border-accent-amber/40 bg-accent-amber/10 flex items-start gap-1.5 rounded border px-2.5 py-1.5 text-[11px] leading-snug text-accent-amber">
+            <div className="flex items-start gap-1.5 rounded border border-accent-amber/40 bg-accent-amber/10 px-2.5 py-1.5 text-[11px] leading-snug text-accent-amber">
               <AlertTriangle size={12} className="mt-px shrink-0" />
               <span>
                 <span className="font-medium">This looks familiar</span>
@@ -598,114 +782,201 @@ export function LaunchAsyncFlightModal({
           )}
         </div>
 
+        <label className="flex flex-col gap-1.5 text-[11px] font-medium text-text-secondary">
+          Acceptance checks
+          <textarea
+            aria-label="Acceptance checks"
+            value={acceptanceCriteria}
+            onChange={(event) => setAcceptanceCriteria(event.target.value)}
+            rows={3}
+            placeholder={
+              "One observable check per line\nExample: creating a Flight from this issue keeps its repository and criteria"
+            }
+            className="w-full resize-y rounded border border-bg-border bg-bg-primary px-3 py-2 text-xs font-normal text-text-primary"
+          />
+          <span className="text-[10px] font-normal text-text-muted">
+            Included in the builder brief. Independent review is optional below.
+          </span>
+          {criteriaError && <span className="text-[10px] text-accent-amber">{criteriaError}</span>}
+        </label>
+
         {/* Title (optional) */}
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium text-text-secondary">
+          <label htmlFor="flight-title" className="text-[11px] font-medium text-text-secondary">
             Title <span className="font-normal text-text-muted">(optional)</span>
           </label>
           <input
+            id="flight-title"
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={promptShort || "Auto-generated from prompt"}
-            className="focus:border-accent-green/50 w-full rounded border border-bg-border bg-bg-primary px-3 py-2 text-xs text-text-primary outline-none placeholder:text-text-muted"
+            className="w-full rounded border border-bg-border bg-bg-primary px-3 py-2 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent-green/50"
           />
         </div>
 
         {/* Targets */}
-        <MultiTargetPicker picked={picked} onChange={setPicked} />
+        <MultiTargetPicker
+          picked={picked}
+          onChange={setPicked}
+          allowMultiple={intent === "compare"}
+          onValidationChange={setTargetErrors}
+        />
 
-        <div className="border-accent-purple/20 bg-accent-purple/5 rounded border px-3 py-2 text-[10px] leading-relaxed text-text-muted">
-          <span className="font-medium text-text-secondary">Plan first</span> uses the first
-          selected agent in a read-only conversation. Refine the plan there, apply it to this
-          Flight, then configure and launch attempts when you are ready.
+        <div className="rounded border border-bg-border bg-bg-secondary px-3 py-2 text-[11px] text-text-secondary">
+          {intent === "single"
+            ? effectiveAutonomyPolicy
+              ? `One agent · Bounded follow-up: $${effectiveAutonomyPolicy.maxTotalCost.toFixed(2)}, ${effectiveAutonomyPolicy.maxDurationMinutes} minutes. You control final landing.`
+              : "One agent · Assisted: you control retries, acceptance and landing."
+            : intent === "compare"
+              ? "Each selected agent runs the same brief independently. Compare results before choosing one."
+              : "Create and approve a task plan, then launch ready tasks from the Flight. Each task has its own branch."}
         </div>
 
-        <div className="border-accent-amber/25 bg-accent-amber/5 rounded border px-3 py-2.5">
-          <div className="flex items-start gap-2">
-            <ShieldAlert size={12} className="mt-0.5 shrink-0 text-accent-amber" />
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-medium text-text-secondary">
-                Execution supervision
-              </div>
-              <div className="mt-2 grid grid-cols-3 gap-1">
-                {(
-                  [
-                    ["assisted", "Assisted"],
-                    ["settings_default", "Settings default"],
-                    ["yolo", "YOLO"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setAutonomyMode(value)}
-                    className={`rounded border px-2 py-1 text-[10px] ${
-                      autonomyMode === value
-                        ? value === "yolo"
-                          ? "border-accent-amber/50 bg-accent-amber/15 text-accent-amber"
-                          : "border-accent-green/40 bg-accent-green/10 text-accent-green"
-                        : "border-bg-border text-text-muted"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {effectiveAutonomyPolicy ? (
-                <div className="mt-2 text-[10px] leading-relaxed text-text-muted">
-                  <span className="font-medium text-text-secondary">Effective bounds:</span> $
-                  {effectiveAutonomyPolicy.maxTotalCost.toFixed(2)} ·{" "}
-                  {effectiveAutonomyPolicy.maxDurationMinutes} min ·{" "}
-                  {effectiveAutonomyPolicy.maxRetriesPerTask} retries/task ·{" "}
-                  {effectiveAutonomyPolicy.maxReviewRounds} review rounds ·{" "}
-                  {effectiveAutonomyPolicy.maxConcurrentAgents} agents. Enabled:{" "}
-                  {[
-                    effectiveAutonomyPolicy.autoRecovery && "recovery",
-                    effectiveAutonomyPolicy.autoReviewRemediation && "review remediation",
-                    effectiveAutonomyPolicy.autoRunTaskGraph && "task graph",
-                    effectiveAutonomyPolicy.toolPosture === "allow_in_project" &&
-                      "unattended in-project tools",
-                  ]
-                    .filter(Boolean)
-                    .join(", ") || "limits only"}
-                  .
-                </div>
-              ) : (
-                <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
-                  {autonomyMode === "settings_default"
-                    ? "Settings currently resolves this Flight to Assisted mode."
-                    : `${APP_NAME} detects and recommends; you launch, retry, accept, and integrate.`}
-                </p>
-              )}
-              {autonomyConfigurationError && (
-                <p className="mt-1 text-[10px] text-accent-amber">{autonomyConfigurationError}</p>
-              )}
+        <button
+          type="button"
+          aria-expanded={advanced}
+          onClick={() => setAdvanced((value) => !value)}
+          className="self-start text-[11px] text-text-muted underline"
+        >
+          {advanced
+            ? "Hide execution options"
+            : "Execution options · review, publishing and team modes"}
+        </button>
+
+        {advanced && (
+          <>
+            <fieldset className="space-y-2 rounded border border-bg-border p-3">
+              <legend className="px-1 text-[11px] text-text-secondary">Work arrangement</legend>
+              {(
+                [
+                  ["single", "One scoped change"],
+                  ["compare", "Compare alternative implementations"],
+                  ["cooperative", "Plan and divide work"],
+                ] as const
+              ).map(([value, label]) => (
+                <label
+                  key={value}
+                  className="flex items-center gap-2 text-[11px] text-text-secondary"
+                >
+                  <input
+                    type="radio"
+                    name="flight-intent"
+                    value={value}
+                    checked={intent === value}
+                    disabled={
+                      existingFlight?.executionMode === "cooperative" && value !== "cooperative"
+                    }
+                    onChange={() => {
+                      setIntent(value);
+                      if (value === "cooperative") setPublishAsPrs(false);
+                      if (value !== "compare") setPicked((current) => current.slice(0, 1));
+                    }}
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+
+            <div className="rounded border border-accent-purple/20 bg-accent-purple/5 px-3 py-2 text-[10px] leading-relaxed text-text-muted">
+              <span className="font-medium text-text-secondary">Plan first</span> uses the first
+              selected agent in a read-only conversation. Refine the plan there, apply it to this
+              Flight, then configure and launch attempts when you are ready.
             </div>
-          </div>
-        </div>
 
-        {/* v0.8-G: publish attempts as draft PRs */}
-        <label className="group flex cursor-pointer items-start gap-2">
-          <input
-            type="checkbox"
-            checked={publishAsPrs}
-            onChange={(e) => setPublishAsPrs(e.target.checked)}
-            className="mt-0.5 accent-accent-green"
-          />
-          <div className="flex flex-col gap-0.5">
-            <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary group-hover:text-text-primary">
-              <GitPullRequest size={11} className="text-accent-purple" />
-              Publish attempts as draft PRs
-            </span>
-            <span className="text-[10px] leading-snug text-text-muted">
-              After each attempt, push the branch and open a draft PR on GitHub. Lets you review
-              attempts via your normal PR flow.
-            </span>
-          </div>
-        </label>
+            <div className="rounded border border-accent-amber/25 bg-accent-amber/5 px-3 py-2.5">
+              <div className="flex items-start gap-2">
+                <ShieldAlert size={12} className="mt-0.5 shrink-0 text-accent-amber" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-medium text-text-secondary">
+                    Execution supervision
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-1">
+                    {(
+                      [
+                        ["assisted", "Assisted"],
+                        ["settings_default", "Settings default"],
+                        ["yolo", "Bounded follow-up"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setAutonomyMode(value)}
+                        aria-pressed={autonomyMode === value}
+                        className={`rounded border px-2 py-1 text-[10px] ${
+                          autonomyMode === value
+                            ? value === "yolo"
+                              ? "border-accent-amber/50 bg-accent-amber/15 text-accent-amber"
+                              : "border-accent-green/40 bg-accent-green/10 text-accent-green"
+                            : "border-bg-border text-text-muted"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {effectiveAutonomyPolicy ? (
+                    <div className="mt-2 text-[10px] leading-relaxed text-text-muted">
+                      <span className="font-medium text-text-secondary">Effective bounds:</span> $
+                      {effectiveAutonomyPolicy.maxTotalCost.toFixed(2)} ·{" "}
+                      {effectiveAutonomyPolicy.maxDurationMinutes} min ·{" "}
+                      {effectiveAutonomyPolicy.maxRetriesPerTask} retries/task ·{" "}
+                      {effectiveAutonomyPolicy.maxReviewRounds} review rounds ·{" "}
+                      {effectiveAutonomyPolicy.maxConcurrentAgents} agents. Enabled:{" "}
+                      {[
+                        effectiveAutonomyPolicy.autoRecovery && "recovery",
+                        effectiveAutonomyPolicy.autoReviewRemediation && "review remediation",
+                        effectiveAutonomyPolicy.autoRunTaskGraph && "task graph",
+                        effectiveAutonomyPolicy.toolPosture === "allow_in_project" &&
+                          "unattended in-project tools",
+                      ]
+                        .filter(Boolean)
+                        .join(", ") || "limits only"}
+                      .
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
+                      {autonomyMode === "settings_default"
+                        ? "Settings currently resolves this Flight to Assisted mode."
+                        : `${APP_NAME} detects and recommends; you launch, retry, accept, and integrate.`}
+                    </p>
+                  )}
+                  {autonomyConfigurationError && (
+                    <p className="mt-1 text-[10px] text-accent-amber">
+                      {autonomyConfigurationError}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
 
-        <div className="bg-bg-secondary/40 rounded border border-bg-border px-3 py-2.5">
+            {/* v0.8-G: publish attempts as draft PRs */}
+            <label className="group flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={perAttemptPublishing}
+                disabled={
+                  intent === "cooperative" || existingFlight?.executionMode === "cooperative"
+                }
+                onChange={(e) => setPublishAsPrs(e.target.checked)}
+                className="mt-0.5 accent-accent-green"
+              />
+              <div className="flex flex-col gap-0.5">
+                <span className="flex items-center gap-1.5 text-[11px] font-medium text-text-secondary group-hover:text-text-primary">
+                  <GitPullRequest size={11} className="text-accent-purple" />
+                  Publish attempts as draft PRs
+                </span>
+                <span className="text-[10px] leading-snug text-text-muted">
+                  {intent === "cooperative" || existingFlight?.executionMode === "cooperative"
+                    ? "Cooperative tasks integrate into one result. Review the combined changes, then land the Flight."
+                    : "After acceptance, push the branch and open a draft PR on its configured Git host."}
+                </span>
+              </div>
+            </label>
+          </>
+        )}
+        <div className="rounded border border-bg-border bg-bg-secondary/40 px-3 py-2.5">
           <label className="group flex cursor-pointer items-start gap-2">
             <input
               type="checkbox"
@@ -726,54 +997,25 @@ export function LaunchAsyncFlightModal({
           </label>
 
           {reviewerEnabled && (
-            <div className="mt-2.5 grid grid-cols-[180px_1fr] gap-2 border-t border-bg-border pt-2.5">
-              <select
-                aria-label="Reviewer agent"
-                value={reviewerAgent}
-                onChange={(event) => {
-                  const agent = event.target.value as AgentCli;
+            <div className="mt-3 border-t border-bg-border pt-3">
+              <FlightAgentPicker
+                label="Independent reviewer"
+                agent={reviewerAgent}
+                model={reviewerModel}
+                onChange={(agent, model) => {
                   setReviewerAgent(agent);
-                  setReviewerModel(getDefaultModel(agent));
+                  setReviewerModel(model);
                 }}
-                className="focus:border-accent-green/40 rounded border border-bg-border bg-bg-primary px-2 py-1 text-[10px] text-text-secondary outline-none"
-              >
-                {API_PROVIDERS.map((provider) => (
-                  <option key={provider.agentCli} value={provider.agentCli}>
-                    {provider.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="Reviewer model"
-                value={reviewerModel}
-                onChange={(event) => setReviewerModel(event.target.value)}
-                className="focus:border-accent-green/40 rounded border border-bg-border bg-bg-primary px-2 py-1 text-[10px] text-text-secondary outline-none"
-              >
-                {reviewerModelOptions.map((model) => (
-                  <option key={model.value} value={model.value} disabled={model.disabled}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-              <textarea
-                aria-label="Reviewer acceptance criteria"
-                value={acceptanceCriteria}
-                onChange={(event) => setAcceptanceCriteria(event.target.value)}
-                rows={3}
-                placeholder={"Acceptance criteria — one per line\nExample: pnpm test passes"}
-                className="focus:border-accent-green/40 col-span-2 resize-none rounded border border-bg-border bg-bg-primary px-2 py-1.5 text-[10px] text-text-primary outline-none placeholder:text-text-muted"
+                onReadinessChange={setReviewerError}
               />
               {reviewerConfigurationError && (
-                <span className="col-span-2 text-[10px] text-accent-amber">
-                  {reviewerConfigurationError}
-                </span>
+                <p className="mt-2 text-[10px] text-accent-amber">{reviewerConfigurationError}</p>
               )}
             </div>
           )}
         </div>
-
         {unpinnedMessage && (
-          <div className="bg-accent-amber/10 border-accent-amber/30 flex items-start gap-2 rounded border px-3 py-2 text-[11px] text-accent-amber">
+          <div className="flex items-start gap-2 rounded border border-accent-amber/30 bg-accent-amber/10 px-3 py-2 text-[11px] text-accent-amber">
             <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
             <div className="flex-1">
               <span>{unpinnedMessage}</span>
@@ -791,7 +1033,7 @@ export function LaunchAsyncFlightModal({
         {launching && (
           <div
             role="status"
-            className="border-accent-green/25 bg-accent-green/5 flex items-start gap-2 rounded border px-3 py-2 text-[11px] text-text-secondary"
+            className="flex items-start gap-2 rounded border border-accent-green/25 bg-accent-green/5 px-3 py-2 text-[11px] text-text-secondary"
           >
             <Loader2 size={12} className="mt-0.5 flex-shrink-0 animate-spin text-accent-green" />
             <div>
@@ -805,17 +1047,17 @@ export function LaunchAsyncFlightModal({
         )}
 
         {collisionMessage && (
-          <div className="bg-accent-amber/10 border-accent-amber/30 whitespace-pre-wrap rounded border px-3 py-2 text-[11px] text-accent-amber">
+          <div className="whitespace-pre-wrap rounded border border-accent-amber/30 bg-accent-amber/10 px-3 py-2 text-[11px] text-accent-amber">
             {collisionMessage}
           </div>
         )}
 
         {error && (
-          <div className="bg-accent-red/10 border-accent-red/30 rounded border px-3 py-2 text-[11px] text-accent-red">
+          <div className="rounded border border-accent-red/30 bg-accent-red/10 px-3 py-2 text-[11px] text-accent-red">
             {error}
           </div>
         )}
-      </div>
+      </fieldset>
     </Modal>
   );
 }

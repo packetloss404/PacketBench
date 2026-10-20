@@ -28,31 +28,20 @@ export function ProviderPicker({
   const liveEntries = useLiveModelStore((s) => s.entries);
   const selectedAuth = authStatus[selectedAgent];
   const selectedAuthStatus: AuthStatus =
-    selectedAuth === "loading" || !selectedAuth
-      ? "loading"
-      : selectedAuth.status;
+    selectedAuth === "loading" || !selectedAuth ? "loading" : selectedAuth.status;
 
   return (
     <Dropdown
       searchable
       searchPlaceholder="Search providers…"
+      onOpen={refreshAuthStatuses}
       trigger={
-        <span
-          className="text-text-secondary flex items-center gap-1"
-          // Refresh auth statuses when the user opens the dropdown.
-          // onMouseDown fires before Dropdown's click-toggle, so the
-          // fetch is already in flight by the time the menu renders.
-          onMouseDown={refreshAuthStatuses}
-        >
+        <span className="flex items-center gap-1 text-text-secondary">
           <Zap size={10} className="text-accent-amber" />
           {getProviderForAgent(selectedAgent)?.name ?? "Select Provider"}
           <AuthBadge
             status={selectedAuthStatus}
-            hint={
-              selectedAuth && selectedAuth !== "loading"
-                ? selectedAuth.hint
-                : ""
-            }
+            hint={selectedAuth && selectedAuth !== "loading" ? selectedAuth.hint : ""}
             className="ml-1"
           />
         </span>
@@ -67,21 +56,17 @@ export function ProviderPicker({
             agent,
             info: getProviderForAgent(agent),
           }))
-          .filter(
-            (r): r is { agent: AgentCli; info: NonNullable<typeof r.info> } =>
-              !!r.info,
-          );
+          .filter((r): r is { agent: AgentCli; info: NonNullable<typeof r.info> } => !!r.info);
         if (rows.length === 0) return null;
         return (
           <div key={group.label}>
             {gi > 0 && <div className="my-1 border-t border-bg-border" />}
-            <div className="text-meta uppercase tracking-wide text-text-muted px-3 py-1">
+            <div className="px-3 py-1 text-meta uppercase tracking-wide text-text-muted">
               {group.label}
             </div>
             {rows.map(({ agent, info }) => {
               const entry = authStatus[agent];
-              const status: AuthStatus =
-                entry === "loading" || !entry ? "loading" : entry.status;
+              const status: AuthStatus = entry === "loading" || !entry ? "loading" : entry.status;
               const hint = entry && entry !== "loading" ? entry.hint : "";
               const dim = status !== "ready";
               return (

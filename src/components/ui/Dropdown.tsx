@@ -2,11 +2,14 @@ import {
   useState,
   useRef,
   useEffect,
+  useLayoutEffect,
+  useId,
   useMemo,
   createContext,
   useContext,
   Children,
   isValidElement,
+  cloneElement,
   type ReactNode,
   type ReactElement,
 } from "react";
@@ -33,6 +36,7 @@ interface DropdownProps {
    * menu (e.g. the `/model` slash command targeting the header model
    * dropdown). Leave undefined for purely click-driven dropdowns. */
   openSignal?: number;
+  onOpen?: () => void;
   /**
    * Rendered after the items, and handed the search text AS TYPED (trimmed,
    * case preserved — `MiniMax-M3` does not survive the lower-cased matching
@@ -76,6 +80,31 @@ function isDropdownItemElement(node: ReactNode): node is ReactElement<DropdownIt
   return isValidElement(node) && node.type === DropdownItem;
 }
 
+function filterItems(
+  children: ReactNode,
+  filter: string,
+): { nodes: ReactNode; count: number; hasItems: boolean } {
+  let count = 0;
+  let hasItems = false;
+  const nodes = Children.map(children, (child) => {
+    if (isDropdownItemElement(child)) {
+      hasItems = true;
+      if (filter && !stringifyChildren(child.props.children).toLowerCase().includes(filter))
+        return null;
+      count += 1;
+      return child;
+    }
+    if (!isValidElement<{ children?: ReactNode }>(child) || !child.props.children) return child;
+    const nested = filterItems(child.props.children, filter);
+    count += nested.count;
+    hasItems ||= nested.hasItems;
+    if (!nested.hasItems) return child;
+    if (filter && nested.count === 0) return null;
+    return cloneElement(child, { children: nested.nodes });
+  });
+  return { nodes, count, hasItems };
+}
+
 export function Dropdown({
   trigger,
   children,
@@ -83,6 +112,7 @@ export function Dropdown({
   searchable = false,
   searchPlaceholder = "Search…",
   openSignal,
+  onOpen,
   footer,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
@@ -92,7 +122,17 @@ export function Dropdown({
   }, [openSignal]);
   const [filter, setFilter] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const menuId = useId();
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
+  const [position, setPosition] = useState({ top: 0, left: 0, maxHeight: 400, minWidth: 160 });
+
+  useEffect(() => {
+    if (open) onOpenRef.current?.();
+  }, [open]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -119,29 +159,69 @@ export function Dropdown({
 
   const normalizedFilter = filter.trim().toLowerCase();
 
-  // Count visible DropdownItems so we can show an empty state.
-  const visibleItemCount = useMemo(() => {
-    if (!searchable || normalizedFilter === "") {
-      // When no active filter, all items are visible by definition.
-      let count = 0;
-      Children.forEach(children, (child) => {
-        if (isDropdownItemElement(child)) count += 1;
-      });
-      return count;
-    }
-    let count = 0;
-    Children.forEach(children, (child) => {
-      if (isDropdownItemElement(child)) {
-        const text = stringifyChildren(child.props.children).toLowerCase();
-        if (text.includes(normalizedFilter)) count += 1;
-      }
-    });
-    return count;
-  }, [children, searchable, normalizedFilter]);
+  const filtered = useMemo(
+    () => filterItems(children, searchable ? normalizedFilter : ""),
+    [children, searchable, normalizedFilter],
+  );
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      const menu = menuRef.current;
+      if (!trigger || !menu) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const margin = 8;
+      const gap = 4;
+      const minWidth = Math.min(Math.max(160, rect.width), Math.max(0, width - margin * 2));
+      const menuWidth = Math.min(
+        Math.max(minWidth, menu.getBoundingClientRect().width),
+        Math.max(0, width - margin * 2),
+      );
+      const above = Math.max(0, rect.top - margin - gap);
+      const below = Math.max(0, height - rect.bottom - margin - gap);
+      const naturalHeight = Math.min(menu.scrollHeight || 320, 400);
+      const upward = below < naturalHeight && above > below;
+      const maxHeight = Math.min(400, upward ? above : below);
+      const top = upward ? rect.top - gap - Math.min(naturalHeight, maxHeight) : rect.bottom + gap;
+      const left = Math.max(
+        margin,
+        Math.min(
+          align === "right" ? rect.right - menuWidth : rect.left,
+          width - menuWidth - margin,
+        ),
+      );
+      setPosition((previous) =>
+        previous.top === top &&
+        previous.left === left &&
+        previous.maxHeight === maxHeight &&
+        previous.minWidth === minWidth
+          ? previous
+          : { top, left, maxHeight, minWidth },
+      );
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    document.addEventListener("scroll", updatePosition, true);
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updatePosition);
+    if (menuRef.current) observer?.observe(menuRef.current);
+    if (triggerRef.current) observer?.observe(triggerRef.current);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      document.removeEventListener("scroll", updatePosition, true);
+      observer?.disconnect();
+    };
+  }, [open, align, filtered]);
 
   const contextValue = useMemo<DropdownContextValue>(
     () => ({
-      close: () => setOpen(false),
+      close: () => {
+        setOpen(false);
+        triggerRef.current?.focus();
+      },
       filter: searchable ? normalizedFilter : "",
     }),
     [searchable, normalizedFilter],
@@ -155,6 +235,7 @@ export function Dropdown({
         setFilter("");
       } else {
         setOpen(false);
+        triggerRef.current?.focus();
       }
     }
   };
@@ -162,22 +243,44 @@ export function Dropdown({
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 px-2 py-1 text-ui text-text-secondary hover:text-text-primary hover:bg-bg-hover rounded transition-colors"
+        ref={triggerRef}
+        type="button"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen((previous) => !previous)}
+        className="flex items-center gap-1 rounded px-2 py-1 text-ui text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
       >
         {trigger}
-        <ChevronDown
-          size={10}
-          className={`transition-transform ${open ? "rotate-180" : ""}`}
-        />
+        <ChevronDown size={10} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
         <DropdownContext.Provider value={contextValue}>
           <div
-            className={`absolute top-full mt-1 ${align === "right" ? "right-0" : "left-0"} z-50 min-w-[160px] bg-bg-elevated border border-bg-border rounded-md shadow-xl py-1`}
+            ref={menuRef}
+            id={menuId}
+            role="group"
+            aria-label="Dropdown options"
+            data-dropdown-menu
+            style={{
+              position: "fixed",
+              ...position,
+              width: "max-content",
+              maxWidth: "calc(100vw - 16px)",
+              overflowY: "auto",
+              zIndex: 1000,
+            }}
+            className="rounded-md border border-bg-border bg-bg-elevated py-1 shadow-xl"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !event.defaultPrevented) {
+                event.preventDefault();
+                event.stopPropagation();
+                setOpen(false);
+                triggerRef.current?.focus();
+              }
+            }}
           >
             {searchable && (
-              <div className="px-1 pb-1">
+              <div className="sticky top-0 z-10 bg-bg-elevated px-1 pb-1">
                 <input
                   ref={searchInputRef}
                   type="text"
@@ -185,15 +288,14 @@ export function Dropdown({
                   onChange={(e) => setFilter(e.target.value)}
                   onKeyDown={handleSearchKeyDown}
                   placeholder={searchPlaceholder}
-                  className="w-full bg-bg-primary border border-bg-border text-ui px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-green rounded"
+                  aria-label={searchPlaceholder}
+                  className="w-full rounded border border-bg-border bg-bg-primary px-2 py-1 text-ui text-text-primary placeholder:text-text-muted focus:border-accent-green focus:outline-none"
                 />
               </div>
             )}
-            {children}
-            {searchable && normalizedFilter !== "" && visibleItemCount === 0 && (
-              <div className="text-ui text-text-muted px-2 py-1">
-                No matches
-              </div>
+            {filtered.nodes}
+            {searchable && normalizedFilter !== "" && filtered.count === 0 && (
+              <div className="px-2 py-1 text-ui text-text-muted">No matches</div>
             )}
             {footer?.(searchable ? filter.trim() : "")}
           </div>
@@ -220,11 +322,12 @@ export function DropdownItem({ onClick, children }: DropdownItemProps) {
 
   return (
     <button
+      type="button"
       onClick={() => {
         onClick?.();
         close();
       }}
-      className="w-full text-left px-3 py-1.5 text-ui text-text-primary hover:bg-bg-hover transition-colors"
+      className="w-full px-3 py-1.5 text-left text-ui text-text-primary transition-colors hover:bg-bg-hover"
     >
       {children}
     </button>

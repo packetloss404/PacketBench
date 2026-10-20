@@ -3,8 +3,9 @@ import type { AttemptTargetSpec } from "@/lib/tauri";
 import type { Attempt, Flight, Task } from "@/types/flight";
 import type { ServerConfig } from "@/types/server";
 import { apiAgentDoneEvent, apiAgentErrorEvent } from "@/lib/events";
+import { DEFAULT_API_MODEL } from "@/lib/api-models";
 
-type TauriListener = (event: { payload?: { message?: string } }) => void;
+type TauriListener = (event: { payload?: { message?: string; cancelled?: boolean } }) => void;
 
 const mocks = vi.hoisted(() => ({
   launchFlightAsync: vi.fn(),
@@ -12,6 +13,22 @@ const mocks = vi.hoisted(() => ({
   createApiConversation: vi.fn(),
   loadPersistedState: vi.fn(),
   markAttemptStatus: vi.fn(),
+  cancelFlightAttempt: vi.fn().mockResolvedValue(undefined),
+  validateAttemptReviewGate: vi.fn().mockResolvedValue(undefined),
+  validateAttemptDelivery: vi.fn().mockResolvedValue(undefined),
+  landReviewedAttempt: vi.fn(),
+  pushReviewedAttempt: vi.fn().mockResolvedValue(undefined),
+  beginFlightExecution: vi.fn().mockResolvedValue(undefined),
+  stopFlightSessions: vi.fn().mockResolvedValue(undefined),
+  resumeFlightAttempt: vi.fn(),
+  failPreparedFlightAttempt: vi.fn().mockResolvedValue(undefined),
+  recordAttemptDelivery: vi.fn().mockResolvedValue(undefined),
+  getFlightAttemptOrigin: vi.fn().mockResolvedValue("git@github.com:owner/repo.git"),
+  cancelActiveConversation: vi.fn().mockResolvedValue(undefined),
+  prepareFlightIntegrationBranch: vi.fn(),
+  integrateFlightAttempt: vi.fn(),
+  landFlightIntegration: vi.fn(),
+  mergeConversationBranch: vi.fn(),
   cleanupAttemptWorktreeSsh: vi.fn(),
   gitPushBranch: vi.fn(),
   githubCreatePr: vi.fn(),
@@ -27,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   updateFlightRetrospective: vi.fn(),
   conversations: [] as Array<{
     id: string;
+    status?: string;
     messages: Array<{ role: string; content: string; isStreaming?: boolean }>;
   }>,
   listeners: new Map<string, TauriListener>(),
@@ -39,9 +57,29 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("@/lib/tauri", () => ({
   launchFlightAsync: mocks.launchFlightAsync,
-  cancelFlightAttempt: vi.fn().mockResolvedValue(undefined),
+  cancelFlightAttempt: mocks.cancelFlightAttempt,
   cleanupAttemptWorktreeSsh: mocks.cleanupAttemptWorktreeSsh,
   markAttemptStatus: mocks.markAttemptStatus,
+  traceFlightAction: vi.fn(),
+  validateAttemptReviewGate: mocks.validateAttemptReviewGate,
+  validateAttemptDelivery: mocks.validateAttemptDelivery,
+  landReviewedAttempt: mocks.landReviewedAttempt,
+  pushReviewedAttempt: mocks.pushReviewedAttempt,
+  beginFlightExecution: mocks.beginFlightExecution,
+  stopFlightSessions: mocks.stopFlightSessions,
+  resumeFlightAttempt: mocks.resumeFlightAttempt,
+  failPreparedFlightAttempt: mocks.failPreparedFlightAttempt,
+  recordAttemptDelivery: mocks.recordAttemptDelivery,
+  getFlightAttemptOrigin: mocks.getFlightAttemptOrigin,
+  prepareFlightIntegrationBranch: mocks.prepareFlightIntegrationBranch,
+  integrateFlightAttempt: mocks.integrateFlightAttempt,
+  landFlightIntegration: mocks.landFlightIntegration,
+  gitHostListConnections: vi
+    .fn()
+    .mockResolvedValue([
+      { id: "github", kind: "github", baseUrl: "https://github.com", name: "GitHub" },
+    ]),
+  mergeConversationBranch: mocks.mergeConversationBranch,
   gitPushBranch: mocks.gitPushBranch,
   githubCreatePr: mocks.githubCreatePr,
   setAttemptDraftPr: mocks.setAttemptDraftPr,
@@ -65,6 +103,7 @@ vi.mock("@/stores/agentTaskStore", async (importOriginal) => ({
     getState: () => ({
       conversations: mocks.conversations,
       createApiConversation: mocks.createApiConversation,
+      cancelActiveConversation: mocks.cancelActiveConversation,
     }),
   },
 }));
@@ -147,11 +186,7 @@ function localTarget(basePath: string, baseBranch = "main"): AttemptTargetSpec {
   };
 }
 
-function sshTarget(
-  targetId: string,
-  basePath: string,
-  baseBranch = "main",
-): AttemptTargetSpec {
+function sshTarget(targetId: string, basePath: string, baseBranch = "main"): AttemptTargetSpec {
   return {
     kind: "ssh",
     targetId,
@@ -271,7 +306,10 @@ describe("asyncFlightStore collision gate", () => {
 
   it("blocks launch when an active attempt already claims the same path", async () => {
     useFlightStore.setState({
-      flights: [flight({ id: "existing-flight", attempts: [attempt()] })],
+      flights: [
+        flight({ id: "existing-flight", attempts: [attempt()] }),
+        flight({ id: "new-flight" }),
+      ],
       activeFlightId: null,
     });
 
@@ -289,6 +327,7 @@ describe("asyncFlightStore collision gate", () => {
           id: "existing-flight",
           attempts: [attempt({ status: "completed", completedAt: 2 })],
         }),
+        flight({ id: "new-flight" }),
       ],
       activeFlightId: null,
     });
@@ -338,7 +377,10 @@ describe("asyncFlightStore collision gate", () => {
 
   it("allows an explicit collision override for serialized handoff flows", async () => {
     useFlightStore.setState({
-      flights: [flight({ id: "existing-flight", attempts: [attempt()] })],
+      flights: [
+        flight({ id: "existing-flight", attempts: [attempt()] }),
+        flight({ id: "new-flight" }),
+      ],
       activeFlightId: null,
     });
 
@@ -391,7 +433,275 @@ describe("asyncFlightStore collision gate", () => {
     });
   });
 
-  it("moves an async attempt to failed with error text on api-agent:error without UI mount", async () => {
+  it("starts prepared attempts through an attached conversation after terminal listeners are ready", async () => {
+    const prepared = attempt({
+      id: "att-prepared",
+      sessionId: "session-prepared",
+      status: "provisioning",
+    });
+    mocks.launchFlightAsync.mockResolvedValueOnce([prepared]);
+    useFlightStore.setState({ flights: [flight()] });
+    mocks.createApiConversation.mockImplementationOnce(async (options) => {
+      expect(mocks.listeners.has(apiAgentDoneEvent(prepared.sessionId))).toBe(true);
+      expect(mocks.listeners.has(apiAgentErrorEvent(prepared.sessionId))).toBe(true);
+      expect(useFlightStore.getState().flights[0].attempts?.[0].sessionId).toBe(prepared.sessionId);
+      expect(options).toEqual(
+        expect.objectContaining({
+          explicitId: prepared.sessionId,
+          agent: prepared.agentConfigId,
+          projectPath: prepared.target.worktreePath,
+          model: prepared.model,
+          skipBackendStart: false,
+          permissionMode: "ask_for_risky",
+          enabledMcpServerIds: [],
+        }),
+      );
+      mocks.conversations.push({ id: options.explicitId, status: "active", messages: [] });
+      return options.explicitId;
+    });
+    await useAsyncFlightStore.getState().launchAsync("flight-1", "Do it", [localTarget("d:/repo")]);
+    expect(mocks.createApiConversation).toHaveBeenCalledOnce();
+    expect(mocks.failPreparedFlightAttempt).not.toHaveBeenCalled();
+  });
+
+  it("retains prepared files and surfaces frontend admission failures before provider dispatch", async () => {
+    const prepared = attempt({ status: "provisioning" });
+    mocks.launchFlightAsync.mockResolvedValueOnce([prepared]);
+    mocks.createApiConversation.mockRejectedValueOnce(new Error("Budget admission refused"));
+    useFlightStore.setState({ flights: [flight()] });
+    await expect(
+      useAsyncFlightStore.getState().launchAsync("flight-1", "Do it", [localTarget("d:/repo")]),
+    ).rejects.toThrow("Budget admission refused");
+    expect(mocks.failPreparedFlightAttempt).toHaveBeenCalledWith(
+      "flight-1",
+      prepared.id,
+      prepared.sessionId,
+      expect.stringContaining("Budget admission refused"),
+    );
+    expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+  });
+
+  it.each(["launch", "resume"] as const)(
+    "uses explicit built-in-only tools for a native SSH builder %s",
+    async (action) => {
+      const target = {
+        kind: "ssh",
+        serverId: "saved-host",
+        basePath: "/repo",
+        worktreePath: "/repo/.pkt-worktrees/retained",
+      } as const;
+      const prepared = attempt({
+        id: "remote-attempt",
+        sessionId: `remote-${action}`,
+        status: "provisioning",
+        agentConfigId: "api-sugar",
+        provider: "sugar",
+        model: "Conduit",
+        target,
+      });
+      mocks.getServer.mockReturnValue({
+        id: "saved-host",
+        name: "Saved host",
+        host: "example.test",
+        port: 22,
+        username: "ian",
+        authMethod: "key",
+        keyPath: "C:/keys/id_ed25519",
+        hostFingerprint: "SHA256:pinned",
+      });
+      if (action === "launch") {
+        mocks.launchFlightAsync.mockResolvedValueOnce([prepared]);
+        useFlightStore.setState({ flights: [flight()] });
+        await useAsyncFlightStore.getState().launchAsync("flight-1", "Do it", [
+          {
+            ...sshTarget("saved-host", "/repo"),
+            agentConfigId: "api-sugar",
+            provider: "sugar",
+            model: "Conduit",
+          },
+        ]);
+      } else {
+        const old = {
+          ...prepared,
+          sessionId: "old-remote",
+          status: "failed" as const,
+          recovery: { state: "retained" as const, reason: "Startup failed", retainedAt: 10 },
+        };
+        mocks.resumeFlightAttempt.mockResolvedValueOnce(prepared);
+        useFlightStore.setState({ flights: [flight({ stoppedAt: 10, attempts: [old] })] });
+        await useAsyncFlightStore.getState().resumeRetainedAttempt("flight-1", old.id);
+      }
+      expect(mocks.createApiConversation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          explicitId: prepared.sessionId,
+          agent: "api-sugar",
+          model: "Conduit",
+          enabledMcpServerIds: [],
+          permissionMode: "ask_for_risky",
+          skipBackendStart: false,
+          sshTarget: expect.objectContaining({
+            serverId: "saved-host",
+            remotePath: target.worktreePath,
+            hostFingerprint: "SHA256:pinned",
+          }),
+        }),
+      );
+    },
+  );
+
+  it("retains prepared first-launch files when terminal listeners cannot register", async () => {
+    const prepared = attempt({ status: "provisioning", sessionId: "launch-listener-failure" });
+    mocks.launchFlightAsync.mockResolvedValueOnce([prepared]);
+    useFlightStore.setState({ flights: [flight()] });
+    const normalListen = mocks.listen.getMockImplementation()!;
+    mocks.listen.mockImplementation((eventName: string, callback: TauriListener) =>
+      eventName.includes(prepared.sessionId)
+        ? Promise.reject(new Error("First listener unavailable"))
+        : normalListen(eventName, callback),
+    );
+    try {
+      await expect(
+        useAsyncFlightStore.getState().launchAsync("flight-1", "brief", [localTarget("d:/repo")]),
+      ).rejects.toThrow("First listener unavailable");
+      expect(mocks.failPreparedFlightAttempt).toHaveBeenCalledWith(
+        "flight-1",
+        prepared.id,
+        prepared.sessionId,
+        expect.stringContaining("First listener unavailable"),
+      );
+      expect(mocks.createApiConversation).not.toHaveBeenCalled();
+    } finally {
+      mocks.listen.mockImplementation(normalListen);
+    }
+  });
+
+  it("does not leave a silently failed conversation's prepared attempt provisioning", async () => {
+    const prepared = attempt({ status: "provisioning" });
+    mocks.launchFlightAsync.mockResolvedValueOnce([prepared]);
+    mocks.createApiConversation.mockImplementationOnce(async () => {
+      mocks.conversations.push({ id: prepared.sessionId, status: "failed", messages: [] });
+      return prepared.sessionId;
+    });
+    useFlightStore.setState({ flights: [flight()] });
+    await expect(
+      useAsyncFlightStore.getState().launchAsync("flight-1", "Do it", [localTarget("d:/repo")]),
+    ).rejects.toThrow("could not start");
+    expect(mocks.failPreparedFlightAttempt).toHaveBeenCalledOnce();
+  });
+
+  it("never promotes a cancelled done event to review", async () => {
+    const value = attempt({ sessionId: "cancelled-done" });
+    useFlightStore.setState({ flights: [flight({ attempts: [value] })] });
+    await vi.waitFor(() =>
+      expect(mocks.listeners.has(apiAgentDoneEvent(value.sessionId))).toBe(true),
+    );
+    mocks.listeners.get(apiAgentDoneEvent(value.sessionId))?.({ payload: { cancelled: true } });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mocks.markAttemptStatus).not.toHaveBeenCalled();
+    expect(mocks.notifyAttemptCompleted).not.toHaveBeenCalled();
+  });
+
+  it("projects native retained cancellation from ordinary builder chat Stop", async () => {
+    const value = attempt({ sessionId: "chat-stop" });
+    useFlightStore.setState({ flights: [flight({ attempts: [value] })] });
+    mocks.loadPersistedState.mockResolvedValueOnce({
+      flights: [
+        flight({
+          attempts: [
+            {
+              ...value,
+              status: "cancelled",
+              completedAt: 10,
+              recovery: { state: "retained", reason: "Builder stopped", retainedAt: 10 },
+            },
+          ],
+        }),
+      ],
+    });
+    await vi.waitFor(() =>
+      expect(mocks.listeners.has(apiAgentDoneEvent(value.sessionId))).toBe(true),
+    );
+    mocks.listeners.get(apiAgentDoneEvent(value.sessionId))?.({ payload: { cancelled: true } });
+    await vi.waitFor(() =>
+      expect(useFlightStore.getState().flights[0].attempts?.[0].status).toBe("cancelled"),
+    );
+    expect(useFlightStore.getState().flights[0].attempts?.[0].recovery?.state).toBe("retained");
+    expect(mocks.markAttemptStatus).not.toHaveBeenCalled();
+    expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+    expect(mocks.notifyAttemptCompleted).not.toHaveBeenCalled();
+  });
+
+  it("does not let a delayed cancellation read replace a resumed builder", async () => {
+    const value = attempt({ sessionId: "chat-stop-old" });
+    let finish!: (value: unknown) => void;
+    mocks.loadPersistedState.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    useFlightStore.setState({ flights: [flight({ attempts: [value] })] });
+    await vi.waitFor(() =>
+      expect(mocks.listeners.has(apiAgentDoneEvent(value.sessionId))).toBe(true),
+    );
+    mocks.listeners.get(apiAgentDoneEvent(value.sessionId))?.({ payload: { cancelled: true } });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    useFlightStore.setState({
+      flights: [flight({ attempts: [{ ...value, sessionId: "resumed-builder" }] })],
+    });
+    finish({ flights: [flight({ attempts: [{ ...value, status: "cancelled" }] })] });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(useFlightStore.getState().flights[0].attempts?.[0]).toMatchObject({
+      sessionId: "resumed-builder",
+      status: "running",
+    });
+    expect(mocks.markAttemptStatus).not.toHaveBeenCalled();
+  });
+
+  it("ignores captured old-session completion after Stop or retained resume", async () => {
+    const value = attempt({ sessionId: "stale-done" });
+    useFlightStore.setState({ flights: [flight({ attempts: [value] })] });
+    await vi.waitFor(() =>
+      expect(mocks.listeners.has(apiAgentDoneEvent(value.sessionId))).toBe(true),
+    );
+    const done = mocks.listeners.get(apiAgentDoneEvent(value.sessionId))!;
+    useFlightStore.setState({ flights: [flight({ stoppedAt: 10, attempts: [value] })] });
+    done({ payload: {} });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mocks.markAttemptStatus).not.toHaveBeenCalled();
+    useFlightStore.setState({
+      flights: [flight({ attempts: [{ ...value, sessionId: "new-builder" }] })],
+    });
+    done({ payload: {} });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mocks.markAttemptStatus).not.toHaveBeenCalled();
+  });
+
+  it("does not project a review completion when Stop wins during its native write", async () => {
+    const value = attempt({ sessionId: "stop-during-done" });
+    let finish!: () => void;
+    mocks.markAttemptStatus.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    useFlightStore.setState({ flights: [flight({ attempts: [value] })] });
+    await vi.waitFor(() =>
+      expect(mocks.listeners.has(apiAgentDoneEvent(value.sessionId))).toBe(true),
+    );
+    mocks.listeners.get(apiAgentDoneEvent(value.sessionId))?.({ payload: {} });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    useFlightStore.setState({
+      flights: [flight({ stoppedAt: 10, attempts: [{ ...value, status: "cancelled" }] })],
+    });
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(useFlightStore.getState().flights[0].attempts?.[0].status).toBe("cancelled");
+    expect(mocks.notifyAttemptCompleted).not.toHaveBeenCalled();
+  });
+
+  it("hydrates retained recovery immediately on api-agent:error without UI mount", async () => {
     const launchedAttempt = attempt({ id: "att-error", sessionId: "session-error" });
     mocks.launchFlightAsync.mockResolvedValue([launchedAttempt]);
     useFlightStore.setState({ flights: [flight()], activeFlightId: null });
@@ -399,6 +709,19 @@ describe("asyncFlightStore collision gate", () => {
     await useAsyncFlightStore.getState().launchAsync("flight-1", "Do it", [localTarget("d:/repo")]);
     await vi.waitFor(() => {
       expect(mocks.listeners.has(apiAgentErrorEvent("session-error"))).toBe(true);
+    });
+    const recovery: NonNullable<Attempt["recovery"]> = {
+      state: "retained",
+      retainedAt: 123,
+      reason: "Provider failed; worktree retained",
+    };
+    mocks.loadPersistedState.mockResolvedValueOnce({
+      flights: [
+        flight({
+          attempts: [{ ...launchedAttempt, status: "failed", completedAt: 123, recovery }],
+        }),
+      ],
+      ui: {},
     });
 
     mocks.listeners.get(apiAgentErrorEvent("session-error"))?.({
@@ -413,7 +736,46 @@ describe("asyncFlightStore collision gate", () => {
         ?.attempts?.find((a) => a.id === "att-error");
       expect(current?.status).toBe("failed");
       expect(current?.errorMessage).toBe("sidecar disconnected");
+      expect(current?.recovery).toEqual(recovery);
+      expect(current?.target).toEqual(launchedAttempt.target);
+      expect(mocks.cleanupAttemptWorktreeSsh).not.toHaveBeenCalled();
     });
+  });
+
+  it("does not let delayed failure hydration replace a resumed builder", async () => {
+    const value = attempt({ id: "failed-old-owner", sessionId: "old-error-owner" });
+    useFlightStore.setState({ flights: [flight({ attempts: [value] })] });
+    await vi.waitFor(() =>
+      expect(mocks.listeners.has(apiAgentErrorEvent(value.sessionId))).toBe(true),
+    );
+    let finish!: (snapshot: unknown) => void;
+    mocks.loadPersistedState.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    mocks.listeners.get(apiAgentErrorEvent(value.sessionId))?.({
+      payload: { message: "old provider failed" },
+    });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const resumed = { ...value, sessionId: "new-error-owner", status: "running" as const };
+    useFlightStore.setState({ flights: [flight({ attempts: [resumed] })] });
+    finish({
+      flights: [
+        flight({
+          attempts: [
+            {
+              ...value,
+              status: "failed",
+              recovery: { state: "retained", retainedAt: 1, reason: "old failure" },
+            },
+          ],
+        }),
+      ],
+      ui: {},
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useFlightStore.getState().flights[0].attempts?.[0]).toEqual(resumed);
   });
 
   it("preserves a backend fast-start failure returned by launchFlightAsync", async () => {
@@ -435,6 +797,7 @@ describe("asyncFlightStore collision gate", () => {
       ?.attempts?.find((a) => a.id === "att-fast-fail");
     expect(current?.status).toBe("failed");
     expect(current?.errorMessage).toBe("Session start failed: sidecar unavailable");
+    expect(mocks.createApiConversation).not.toHaveBeenCalled();
     expect(mocks.listeners.has(apiAgentDoneEvent("session-fast-fail"))).toBe(false);
     expect(mocks.listeners.has(apiAgentErrorEvent("session-fast-fail"))).toBe(false);
   });
@@ -468,6 +831,45 @@ describe("asyncFlightStore collision gate", () => {
         skipBackendStart: true,
       }),
     );
+  });
+
+  it("starts prepared partial successes after a later target fails, with listeners already registered", async () => {
+    const partial = attempt({
+      id: "partial-prepared",
+      sessionId: "partial-session",
+      status: "provisioning",
+    });
+    mocks.launchFlightAsync.mockRejectedValueOnce(new Error("second target failed"));
+    mocks.loadPersistedState.mockResolvedValueOnce({
+      flights: [flight({ attempts: [partial] })],
+      ui: {},
+    });
+    mocks.createApiConversation.mockImplementationOnce(async (options) => {
+      expect(mocks.listeners.has(apiAgentDoneEvent(partial.sessionId))).toBe(true);
+      expect(options.skipBackendStart).toBe(false);
+    });
+    useFlightStore.setState({ flights: [flight()] });
+    await expect(
+      useAsyncFlightStore
+        .getState()
+        .launchAsync("flight-1", "brief", [localTarget("d:/repo"), localTarget("e:/repo")]),
+    ).rejects.toThrow("second target failed");
+    expect(mocks.createApiConversation).toHaveBeenCalledOnce();
+  });
+
+  it("refuses to start a prepared SSH attempt as a local conversation when its saved server is missing", async () => {
+    const prepared = attempt({
+      status: "provisioning",
+      target: { kind: "ssh", serverId: "gone", basePath: "/repo", worktreePath: "/repo/retained" },
+    });
+    mocks.launchFlightAsync.mockResolvedValueOnce([prepared]);
+    mocks.getServer.mockReturnValueOnce(undefined);
+    useFlightStore.setState({ flights: [flight()] });
+    await expect(
+      useAsyncFlightStore.getState().launchAsync("flight-1", "brief", [sshTarget("gone", "/repo")]),
+    ).rejects.toThrow("saved SSH server");
+    expect(mocks.createApiConversation).not.toHaveBeenCalled();
+    expect(mocks.failPreparedFlightAttempt).toHaveBeenCalledOnce();
   });
 
   it("uses the refreshed backend terminal status when an attempt finishes before listeners are ready", async () => {
@@ -557,6 +959,14 @@ describe("asyncFlightStore terminal cleanup and publishing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.markAttemptStatus.mockResolvedValue(undefined);
+    mocks.validateAttemptReviewGate.mockReset().mockResolvedValue(undefined);
+    mocks.validateAttemptDelivery.mockReset().mockResolvedValue(undefined);
+    mocks.landReviewedAttempt.mockReset().mockResolvedValue({
+      nothingToLand: false,
+      commitSha: "reviewed-commit",
+      branchDeleted: false,
+    });
+    mocks.pushReviewedAttempt.mockReset().mockResolvedValue(undefined);
     mocks.cleanupAttemptWorktreeSsh.mockResolvedValue(undefined);
     mocks.gitPushBranch.mockResolvedValue(undefined);
     mocks.githubCreatePr.mockResolvedValue(JSON.stringify({ number: 42 }));
@@ -564,6 +974,45 @@ describe("asyncFlightStore terminal cleanup and publishing", () => {
     mocks.selectedRepo = null;
     mocks.getServer.mockReturnValue(undefined);
     useFlightStore.setState({ flights: [], activeFlightId: null });
+  });
+
+  it("rehydrates a stale review error before integration, publication or cleanup", async () => {
+    const value = flight({
+      publishAttemptsAsPrs: true,
+      reviewGatePolicy: {
+        enabled: true,
+        reviewerAgentConfigId: "api-openai",
+        acceptanceCriteria: ["Tests pass"],
+      },
+      attempts: [attempt({ status: "reviewing", reviewGate: { status: "passed" } })],
+    });
+    useFlightStore.setState({ flights: [value], activeFlightId: null });
+    mocks.validateAttemptReviewGate.mockRejectedValueOnce(
+      new Error("Review is stale. Retry review."),
+    );
+    mocks.loadPersistedState.mockResolvedValueOnce({
+      flights: [
+        {
+          ...value,
+          attempts: [
+            attempt({
+              status: "reviewing",
+              reviewGate: { status: "error", errorMessage: "Review is stale. Retry review." },
+            }),
+          ],
+        },
+      ],
+      ui: {},
+    });
+
+    await expect(
+      useAsyncFlightStore.getState().setAttemptStatus("flight-1", "att-running", "completed"),
+    ).rejects.toThrow("Review is stale");
+    expect(mocks.validateAttemptReviewGate).toHaveBeenCalledWith("flight-1", "att-running");
+    expect(mocks.markAttemptStatus).not.toHaveBeenCalled();
+    expect(mocks.gitPushBranch).not.toHaveBeenCalled();
+    expect(mocks.cleanupAttemptWorktreeSsh).not.toHaveBeenCalled();
+    expect(useFlightStore.getState().flights[0].attempts![0].reviewGate!.status).toBe("error");
   });
 
   it("publishes a completed local attempt before Rust removes its worktree", async () => {
@@ -580,13 +1029,18 @@ describe("asyncFlightStore terminal cleanup and publishing", () => {
 
     await useAsyncFlightStore.getState().setAttemptStatus("flight-1", "att-running", "completed");
 
-    expect(mocks.gitPushBranch).toHaveBeenCalledWith(
-      "D:\\Repo\\.git\\packetbench-worktrees\\att-running",
-      "packetbench/att-running",
-      false,
+    expect(mocks.pushReviewedAttempt).toHaveBeenCalledWith(
+      "flight-1",
+      "att-running",
+      "git@github.com:owner/repo.git",
     );
-    expect(mocks.setAttemptDraftPr).toHaveBeenCalledWith("flight-1", "att-running", 42);
-    expect(mocks.gitPushBranch.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.setAttemptDraftPr).toHaveBeenCalledWith(
+      "flight-1",
+      "att-running",
+      42,
+      expect.objectContaining({ kind: "pull_request", prNumber: 42 }),
+    );
+    expect(mocks.pushReviewedAttempt.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.markAttemptStatus.mock.invocationCallOrder[0],
     );
     expect(mocks.setAttemptDraftPr.mock.invocationCallOrder[0]).toBeLessThan(
@@ -594,7 +1048,183 @@ describe("asyncFlightStore terminal cleanup and publishing", () => {
     );
   });
 
-  it("cleans up an SSH worktree after accepting an attempt", async () => {
+  it.each(["land", "publish"])(
+    "refuses to %s a retained branch that changed after acceptance",
+    async (action) => {
+      const value = flight({
+        reviewGatePolicy: {
+          enabled: true,
+          reviewerAgentConfigId: "api-openai",
+          acceptanceCriteria: [],
+        },
+        attempts: [attempt({ status: "completed", reviewGate: { status: "passed" } })],
+      });
+      useFlightStore.setState({ flights: [value], activeFlightId: null });
+      mocks.validateAttemptDelivery.mockRejectedValueOnce(
+        new Error("The accepted branch changed."),
+      );
+      mocks.loadPersistedState.mockResolvedValueOnce({ flights: [value], ui: {} });
+      const call =
+        action === "land"
+          ? useAsyncFlightStore.getState().landAttempt
+          : useAsyncFlightStore.getState().publishAttemptPr;
+      await expect(call("flight-1", "att-running")).rejects.toThrow("accepted branch changed");
+      expect(mocks.validateAttemptDelivery).toHaveBeenCalledWith("flight-1", "att-running");
+      expect(mocks.mergeConversationBranch).not.toHaveBeenCalled();
+      expect(mocks.landReviewedAttempt).not.toHaveBeenCalled();
+      expect(mocks.pushReviewedAttempt).not.toHaveBeenCalled();
+      expect(mocks.gitPushBranch).not.toHaveBeenCalled();
+      expect(mocks.githubCreatePr).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["land", "publish"])("uses immutable backend delivery for a gated %s", async (action) => {
+    mocks.selectedRepo = { owner: "owner", repo: "repo" };
+    useFlightStore.setState({
+      flights: [
+        flight({
+          reviewGatePolicy: {
+            enabled: true,
+            reviewerAgentConfigId: "api-openai",
+            acceptanceCriteria: [],
+          },
+          attempts: [attempt({ status: "completed", reviewGate: { status: "passed" } })],
+        }),
+      ],
+      activeFlightId: null,
+    });
+    if (action === "land") {
+      await useAsyncFlightStore.getState().landAttempt("flight-1", "att-running");
+      expect(mocks.landReviewedAttempt).toHaveBeenCalledWith("flight-1", "att-running", true);
+    } else {
+      await useAsyncFlightStore.getState().publishAttemptPr("flight-1", "att-running");
+      expect(mocks.pushReviewedAttempt).toHaveBeenCalledWith(
+        "flight-1",
+        "att-running",
+        "git@github.com:owner/repo.git",
+      );
+      expect(mocks.githubCreatePr).toHaveBeenCalledOnce();
+    }
+    expect(mocks.mergeConversationBranch).not.toHaveBeenCalled();
+    expect(mocks.gitPushBranch).not.toHaveBeenCalled();
+  });
+
+  it("keeps an opened PR identity and retries only its delivery record", async () => {
+    useFlightStore.setState({
+      flights: [flight({ attempts: [attempt({ status: "completed" })] })],
+    });
+    mocks.setAttemptDraftPr.mockRejectedValueOnce(new Error("disk busy"));
+    await expect(
+      useAsyncFlightStore.getState().publishAttemptPr("flight-1", "att-running"),
+    ).rejects.toThrow("PR #42 was opened");
+    expect(useFlightStore.getState().flights[0].attempts![0].draftPrNumber).toBe(42);
+    expect(useFlightStore.getState().computeFlightStatus("flight-1")).toBe("review");
+    await useAsyncFlightStore.getState().publishAttemptPr("flight-1", "att-running");
+    expect(mocks.githubCreatePr).toHaveBeenCalledTimes(1);
+    expect(mocks.recordAttemptDelivery).toHaveBeenCalledWith(
+      "flight-1",
+      "att-running",
+      expect.objectContaining({ kind: "pull_request", prNumber: 42 }),
+    );
+    expect(useFlightStore.getState().computeFlightStatus("flight-1")).toBe("done");
+  });
+
+  it("uses the registered push origin instead of the selected GitHub repository", async () => {
+    mocks.selectedRepo = { owner: "wrong", repo: "unrelated" };
+    useFlightStore.setState({
+      flights: [flight({ attempts: [attempt({ status: "completed" })] })],
+    });
+    await useAsyncFlightStore.getState().publishAttemptPr("flight-1", "att-running");
+    expect(mocks.getFlightAttemptOrigin).toHaveBeenCalledWith("flight-1", "att-running");
+    expect(mocks.githubCreatePr).toHaveBeenCalledWith(
+      "owner",
+      "repo",
+      expect.any(String),
+      expect.any(String),
+      "packetbench/att-running",
+      "main",
+      true,
+      "github",
+    );
+  });
+
+  it("never records a delivery when a merge reports nothing to land", async () => {
+    mocks.landReviewedAttempt.mockResolvedValueOnce({ nothingToLand: true });
+    useFlightStore.setState({
+      flights: [flight({ attempts: [attempt({ status: "completed" })] })],
+    });
+    await useAsyncFlightStore.getState().landAttempt("flight-1", "att-running");
+    expect(useFlightStore.getState().flights[0].delivery).toBeUndefined();
+    expect(useFlightStore.getState().computeFlightStatus("flight-1")).toBe("review");
+  });
+
+  it("keeps a legacy per-attempt PR flag from delivering a partial cooperative graph", async () => {
+    const a = attempt({ status: "reviewing", taskId: "task-1" });
+    const value = flight({
+      executionMode: "cooperative",
+      publishAttemptsAsPrs: true,
+      attempts: [a],
+      integrationBranch: {
+        branch: "integration",
+        baseBranch: "main",
+        baseSha: "base",
+        headSha: "before",
+        worktreePath: "D:/integration",
+        status: "ready",
+        targetKind: "local",
+        conflictFiles: [],
+      },
+      milestones: [
+        {
+          id: "ms-1",
+          flightId: "flight-1",
+          title: "Scope",
+          description: "",
+          order: 0,
+          status: "active",
+          validationCriteria: [],
+          tasks: [
+            task({ status: "running", ownedPaths: ["src/a"] }),
+            task({ id: "task-2", status: "pending", dependsOn: ["task-1"], ownedPaths: ["src/b"] }),
+          ],
+        },
+      ],
+    });
+    mocks.integrateFlightAttempt.mockResolvedValueOnce({
+      headSha: "integrated",
+      conflictFiles: [],
+    });
+    useFlightStore.setState({ flights: [value] });
+    await useAsyncFlightStore.getState().setAttemptStatus(value.id, a.id, "completed");
+    const after = useFlightStore.getState().flights[0];
+    expect(after.delivery).toBeUndefined();
+    expect(after.milestones[0].tasks[0].status).toBe("done");
+    expect(useFlightStore.getState().computeFlightStatus(value.id)).toBe("active");
+    expect(mocks.githubCreatePr).not.toHaveBeenCalled();
+  });
+
+  it("publishes an ungated accepted SSH result by exact attempt refspec", async () => {
+    const remote = attempt({
+      status: "completed",
+      target: {
+        kind: "ssh",
+        serverId: "saved-host",
+        basePath: "/srv/repo",
+        worktreePath: "/srv/worktree",
+      },
+    });
+    useFlightStore.setState({ flights: [flight({ attempts: [remote] })] });
+    await useAsyncFlightStore.getState().publishAttemptPr("flight-1", remote.id);
+    expect(mocks.pushReviewedAttempt).toHaveBeenCalledWith(
+      "flight-1",
+      remote.id,
+      "git@github.com:owner/repo.git",
+    );
+    expect(mocks.gitPushBranch).not.toHaveBeenCalled();
+    expect(useFlightStore.getState().flights[0].delivery?.branch).toBe(remote.branch);
+  });
+
+  it("leaves clean-only SSH acceptance cleanup under native ownership", async () => {
     mocks.getServer.mockReturnValue({
       id: "server-1",
       host: "example.test",
@@ -619,17 +1249,372 @@ describe("asyncFlightStore terminal cleanup and publishing", () => {
 
     await useAsyncFlightStore.getState().setAttemptStatus("flight-1", "att-running", "completed");
 
-    expect(mocks.cleanupAttemptWorktreeSsh).toHaveBeenCalledWith({
-      flightId: "flight-1",
-      attemptId: "att-running",
-      host: "example.test",
-      port: 22,
-      user: "ian",
-      keyPath: "C:/keys/id_ed25519",
-      basePath: "/srv/repo",
-      targetId: "server-1",
-      hostFingerprint: "SHA256:test",
+    expect(mocks.markAttemptStatus).toHaveBeenCalledWith("flight-1", "att-running", "completed");
+    expect(mocks.cleanupAttemptWorktreeSsh).not.toHaveBeenCalled();
+  });
+
+  it("hydrates native Failed + Retained when acceptance rejects after a cleanup-drain failure", async () => {
+    const reviewing = attempt({ status: "reviewing" });
+    useFlightStore.setState({ flights: [flight({ attempts: [reviewing] })], activeFlightId: null });
+    const originalError = new Error("Acceptance could not confirm session cleanup");
+    const retained: Attempt = {
+      ...reviewing,
+      status: "failed",
+      completedAt: 123,
+      errorMessage: originalError.message,
+      recovery: { state: "retained", retainedAt: 123, reason: originalError.message },
+    };
+    mocks.markAttemptStatus.mockRejectedValueOnce(originalError);
+    mocks.loadPersistedState.mockResolvedValueOnce({
+      flights: [flight({ attempts: [retained] })],
+      ui: {},
     });
+
+    await expect(
+      useAsyncFlightStore.getState().setAttemptStatus("flight-1", reviewing.id, "completed"),
+    ).rejects.toBe(originalError);
+
+    expect(useFlightStore.getState().flights[0].attempts?.[0]).toMatchObject(retained);
+    expect(mocks.cleanupAttemptWorktreeSsh).not.toHaveBeenCalled();
+    expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+  });
+
+  it("preserves the original status error when the recovery refresh also rejects", async () => {
+    const reviewing = attempt({ status: "reviewing" });
+    useFlightStore.setState({ flights: [flight({ attempts: [reviewing] })], activeFlightId: null });
+    const originalError = new Error("Native session cleanup failed");
+    const hydrationError = new Error("Native state could not be read");
+    mocks.markAttemptStatus.mockRejectedValueOnce(originalError);
+    const hydration = vi
+      .spyOn(useFlightStore.getState(), "hydrateFromBackend")
+      .mockRejectedValueOnce(hydrationError);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        useAsyncFlightStore.getState().setAttemptStatus("flight-1", reviewing.id, "completed"),
+      ).rejects.toBe(originalError);
+      expect(warning).toHaveBeenCalledWith(
+        "[attempt status] recovery refresh failed",
+        reviewing.id,
+        hydrationError,
+      );
+      expect(useFlightStore.getState().flights[0].attempts?.[0].status).toBe("reviewing");
+      expect(mocks.cleanupAttemptWorktreeSsh).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+      hydration.mockRestore();
+    }
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "preserves native retained SSH work after marking an attempt %s",
+    async (status) => {
+      const sshAttempt = attempt({
+        status: "reviewing",
+        target: {
+          kind: "ssh",
+          serverId: "server-1",
+          basePath: "/srv/repo",
+          worktreePath: "/srv/repo/.packetbench-worktrees/att-running",
+        },
+      });
+      mocks.getServer.mockReturnValue({
+        id: "server-1",
+        host: "example.test",
+        port: 22,
+        username: "ian",
+        hostFingerprint: "SHA256:test",
+      });
+      useFlightStore.setState({
+        flights: [flight({ attempts: [sshAttempt] })],
+        activeFlightId: null,
+      });
+      const retained: Attempt = {
+        ...sshAttempt,
+        status,
+        recovery: {
+          state: "retained",
+          retainedAt: 123,
+          reason: "Interrupted; branch and worktree retained",
+        },
+      };
+      mocks.markAttemptStatus.mockResolvedValueOnce(null);
+      mocks.loadPersistedState.mockResolvedValueOnce({
+        flights: [flight({ attempts: [retained] })],
+        ui: {},
+      });
+
+      await useAsyncFlightStore.getState().setAttemptStatus("flight-1", "att-running", status);
+
+      expect(mocks.markAttemptStatus).toHaveBeenCalledWith("flight-1", "att-running", status);
+      expect(mocks.cleanupAttemptWorktreeSsh).not.toHaveBeenCalled();
+      expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+      expect(useFlightStore.getState().flights[0].attempts?.[0]).toMatchObject({
+        status,
+        branch: sshAttempt.branch,
+        target: sshAttempt.target,
+        recovery: retained.recovery,
+      });
+    },
+  );
+});
+
+describe("Flight stop and retained-work continuation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.beginFlightExecution.mockReset().mockResolvedValue(undefined);
+    mocks.stopFlightSessions.mockReset().mockResolvedValue(undefined);
+    mocks.assertCostGuardrailsAllowLaunch.mockReset().mockResolvedValue(undefined);
+    mocks.launchFlightAsync.mockReset().mockResolvedValue([]);
+    mocks.loadPersistedState.mockImplementation(async () => ({
+      flights: useFlightStore.getState().flights,
+      ui: {},
+    }));
+    mocks.conversations = [];
+    useFlightStore.setState({ flights: [flight()] });
+  });
+
+  it("drains a pending admission and never starts it after Stop", async () => {
+    let allow!: () => void;
+    mocks.assertCostGuardrailsAllowLaunch.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          allow = resolve;
+        }),
+    );
+    const launch = useAsyncFlightStore
+      .getState()
+      .launchAsync("flight-1", "brief", [localTarget("D:/repo")], { explicitResume: true });
+    const rejected = expect(launch).rejects.toThrow("stopped");
+    await vi.waitFor(() => expect(allow).toBeTypeOf("function"));
+    let finished = false;
+    const stop = useAsyncFlightStore
+      .getState()
+      .stopFlight("flight-1")
+      .then(() => {
+        finished = true;
+      });
+    await vi.waitFor(() => expect(mocks.stopFlightSessions).toHaveBeenCalled());
+    expect(finished).toBe(false);
+    allow();
+    await Promise.all([stop, rejected]);
+    expect(mocks.launchFlightAsync).not.toHaveBeenCalled();
+    expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+  });
+
+  it("cancels every owned conversation, preserving unrelated linked references", async () => {
+    const value = flight({
+      planningConversationId: "planner",
+      linkedSessionIds: ["unrelated"],
+      attempts: [
+        attempt({
+          sessionId: "builder",
+          sessionHistory: [{ sessionId: "old-builder", provider: "openai", model: "m" }],
+          reviewGate: {
+            status: "running",
+            reviewerConversationId: "reviewer",
+            reviewerSessions: [{ sessionId: "old-reviewer", provider: "openai", model: "m" }],
+          },
+        }),
+      ],
+    });
+    useFlightStore.setState({ flights: [value] });
+    const ids = ["builder", "old-builder", "reviewer", "old-reviewer", "planner", "unrelated"];
+    mocks.conversations = ids.map((id) => ({ id, status: "active", messages: [] }));
+    await useAsyncFlightStore.getState().stopFlight(value.id);
+    expect(mocks.cancelActiveConversation.mock.calls.map(([id]) => id).sort()).toEqual(
+      ids.filter((id) => id !== "unrelated").sort(),
+    );
+    expect(mocks.cancelFlightAttempt).not.toHaveBeenCalled();
+  });
+
+  it("resumes the same retained worktree with fresh session ownership", async () => {
+    const old = attempt({
+      status: "cancelled",
+      recovery: { state: "retained", reason: "Interrupted", retainedAt: 10 },
+    });
+    const resumed = {
+      ...old,
+      status: "provisioning",
+      sessionId: "resumed-session",
+      recovery: undefined,
+    } as Attempt;
+    useFlightStore.setState({ flights: [flight({ stoppedAt: 10, attempts: [old] })] });
+    mocks.resumeFlightAttempt.mockResolvedValueOnce(resumed);
+    mocks.createApiConversation.mockImplementationOnce(async () => {
+      expect(mocks.listeners.has(apiAgentDoneEvent(resumed.sessionId))).toBe(true);
+      expect(mocks.listeners.has(apiAgentErrorEvent(resumed.sessionId))).toBe(true);
+      expect(useFlightStore.getState().flights[0].attempts?.[0].sessionId).toBe("resumed-session");
+    });
+    await useAsyncFlightStore.getState().resumeRetainedAttempt("flight-1", old.id);
+    expect(mocks.beginFlightExecution).not.toHaveBeenCalled();
+    expect(mocks.resumeFlightAttempt).toHaveBeenCalledWith("flight-1", old.id, 10);
+    expect(mocks.createApiConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        explicitId: "resumed-session",
+        projectPath: old.target.worktreePath,
+        skipBackendStart: false,
+        initialMessage: "Do work",
+        enabledMcpServerIds: [],
+      }),
+    );
+    expect(mocks.launchFlightAsync).not.toHaveBeenCalled();
+  });
+
+  it("waits for an in-flight resumed terminal-listener registration before starting the new provider", async () => {
+    const old = attempt({
+      status: "cancelled",
+      recovery: { state: "retained", reason: "Interrupted", retainedAt: 10 },
+    });
+    const resumed = {
+      ...old,
+      status: "provisioning",
+      sessionId: "resume-await-listeners",
+      recovery: undefined,
+    } as Attempt;
+    let listenersReady!: () => void;
+    const registration = new Promise<void>((resolve) => {
+      listenersReady = resolve;
+    });
+    mocks.listen.mockImplementation((eventName: string, callback: TauriListener) => {
+      mocks.listeners.set(eventName, callback);
+      return eventName.includes(resumed.sessionId)
+        ? registration.then(() => () => mocks.listeners.delete(eventName))
+        : Promise.resolve(() => mocks.listeners.delete(eventName));
+    });
+    mocks.resumeFlightAttempt.mockResolvedValueOnce(resumed);
+    useFlightStore.setState({ flights: [flight({ stoppedAt: 10, attempts: [old] })] });
+    const resume = useAsyncFlightStore.getState().resumeRetainedAttempt("flight-1", old.id);
+    await vi.waitFor(() =>
+      expect(mocks.listeners.has(apiAgentDoneEvent(resumed.sessionId))).toBe(true),
+    );
+    expect(mocks.createApiConversation).not.toHaveBeenCalled();
+    listenersReady();
+    await resume;
+    expect(mocks.createApiConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ explicitId: resumed.sessionId, skipBackendStart: false }),
+    );
+    mocks.listen.mockImplementation((eventName: string, callback: TauriListener) => {
+      mocks.listeners.set(eventName, callback);
+      return Promise.resolve(() => mocks.listeners.delete(eventName));
+    });
+  });
+
+  it("keeps a rejected legacy resume stopped without admitting a reviewer or builder", async () => {
+    const old = attempt({
+      status: "reviewing",
+      recovery: { state: "retained", reason: "Interrupted by app restart", retainedAt: 10 },
+      reviewGate: { status: "error" },
+    });
+    useFlightStore.setState({
+      flights: [
+        flight({
+          stoppedAt: 10,
+          attempts: [old],
+          reviewGatePolicy: {
+            enabled: true,
+            reviewerAgentConfigId: "api-openai",
+            reviewerModel: "review-model",
+            acceptanceCriteria: [],
+          },
+        }),
+      ],
+    });
+    mocks.resumeFlightAttempt.mockRejectedValueOnce(new Error("Retained task validation failed"));
+    await expect(
+      useAsyncFlightStore.getState().resumeRetainedAttempt("flight-1", old.id),
+    ).rejects.toThrow("validation failed");
+    expect(useFlightStore.getState().flights[0].stoppedAt).toBe(10);
+    expect(useFlightStore.getState().flights[0].attempts?.[0]).toMatchObject({
+      status: "reviewing",
+      sessionId: old.sessionId,
+    });
+    expect(mocks.beginFlightExecution).not.toHaveBeenCalled();
+    expect(mocks.createApiConversation).not.toHaveBeenCalled();
+    expect(mocks.failPreparedFlightAttempt).not.toHaveBeenCalled();
+  });
+
+  it("retains a fresh prepared session if terminal listener registration fails during resume", async () => {
+    const old = attempt({
+      status: "cancelled",
+      recovery: { state: "retained", reason: "Interrupted", retainedAt: 10 },
+    });
+    const resumed = {
+      ...old,
+      status: "provisioning",
+      sessionId: "resume-listener-failure",
+      recovery: undefined,
+    } as Attempt;
+    useFlightStore.setState({ flights: [flight({ stoppedAt: 10, attempts: [old] })] });
+    mocks.resumeFlightAttempt.mockResolvedValueOnce(resumed);
+    const normalListen = mocks.listen.getMockImplementation()!;
+    mocks.listen.mockImplementation((eventName: string, callback: TauriListener) =>
+      eventName.includes(resumed.sessionId)
+        ? Promise.reject(new Error("Listener registration unavailable"))
+        : normalListen(eventName, callback),
+    );
+    try {
+      await expect(
+        useAsyncFlightStore.getState().resumeRetainedAttempt("flight-1", old.id),
+      ).rejects.toThrow("Listener registration unavailable");
+      expect(mocks.failPreparedFlightAttempt).toHaveBeenCalledWith(
+        "flight-1",
+        old.id,
+        resumed.sessionId,
+        expect.stringContaining("Listener registration unavailable"),
+      );
+      expect(mocks.createApiConversation).not.toHaveBeenCalled();
+    } finally {
+      mocks.listen.mockImplementation(normalListen);
+    }
+  });
+
+  it("keeps Stop authoritative during cooperative integration preparation", async () => {
+    let finishPreparation!: (value: Record<string, unknown>) => void;
+    mocks.prepareFlightIntegrationBranch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPreparation = resolve;
+        }),
+    );
+    const value = flight({
+      executionMode: "cooperative",
+      executionTarget: { kind: "local", basePath: "D:/repo" },
+      milestones: [
+        {
+          id: "ms-1",
+          flightId: "flight-1",
+          title: "Scope",
+          description: "",
+          order: 0,
+          status: "active",
+          validationCriteria: [],
+          tasks: [
+            task({
+              status: "pending",
+              model: "test-model",
+              ownedPaths: ["src/feature.ts"],
+            }),
+          ],
+        },
+      ],
+    });
+    useFlightStore.setState({ flights: [value] });
+    const launch = useAsyncFlightStore
+      .getState()
+      .launchReadyTasks(value.id, undefined, { explicitResume: true });
+    await vi.waitFor(() => expect(finishPreparation).toBeTypeOf("function"));
+    const stop = useAsyncFlightStore.getState().stopFlight(value.id);
+    await vi.waitFor(() => expect(mocks.stopFlightSessions).toHaveBeenCalled());
+    finishPreparation({
+      branch: "integration",
+      baseBranch: "main",
+      headSha: "head",
+      worktreePath: "D:/integration",
+    });
+    await Promise.all([launch, stop]);
+    expect(mocks.beginFlightExecution).not.toHaveBeenCalled();
+    expect(mocks.launchFlightAsync).not.toHaveBeenCalled();
   });
 });
 
@@ -641,9 +1626,7 @@ describe("asyncFlightStore flight-completion memory capture", () => {
     useFlightStore.setState({ flights: [], activeFlightId: null });
   });
 
-  it("captures a flight_completed event on the transition to done", async () => {
-    // Flight rolls up to "review" (one completed, one reviewing). Accepting
-    // the reviewing attempt flips the whole flight to "done".
+  it("captures completion only when the accepted result is delivered", async () => {
     useFlightStore.setState({
       flights: [
         flight({
@@ -657,6 +1640,9 @@ describe("asyncFlightStore flight-completion memory capture", () => {
     });
 
     await useAsyncFlightStore.getState().setAttemptStatus("flight-1", "att-b", "completed");
+    expect(mocks.captureFlightCompleted).not.toHaveBeenCalled();
+    expect(useFlightStore.getState().computeFlightStatus("flight-1")).toBe("review");
+    await useAsyncFlightStore.getState().landAttempt("flight-1", "att-b");
 
     expect(mocks.captureFlightCompleted).toHaveBeenCalledTimes(1);
     // Capture is now scope-keyed, not path-keyed, so a flight in a remote
@@ -708,12 +1694,7 @@ describe("asyncFlightStore flight-completion memory capture", () => {
     expect(mocks.captureFlightCompleted).not.toHaveBeenCalled();
   });
 
-  it("captures a flight_completed event when cancelling the last outstanding attempt tips the flight to done", async () => {
-    // One attempt already completed, one still running. Cancelling the
-    // running attempt (the "pick a winner" flow) rolls the flight up to
-    // "done" via the mixed-terminal fallback in computeStatusFromAttempts —
-    // this must fire capture even though cancelAttempt never calls
-    // setAttemptStatus.
+  it("does not report delivery when cancelling the last competing attempt", async () => {
     useFlightStore.setState({
       flights: [
         flight({
@@ -728,13 +1709,8 @@ describe("asyncFlightStore flight-completion memory capture", () => {
 
     await useAsyncFlightStore.getState().cancelAttempt("flight-1", "att-b");
 
-    expect(mocks.captureFlightCompleted).toHaveBeenCalledTimes(1);
-    // Capture is now scope-keyed, not path-keyed, so a flight in a remote
-    // workspace files under that workspace's `ssh:` key. This flight has no
-    // workspace, so it resolves to a plain local scope on its own path.
-    const [payload, scope] = mocks.captureFlightCompleted.mock.calls[0];
-    expect(scope).toEqual({ kind: "local", projectPath: "D:/repo", workspaceId: null });
-    expect(payload).toMatchObject({ flightId: "flight-1", flightTitle: "Flight" });
+    expect(mocks.captureFlightCompleted).not.toHaveBeenCalled();
+    expect(useFlightStore.getState().computeFlightStatus("flight-1")).toBe("review");
   });
 
   it("does not capture when cancelling an attempt leaves the flight active", async () => {
@@ -833,10 +1809,7 @@ describe("asyncFlightStore flight-prompt injection gate", () => {
 
     await useAsyncFlightStore
       .getState()
-      .launchAsync("flight-1", "Do it", [
-        localTarget("d:/repo"),
-        sshTarget("srv-1", "/srv/app"),
-      ]);
+      .launchAsync("flight-1", "Do it", [localTarget("d:/repo"), sshTarget("srv-1", "/srv/app")]);
 
     expect(mocks.composeMemoryBrief).not.toHaveBeenCalled();
   });
@@ -870,9 +1843,17 @@ describe("buildReassignSpec (E4)", () => {
   const noServer = () => undefined;
 
   it("retains a named provider's selected model when retrying the same agent", () => {
-    const failed = {...failedLocal, agentConfigId:"api-sugar", provider:"sugar", model:"sugar/chosen"};
+    const failed = {
+      ...failedLocal,
+      agentConfigId: "api-sugar",
+      provider: "sugar",
+      model: "sugar/chosen",
+    };
     expect(buildReassignSpec(failed, "api-sugar", noServer)?.model).toBe("sugar/chosen");
-    expect(() => buildReassignSpec(failedLocal, "api-sugar", noServer)).toThrow("Select this provider and a model");
+    expect(buildReassignSpec(failedLocal, "api-sugar", noServer)?.model).toBe(DEFAULT_API_MODEL);
+    expect(() => buildReassignSpec(failedLocal, "api-google", noServer)).toThrow(
+      "Select this provider and a model",
+    );
   });
 
   it("rebuilds a local target with the new agent + its default model", () => {

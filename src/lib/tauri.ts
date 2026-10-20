@@ -9,6 +9,8 @@ import type { AgentConfig } from "@/types/agent";
 import type {
   Attempt,
   AttemptReviewGate,
+  FlightDelivery,
+  ReviewGateEvidence,
   Flight,
   Milestone,
   ReviewType,
@@ -796,12 +798,14 @@ export async function getGitReviewEvidence(
   baseRef: string,
   serverConfig: GitServerConfigInput | null,
   maxPatchBytes = 65_536,
+  headRef?: string,
 ): Promise<GitReviewEvidence> {
   return invoke<GitReviewEvidence>("get_git_review_evidence", {
     projectPath,
     baseRef,
     serverConfig,
     maxPatchBytes,
+    headRef,
   });
 }
 
@@ -849,12 +853,16 @@ export async function integrateFlightAttempt(args: {
 }
 
 export async function landFlightIntegration(args: {
+  flightId: string;
+  expectedHeadSha: string;
   projectPath: string;
   baseBranch: string;
   integrationBranch: string;
   serverConfig: GitServerConfigInput | null;
 }): Promise<string> {
   return invoke<string>("land_flight_integration", {
+    flightId: args.flightId,
+    expectedHeadSha: args.expectedHeadSha,
     projectPath: args.projectPath,
     baseBranch: args.baseBranch,
     integrationBranch: args.integrationBranch,
@@ -1353,6 +1361,7 @@ export async function launchFlightAsync(
       prompt,
       targets: dtoTargets,
       allowPathCollisions: options.allowPathCollisions ?? false,
+      prepareOnly: true,
     },
   );
   return dtoAttempts.map(fromDtoAttempt);
@@ -1464,7 +1473,7 @@ export async function markAttemptStatus(
  * `mark_attempt_status("completed")` would never see a verdict. Write through
  * here instead of relying on `flightStore` persistence.
  *
- * Pass `null` to clear the record.
+ * Pass `null` to clear the verdict; prior reviewer owners stay attributable.
  */
 export async function setAttemptReviewGate(
   flightId: string,
@@ -1472,6 +1481,80 @@ export async function setAttemptReviewGate(
   reviewGate: AttemptReviewGate | null,
 ): Promise<void> {
   return invoke("set_attempt_review_gate", { flightId, attemptId, reviewGate });
+}
+
+export function captureAttemptReviewEvidence(
+  flightId: string,
+  attemptId: string,
+): Promise<ReviewGateEvidence> {
+  return invoke("capture_attempt_review_evidence", { flightId, attemptId });
+}
+
+export function validateAttemptReviewGate(flightId: string, attemptId: string): Promise<void> {
+  return invoke("validate_attempt_review_gate", { flightId, attemptId });
+}
+
+export function validateAttemptDelivery(flightId: string, attemptId: string): Promise<void> {
+  return invoke("validate_attempt_delivery", { flightId, attemptId });
+}
+
+export function landReviewedAttempt(
+  flightId: string,
+  attemptId: string,
+  squash = true,
+): Promise<MergeBranchOutcome> {
+  return invoke("land_reviewed_attempt", { flightId, attemptId, squash });
+}
+
+export function pushReviewedAttempt(
+  flightId: string,
+  attemptId: string,
+  expectedOrigin?: string,
+): Promise<string> {
+  return invoke("push_reviewed_attempt", { flightId, attemptId, expectedOrigin });
+}
+
+export function beginFlightExecution(flightId: string, expectedStoppedAt?: number): Promise<void> {
+  return invoke("begin_flight_execution", { flightId, expectedStoppedAt });
+}
+
+export function stopFlightSessions(flightId: string): Promise<void> {
+  return invoke("stop_flight_sessions", { flightId });
+}
+
+export async function resumeFlightAttempt(
+  flightId: string,
+  attemptId: string,
+  expectedStoppedAt?: number,
+): Promise<Attempt> {
+  return fromDtoAttempt(
+    await invoke("resume_flight_attempt", {
+      flightId,
+      attemptId,
+      expectedStoppedAt: expectedStoppedAt ?? null,
+    }),
+  );
+}
+
+export async function failPreparedFlightAttempt(
+  flightId: string,
+  attemptId: string,
+  sessionId: string,
+  error: string,
+): Promise<void> {
+  return invoke("fail_prepared_flight_attempt", { flightId, attemptId, sessionId, error });
+}
+
+export function recordAttemptDelivery(
+  flightId: string,
+  attemptId: string,
+  delivery: FlightDelivery,
+): Promise<void> {
+  return invoke("record_attempt_delivery", { flightId, attemptId, delivery });
+}
+
+export function getFlightAttemptOrigin(flightId: string, attemptId: string): Promise<string> {
+  return invoke("get_flight_attempt_origin", { flightId, attemptId });
 }
 
 // Git safety check
@@ -1525,12 +1608,7 @@ export interface DetectCatalogItem {
  * (`core::agent::CliLaunchSource`) chose a CLI's binary. The SAME resolver
  * runs on the PTY spawn path, so a reported path is the path that launches.
  */
-export type CliLaunchSource =
-  | "settings"
-  | "legacyPin"
-  | "path"
-  | "installerLocation"
-  | "bareName";
+export type CliLaunchSource = "settings" | "legacyPin" | "path" | "installerLocation" | "bareName";
 
 export interface DetectCatalogResult {
   id: string;
@@ -1573,9 +1651,7 @@ export async function inspectCliLaunch(
  * path, tier and version — and nothing else. Home directories are abbreviated
  * to `~`; no keys, tokens, or environment are included.
  */
-export async function cliLaunchDiagnostics(
-  items: Array<DetectCatalogItem>,
-): Promise<string> {
+export async function cliLaunchDiagnostics(items: Array<DetectCatalogItem>): Promise<string> {
   return invoke<string>("cli_launch_diagnostics", { items });
 }
 
@@ -1904,6 +1980,11 @@ function toDtoTask(
 }
 
 function fromDtoAttempt(a: PersistedStateDto["flights"][number]["attempts"][number]): Attempt {
+  if (!a.id || !a.flightId || !a.sessionId || !a.agentConfigId || !a.target?.worktreePath) {
+    throw new Error(
+      "The native Flight attempt response is missing its conversation or worktree identity. Restart with a matching app build; prepared files remain available for recovery.",
+    );
+  }
   return {
     id: a.id,
     flightId: a.flightId,
@@ -1915,6 +1996,7 @@ function fromDtoAttempt(a: PersistedStateDto["flights"][number]["attempts"][numb
     baseBranch: a.baseBranch,
     sessionId: a.sessionId,
     status: a.status,
+    sessionHistory: a.sessionHistory,
     startedAt: a.startedAt,
     completedAt: a.completedAt,
     cost: a.cost,
@@ -1922,6 +2004,8 @@ function fromDtoAttempt(a: PersistedStateDto["flights"][number]["attempts"][numb
     errorMessage: a.errorMessage,
     failureCategory: a.failureCategory as Attempt["failureCategory"],
     reviewGate: a.reviewGate,
+    recovery: a.recovery,
+    delivery: a.delivery,
     taskId: a.taskId,
     draftPrNumber: a.draftPrNumber,
   };
@@ -1939,15 +2023,26 @@ function toDtoAttempt(a: Attempt): PersistedStateDto["flights"][number]["attempt
     baseBranch: a.baseBranch,
     sessionId: a.sessionId,
     status: a.status,
+    sessionHistory: a.sessionHistory,
     startedAt: a.startedAt,
     completedAt: a.completedAt,
     cost: a.cost,
     tokens: a.tokens,
     errorMessage: a.errorMessage,
     failureCategory: a.failureCategory,
-    reviewGate: a.reviewGate,
+    reviewGate: a.reviewGate
+      ? {
+          ...a.reviewGate,
+          evidence: a.reviewGate.evidence
+            ? { ...a.reviewGate.evidence, contextJson: a.reviewGate.evidence.contextJson ?? "" }
+            : undefined,
+          reviewerSessions: a.reviewGate.reviewerSessions ?? [],
+        }
+      : undefined,
     taskId: a.taskId,
     draftPrNumber: a.draftPrNumber,
+    recovery: a.recovery,
+    delivery: a.delivery,
   };
 }
 
@@ -2045,12 +2140,16 @@ function fromDtoFlight(flight: PersistedStateDto["flights"][number]): Flight {
     createdAt: flight.createdAt,
     updatedAt: flight.updatedAt,
     completedAt: flight.completedAt,
+    delivery: flight.delivery,
+    archivedAt: flight.archivedAt,
+    stoppedAt: flight.stoppedAt,
     totalCost: flight.totalCost,
     totalTokens: flight.totalTokens,
     prompt: flight.prompt,
     attempts: (flight.attempts ?? []).map(fromDtoAttempt),
     reviewGatePolicy: flight.reviewGatePolicy,
     executionMode: flight.executionMode,
+    executionTarget: flight.executionTarget,
     integrationBranch: flight.integrationBranch
       ? {
           ...flight.integrationBranch,
@@ -2078,7 +2177,29 @@ function fromDtoFlight(flight: PersistedStateDto["flights"][number]): Flight {
     })),
     autonomyMode: flight.autonomyMode,
     autonomyPolicy: flight.autonomyPolicy,
-    autonomyRuntime: flight.autonomyRuntime,
+    autonomyRuntime: flight.autonomyRuntime
+      ? {
+          ...flight.autonomyRuntime,
+          reviewRetryCounts: flight.autonomyRuntime.reviewRetryCounts
+            ? Object.fromEntries(
+                Object.entries(flight.autonomyRuntime.reviewRetryCounts).map(
+                  ([attemptId, count]) => [
+                    attemptId,
+                    // Rust emits concrete u32 values. If a malformed DTO ever
+                    // reaches this boundary, exhaust the counter rather than
+                    // granting fresh retries by discarding its unknown value.
+                    count !== undefined &&
+                    Number.isInteger(count) &&
+                    count >= 0 &&
+                    count <= 0xffff_ffff
+                      ? count
+                      : 0xffff_ffff,
+                  ],
+                ),
+              )
+            : undefined,
+        }
+      : undefined,
     planningConversationId: flight.planningConversationId,
     plannerSessionId: flight.plannerSessionId,
     plannerStatus: flight.plannerStatus,
@@ -2115,12 +2236,16 @@ function toDtoFlight(flight: Flight): PersistedStateDto["flights"][number] {
     createdAt: flight.createdAt,
     updatedAt: flight.updatedAt,
     completedAt: flight.completedAt,
+    delivery: flight.delivery,
+    archivedAt: flight.archivedAt,
+    stoppedAt: flight.stoppedAt,
     totalCost: flight.totalCost,
     totalTokens: flight.totalTokens,
     prompt: flight.prompt,
     attempts: (flight.attempts ?? []).map(toDtoAttempt),
     reviewGatePolicy: flight.reviewGatePolicy,
     executionMode: flight.executionMode,
+    executionTarget: flight.executionTarget,
     integrationBranch: flight.integrationBranch
       ? {
           ...flight.integrationBranch,
@@ -2411,6 +2536,11 @@ export async function loadPersistedState(): Promise<PersistedState> {
   return fromDtoPersistedState(payload);
 }
 
+/** Nonblocking diagnostics: never delay or change an attempt action. */
+export function traceFlightAction(flightId: string, attemptId: string, stage: string): void {
+  void invoke("trace_flight_action", { flightId, attemptId, stage }).catch(() => {});
+}
+
 export async function savePersistedState(state: PersistedState): Promise<void> {
   return invoke("save_persisted_state", { state: toDtoPersistedState(state) });
 }
@@ -2501,7 +2631,12 @@ export async function askAgentChatStream(
   sessionContext: string | undefined,
   requestId: string,
 ): Promise<void> {
-  return invoke("ask_agent_chat_stream", { projectPath, messages, sessionContext: sessionContext || null, requestId });
+  return invoke("ask_agent_chat_stream", {
+    projectPath,
+    messages,
+    sessionContext: sessionContext || null,
+    requestId,
+  });
 }
 
 export async function cancelAgentChatStream(requestId: string): Promise<boolean> {
@@ -3236,11 +3371,13 @@ export async function setAttemptDraftPr(
   flightId: string,
   attemptId: string,
   prNumber: number,
+  delivery?: FlightDelivery,
 ): Promise<void> {
   return invoke("set_attempt_draft_pr", {
     flightId,
     attemptId,
     prNumber,
+    delivery,
   });
 }
 
@@ -3666,9 +3803,7 @@ export {
  *
  * Rejects with a tagged string; run it through {@link parseLiveModelError}.
  */
-export async function listProviderModels(
-  provider: string,
-): Promise<LiveModel[]> {
+export async function listProviderModels(provider: string): Promise<LiveModel[]> {
   return invoke("list_provider_models", { provider });
 }
 
@@ -3681,9 +3816,7 @@ export async function getCustomCompatBaseUrl(): Promise<string | null> {
   return invoke("get_custom_compat_base_url");
 }
 
-export async function setCustomCompatBaseUrl(
-  baseUrl: string | null,
-): Promise<string | null> {
+export async function setCustomCompatBaseUrl(baseUrl: string | null): Promise<string | null> {
   return invoke("set_custom_compat_base_url", { baseUrl });
 }
 
@@ -4135,9 +4268,7 @@ export async function loadWebviewStorageMirror(): Promise<Record<string, string>
  * Replace the durable mirror with a complete snapshot of the `packetbench:*`
  * keyspace. Whole-snapshot, not a delta, so deletions propagate.
  */
-export async function saveWebviewStorageMirror(
-  entries: Record<string, string>,
-): Promise<void> {
+export async function saveWebviewStorageMirror(entries: Record<string, string>): Promise<void> {
   return invoke<void>("save_webview_storage_mirror", { entries });
 }
 
@@ -4145,6 +4276,9 @@ export async function saveWebviewStorageMirror(
 export async function getProviderBaseUrl(provider: string): Promise<string> {
   return invoke("get_provider_base_url", { provider });
 }
-export async function setProviderBaseUrl(provider: string, baseUrl: string | null): Promise<string> {
+export async function setProviderBaseUrl(
+  provider: string,
+  baseUrl: string | null,
+): Promise<string> {
   return invoke("set_provider_base_url", { provider, baseUrl });
 }

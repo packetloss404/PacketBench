@@ -1,10 +1,5 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import {
-  CheckSquare,
-  ChevronRight,
-  Square,
-  XCircle,
-} from "lucide-react";
+import { CheckSquare, ChevronRight, Square, XCircle } from "lucide-react";
 
 import type { AgentToolCall } from "@/types/agent-conversation";
 import { Spinner } from "@/components/ui/Spinner";
@@ -52,14 +47,12 @@ function parseChecklist(content: string): ParsedTask[] {
 
 function StatusIcon({ status }: { status: ParsedStatus }) {
   if (status === "completed") {
-    return <CheckSquare size={11} className="text-accent-green shrink-0" />;
+    return <CheckSquare size={11} className="shrink-0 text-accent-green" />;
   }
   if (status === "in_progress") {
-    return (
-      <Spinner size={11} className="text-accent-blue shrink-0" label="in progress" />
-    );
+    return <Spinner size={11} className="shrink-0 text-accent-blue" label="in progress" />;
   }
-  return <Square size={11} className="text-text-muted shrink-0" />;
+  return <Square size={11} className="shrink-0 text-text-muted" />;
 }
 
 function rowClassName(status: ParsedStatus): string {
@@ -94,9 +87,16 @@ function TaskListCardImpl({ toolCall }: TaskListCardProps) {
     return { pending, inProgress, completed, total: tasks.length };
   }, [tasks]);
 
+  if (toolCall.interrupted) {
+    return (
+      <div className="rounded border border-bg-border px-2 py-1 text-ui text-accent-amber">
+        task_list · Interrupted
+      </div>
+    );
+  }
   if (toolCall.status === "error") {
     return (
-      <div className="border border-accent-red/30 rounded text-ui text-accent-red bg-accent-red/5 px-2 py-1 flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 rounded border border-accent-red/30 bg-accent-red/5 px-2 py-1 text-ui text-accent-red">
         <XCircle size={11} />
         <span className="font-mono">task_list</span>
         <span className="truncate">{content || "failed"}</span>
@@ -107,27 +107,21 @@ function TaskListCardImpl({ toolCall }: TaskListCardProps) {
   // While streaming, parsing may yield nothing — fall back to a tiny header.
   if (tasks.length === 0) {
     return (
-      <div className="border border-bg-border rounded text-ui text-text-muted bg-bg-hover px-2 py-1 flex items-center gap-1.5">
-        {toolCall.status === "running" ? (
-          <Spinner size={11} />
-        ) : (
-          <Square size={11} />
-        )}
+      <div className="flex items-center gap-1.5 rounded border border-bg-border bg-bg-hover px-2 py-1 text-ui text-text-muted">
+        {toolCall.status === "running" ? <Spinner size={11} /> : <Square size={11} />}
         <span className="font-mono">task_list</span>
-        <span className="text-text-muted/80">
-          {content.trim() || "no tasks"}
-        </span>
+        <span className="text-text-muted/80">{content.trim() || "no tasks"}</span>
       </div>
     );
   }
 
   return (
-    <div className="border border-bg-border rounded bg-bg-hover">
+    <div className="rounded border border-bg-border bg-bg-hover">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
-        className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-bg-elevated transition-colors rounded-t"
+        className="flex w-full items-center gap-1.5 rounded-t px-2 py-1 text-left transition-colors hover:bg-bg-elevated"
       >
         <ChevronRight
           size={12}
@@ -136,14 +130,14 @@ function TaskListCardImpl({ toolCall }: TaskListCardProps) {
           }`}
         />
         <CheckSquare size={12} className="text-accent-green" />
-        <span className="text-ui font-mono text-text-secondary">tasks</span>
+        <span className="font-mono text-ui text-text-secondary">tasks</span>
         <span className="text-meta text-text-muted">
           {counts.completed}/{counts.total} done
           {counts.inProgress > 0 ? ` · ${counts.inProgress} in progress` : ""}
         </span>
       </button>
       {expanded && (
-        <ul className="px-2 pb-1.5 pt-0.5 space-y-0.5">
+        <ul className="space-y-0.5 px-2 pb-1.5 pt-0.5">
           {tasks.map((t, i) => (
             <li
               key={`${i}-${t.title}`}

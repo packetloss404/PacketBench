@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Folder,
   GitPullRequest,
@@ -7,19 +7,16 @@ import {
   Check,
   X as XIcon,
   Loader2,
-  AlertTriangle,
   CheckCircle2,
   Send,
-  ChevronDown,
-  ChevronRight,
   RotateCcw,
   ShieldCheck,
   MonitorUp,
   PanelsTopLeft,
   GitMerge,
+  MessageSquareText,
 } from "lucide-react";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
-import { useFlightStore } from "@/stores/flightStore";
 import {
   attemptLandability,
   describeAttemptDecisionImpact,
@@ -28,461 +25,589 @@ import {
   type AttemptDecision,
   type AttemptWorktreeCleanliness,
 } from "@/stores/asyncFlightStore";
-import { useGitHubStore } from "@/stores/githubStore";
 import { ConfirmDeleteModal } from "@/components/ui/ConfirmDeleteModal";
 import { MarkdownRenderer } from "@/components/common/MarkdownRenderer";
+import { FlightAttemptEvidence } from "./FlightAttemptEvidence";
 import { notifyAttemptFailed } from "@/lib/notifications";
+import { reviewerGateAllowsAcceptance } from "@/lib/reviewerGate";
+import { inspectFlightAttemptInWorkspace } from "@/lib/agentHandoffs";
+import { openConversationInAgents } from "@/stores/sessionGlue";
+import { openMonitorWindow } from "@/lib/monitorWindows";
 import type { Attempt, AttemptStatus, Flight } from "@/types/flight";
 import type { AgentMessage } from "@/types/agent-conversation";
-import { reviewerGateAllowsAcceptance } from "@/lib/reviewerGate";
-import { openFlightAttemptInWorkspace } from "@/lib/agentHandoffs";
-import { openMonitorWindow } from "@/lib/monitorWindows";
 
-interface AttemptTileProps {
+const STATUS_META: Record<AttemptStatus, { label: string; color: string }> = {
+  queued: { label: "Queued", color: "text-text-muted" },
+  provisioning: { label: "Preparing branch", color: "text-accent-blue" },
+  running: { label: "Working", color: "text-accent-blue" },
+  reviewing: { label: "Ready for review", color: "text-accent-amber" },
+  completed: { label: "Accepted · ready to deliver", color: "text-accent-green" },
+  failed: { label: "Needs attention", color: "text-accent-red" },
+  cancelled: { label: "Stopped", color: "text-text-muted" },
+};
+const EMPTY_MESSAGES: AgentMessage[] = [];
+const BUTTON =
+  "inline-flex items-center gap-1.5 rounded border border-bg-border px-2.5 py-1.5 text-[11px] text-text-secondary hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-40";
+
+export function AttemptTile({
+  flight,
+  attempt,
+  onNewAttempt,
+}: {
   flight: Flight;
   attempt: Attempt;
-}
-
-const STATUS_META: Record<
-  AttemptStatus,
-  { label: string; color: string; icon: React.ComponentType<{ size?: number; className?: string }> }
-> = {
-  queued: { label: "Queued", color: "text-text-muted", icon: Loader2 },
-  provisioning: { label: "Provisioning", color: "text-accent-blue", icon: Loader2 },
-  running: { label: "Running", color: "text-accent-blue", icon: Loader2 },
-  reviewing: { label: "Reviewing", color: "text-accent-amber", icon: AlertTriangle },
-  completed: { label: "Completed", color: "text-accent-green", icon: CheckCircle2 },
-  failed: { label: "Failed", color: "text-accent-red", icon: AlertTriangle },
-  cancelled: { label: "Cancelled", color: "text-text-muted", icon: Square },
-};
-
-const EMPTY_MESSAGES: AgentMessage[] = [];
-
-export function AttemptTile({ flight, attempt }: AttemptTileProps) {
-  const conversation = useAgentTaskStore((s) =>
-    s.conversations.find((c) => c.id === attempt.sessionId),
+  onNewAttempt?: () => void;
+}) {
+  const conversation = useAgentTaskStore((state) =>
+    state.conversations.find((item) => item.id === attempt.sessionId),
   );
-  const sendMessage = useAgentTaskStore((s) => s.sendMessage);
-  const cancelAttempt = useAsyncFlightStore((s) => s.cancelAttempt);
-  const setAttemptStatus = useAsyncFlightStore((s) => s.setAttemptStatus);
-  const landAttempt = useAsyncFlightStore((s) => s.landAttempt);
-  const publishAttemptPr = useAsyncFlightStore((s) => s.publishAttemptPr);
-  const retryReviewGate = useAsyncFlightStore((s) => s.retryReviewGate);
-  const overrideReviewGate = useAsyncFlightStore((s) => s.overrideReviewGate);
-  const sendReviewFindingsToBuilder = useAsyncFlightStore((s) => s.sendReviewFindingsToBuilder);
-  const updateFlight = useFlightStore((s) => s.updateFlight);
-
+  const sendMessage = useAgentTaskStore((state) => state.sendMessageWithReceipt);
+  const stopFlight = useAsyncFlightStore((state) => state.stopFlight);
+  const setAttemptStatus = useAsyncFlightStore((state) => state.setAttemptStatus);
+  const landAttempt = useAsyncFlightStore((state) => state.landAttempt);
+  const publishAttemptPr = useAsyncFlightStore((state) => state.publishAttemptPr);
+  const retryReviewGate = useAsyncFlightStore((state) => state.retryReviewGate);
+  const overrideReviewGate = useAsyncFlightStore((state) => state.overrideReviewGate);
+  const sendReviewFindingsToBuilder = useAsyncFlightStore(
+    (state) => state.sendReviewFindingsToBuilder,
+  );
+  const resumeRetainedAttempt = useAsyncFlightStore((state) => state.resumeRetainedAttempt);
+  const discardRetainedWorktree = useAsyncFlightStore((state) => state.discardRetainedWorktree);
   const [followUp, setFollowUp] = useState("");
-  const [expanded, setExpanded] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
-  // F2: Accept and Reject are both terminal and both force-remove the worktree,
-  // so neither fires until the user confirms against a live dirty-worktree
-  // probe — the same accounting the Flight delete confirm gives.
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [decision, setDecision] = useState<AttemptDecision | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [cleanliness, setCleanliness] = useState<AttemptWorktreeCleanliness | null>(null);
-  const [landing, setLanding] = useState(false);
   const [landNote, setLandNote] = useState<string | null>(null);
   const messages = conversation?.messages ?? EMPTY_MESSAGES;
-
+  const gate = attempt.reviewGate;
+  const delivery = attempt.delivery;
+  const retained = attempt.recovery?.state === "retained";
+  const cooperativeTask = flight.executionMode === "cooperative" && Boolean(attempt.taskId);
+  const inProgress = ["queued", "provisioning", "running"].includes(attempt.status);
+  const acceptance = reviewerGateAllowsAcceptance(flight, attempt);
+  const landability = attemptLandability(attempt);
+  const task = flight.milestones
+    .flatMap((milestone) => milestone.tasks)
+    .find((item) => item.id === attempt.taskId);
+  const summary = [...messages]
+    .reverse()
+    .find(
+      (message) => message.role === "assistant" && message.content.trim() && !message.isStreaming,
+    )?.content;
+  const label = delivery
+    ? delivery.kind === "landed"
+      ? "Landed"
+      : "PR opened"
+    : cooperativeTask && attempt.status === "completed"
+      ? "Integrated task"
+      : STATUS_META[attempt.status].label;
   const attemptLabel = attempt.target.kind === "ssh" ? attempt.target.serverId : "local";
 
-  // Notify on transition into "failed" (whether from backend or UI rejection).
   useEffect(() => {
-    if (attempt.status === "failed") {
+    if (attempt.status === "failed")
       void notifyAttemptFailed(flight.title, attemptLabel, attempt.errorMessage);
-    }
   }, [attempt.status, attempt.errorMessage, flight.title, attemptLabel]);
-
-  // Roll up cost/tokens from streamed messages onto the persisted attempt.
-  useEffect(() => {
-    if (!conversation) return;
-    const totals = conversation.messages.reduce(
-      (acc, m) => {
-        acc.input += m.inputTokens ?? 0;
-        acc.output += m.outputTokens ?? 0;
-        return acc;
-      },
-      { input: 0, output: 0 },
-    );
-    const total = totals.input + totals.output;
-    if (total > 0 && total !== attempt.tokens) {
-      const updated = (flight.attempts ?? []).map((a) =>
-        a.id === attempt.id ? { ...a, tokens: total } : a,
-      );
-      updateFlight(flight.id, { attempts: updated });
-    }
-  }, [conversation?.messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const meta = STATUS_META[attempt.status];
-  const StatusIcon = meta.icon;
-  const isInProgress =
-    attempt.status === "queued" ||
-    attempt.status === "provisioning" ||
-    attempt.status === "running";
-
-  const visibleMessages = expanded ? messages : messages.slice(-5);
-
-  const targetIcon = attempt.target.kind === "ssh" ? Server : Folder;
-  const targetLabel =
-    attempt.target.kind === "ssh"
-      ? attempt.target.serverId
-      : (attempt.target.basePath.split(/[/\\]/).filter(Boolean).pop() ?? "local");
-  const acceptance = reviewerGateAllowsAcceptance(flight, attempt);
-  const gate = attempt.reviewGate;
-  const landability = attemptLandability(attempt);
-
-  // Probe the worktree only while a confirm is open. `cleanliness === null`
-  // renders as "checking…" rather than as "nothing will be lost".
   useEffect(() => {
     if (!decision) return;
-    let stale = false;
+    let current = true;
     setCleanliness(null);
     void inspectAttemptWorktree(attempt)
-      .then((next) => {
-        if (!stale) setCleanliness(next);
+      .then((result) => {
+        if (current) setCleanliness(result);
       })
       .catch(() => {
-        if (!stale) setCleanliness("unknown");
+        if (current) setCleanliness("unknown");
       });
     return () => {
-      stale = true;
+      current = false;
     };
-  }, [decision, attempt.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [decision, attempt]);
 
-  async function confirmDecision() {
-    const pending = decision;
-    setDecision(null);
-    if (!pending) return;
-    await runAction(() =>
-      setAttemptStatus(flight.id, attempt.id, pending === "accept" ? "completed" : "failed"),
-    );
-  }
-
-  async function runAction(action: () => Promise<void>) {
+  async function runAction(action: () => Promise<unknown>) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     setActionError(null);
     try {
       await action();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   }
-
-  function handleSend() {
+  async function confirmDecision() {
+    const pending = decision;
+    setDecision(null);
+    if (pending)
+      await runAction(() =>
+        setAttemptStatus(flight.id, attempt.id, pending === "accept" ? "completed" : "failed"),
+      );
+  }
+  function sendFollowUp() {
     const text = followUp.trim();
     if (!text || !conversation) return;
-    sendMessage(attempt.sessionId, text);
-    setFollowUp("");
+    void runAction(async () => {
+      await sendMessage(attempt.sessionId, text, undefined, { requireIdle: true });
+      setFollowUp("");
+    });
   }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+  function inspectInWorkspace() {
+    const result = inspectFlightAttemptInWorkspace(flight.id, attempt.id);
+    if (!result.ok) setActionError(result.message);
   }
 
   return (
-    <div className="flex flex-col overflow-hidden rounded border border-bg-border bg-bg-primary">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-b border-bg-border bg-bg-secondary px-3 py-1.5 text-[11px]">
-        <StatusIcon
-          size={12}
-          className={`${meta.color} ${isInProgress ? "animate-spin" : ""} flex-shrink-0`}
-        />
-        <span className={`font-medium ${meta.color}`}>{meta.label}</span>
-        {React.createElement(targetIcon, {
-          size: 11,
-          className: "text-text-muted flex-shrink-0",
-        })}
-        <span className="truncate text-text-secondary">{targetLabel}</span>
-        <span className="text-text-muted">·</span>
-        <span className="truncate text-text-muted">
-          {attempt.model.split("-").slice(0, 2).join("-")}
-        </span>
-        {/* v0.8-G: draft PR link, shown when the attempt was published */}
-        {attempt.draftPrNumber && <DraftPrLink prNumber={attempt.draftPrNumber} />}
-        <span className="ml-auto text-text-muted">
-          {attempt.tokens > 0 ? `${(attempt.tokens / 1000).toFixed(1)}k` : ""}
-        </span>
-      </div>
-
-      {/* Messages */}
-      <div className="max-h-[340px] min-h-[160px] flex-1 space-y-2 overflow-y-auto px-3 py-2">
-        {messages.length === 0 ? (
-          <div className="py-2 text-[10px] italic text-text-muted">Waiting for agent to start…</div>
+    <article
+      id={`flight-attempt-${attempt.id}`}
+      tabIndex={-1}
+      aria-label={task?.title ?? `Attempt ${attempt.branch}`}
+      aria-busy={busy}
+      className="min-w-0 overflow-hidden rounded-lg border border-bg-border bg-bg-primary"
+    >
+      <header className="flex flex-wrap items-center gap-2 border-b border-bg-border bg-bg-secondary px-3 py-2.5 text-xs">
+        {inProgress ? (
+          <Loader2 size={13} className="animate-spin text-accent-blue" />
+        ) : delivery ? (
+          <CheckCircle2 size={13} className="text-accent-green" />
         ) : (
-          <>
-            {messages.length > 5 && (
-              <button
-                onClick={() => setExpanded((v) => !v)}
-                className="flex items-center gap-1 text-[10px] text-text-muted transition-colors hover:text-text-primary"
-              >
-                {expanded ? (
-                  <>
-                    <ChevronDown size={10} /> Showing all {messages.length}
-                  </>
-                ) : (
-                  <>
-                    <ChevronRight size={10} /> {messages.length - 5} earlier message
-                    {messages.length - 5 === 1 ? "" : "s"}
-                  </>
-                )}
-              </button>
-            )}
-            {visibleMessages.map((m) => (
-              <MessageRow key={m.id} message={m} />
-            ))}
-          </>
+          <ShieldCheck size={13} className={STATUS_META[attempt.status].color} />
         )}
-
+        <h3 className={`font-semibold ${STATUS_META[attempt.status].color}`}>{label}</h3>
+        <span className="min-w-0 break-all text-[11px] text-text-muted">{attempt.model}</span>
+        <span className="ml-auto text-[11px] text-text-muted">
+          {attempt.tokens > 0 ? `${(attempt.tokens / 1000).toFixed(1)}k tokens` : ""}
+        </span>
+        {attempt.draftPrNumber && (
+          <DraftPrLink prNumber={attempt.draftPrNumber} href={delivery?.prUrl} />
+        )}
+      </header>
+      <div className="space-y-2 px-3 py-3 text-xs">
+        {task && <p className="font-medium text-text-primary">{task.title}</p>}
+        <p className="flex items-start gap-1.5 break-all font-mono text-[11px] text-text-muted">
+          {attempt.target.kind === "ssh" ? (
+            <Server size={12} className="mt-0.5 shrink-0" />
+          ) : (
+            <Folder size={12} className="mt-0.5 shrink-0" />
+          )}
+          {attempt.target.basePath}
+        </p>
+        <p className="break-all text-[11px] text-text-secondary">
+          <span className="font-mono">{attempt.branch}</span> →{" "}
+          <span className="font-mono">{attempt.baseBranch}</span>
+        </p>
+        {delivery && (
+          <p role="status" className="break-words text-accent-green">
+            {delivery.kind === "landed"
+              ? `Landed into ${delivery.baseBranch}${delivery.commitSha ? ` as ${delivery.commitSha.slice(0, 12)}` : ""}.`
+              : `Draft PR${delivery.prNumber ? ` #${delivery.prNumber}` : ""} opened for this result.`}
+          </p>
+        )}
+        {attempt.status === "completed" && !delivery && (
+          <p className="text-text-secondary">
+            {cooperativeTask
+              ? "Accepted into the Flight integration branch. Complete the remaining tasks, then review and land the combined Flight."
+              : "Accepted. Deliver this branch with Land or Open PR to finish the Flight."}
+          </p>
+        )}
         {attempt.errorMessage && (
-          <div className="bg-accent-red/10 border-accent-red/30 rounded border px-2 py-1 text-[10px] text-accent-red">
+          <p
+            role="alert"
+            className="break-words rounded border border-accent-red/30 bg-accent-red/10 p-2 text-accent-red"
+          >
             {attempt.failureCategory && (
-              <span className="bg-accent-red/20 mr-1 rounded px-1 font-mono uppercase tracking-wide">
-                {attempt.failureCategory.replace(/_/g, " ")}
+              <span className="mr-1 font-medium">
+                {attempt.failureCategory.replace(/_/g, " ")}:
               </span>
             )}
             {attempt.errorMessage}
+          </p>
+        )}
+        {retained && (
+          <div className="space-y-2 rounded border border-accent-amber/30 bg-accent-amber/5 p-2 text-text-secondary">
+            <p className="font-medium text-accent-amber">Work preserved for recovery</p>
+            <p>{attempt.recovery?.reason}</p>
+            <p className="break-all font-mono text-[11px]">{attempt.target.worktreePath}</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={BUTTON} disabled={busy} onClick={inspectInWorkspace}>
+                Inspect preserved work
+              </button>
+              <button
+                type="button"
+                className={BUTTON}
+                disabled={busy}
+                onClick={() => void runAction(() => resumeRetainedAttempt(flight.id, attempt.id))}
+              >
+                <RotateCcw size={11} /> Continue preserved work
+              </button>
+              {onNewAttempt && (
+                <button type="button" className={BUTTON} disabled={busy} onClick={onNewAttempt}>
+                  New attempt
+                </button>
+              )}
+              <button
+                type="button"
+                className={`${BUTTON} text-accent-red`}
+                disabled={busy}
+                onClick={() => setDiscardOpen(true)}
+              >
+                Discard preserved work…
+              </button>
+            </div>
           </div>
         )}
-
-        {flight.reviewGatePolicy?.enabled && (
-          <div className="border-accent-purple/30 bg-accent-purple/5 rounded border px-2.5 py-2 text-[10px]">
-            <div className="flex items-center gap-1.5 text-text-secondary">
-              <ShieldCheck size={11} className="text-accent-purple" />
-              <span className="font-medium">Independent Reviewer Gate</span>
-              <span className="ml-auto uppercase tracking-wide text-text-muted">
-                {gate?.status.replace(/_/g, " ") ?? "pending"}
-              </span>
+        {summary && (
+          <details open={!inProgress}>
+            <summary className="cursor-pointer font-medium text-text-secondary">
+              Agent result
+            </summary>
+            <div className="mt-2 max-h-56 overflow-y-auto break-words">
+              <MarkdownRenderer content={summary} />
             </div>
-            {gate?.report && (
-              <div className="mt-1.5 space-y-1.5">
-                <p className="text-text-secondary">{gate.report.summary}</p>
+          </details>
+        )}
+        {!summary && !inProgress && (
+          <p className="text-text-muted">
+            No result summary was reported. Inspect the changes and any available evidence before
+            accepting.
+          </p>
+        )}
+        {actionError && (
+          <p
+            role="alert"
+            className="break-words rounded border border-accent-red/30 bg-accent-red/10 p-2 text-accent-red"
+          >
+            {actionError}
+          </p>
+        )}
+        {busy && (
+          <p role="status" className="flex items-center gap-1 text-text-muted">
+            <Loader2 size={11} className="animate-spin" /> Applying action…
+          </p>
+        )}
+        {landNote && (
+          <p role="status" className="text-accent-green">
+            {landNote}
+          </p>
+        )}
+      </div>
+
+      <fieldset
+        disabled={busy}
+        className="flex min-w-0 flex-wrap items-center gap-2 border-y border-bg-border bg-bg-secondary px-3 py-2"
+      >
+        <legend className="sr-only">Attempt actions</legend>
+        {attempt.status === "reviewing" && (
+          <>
+            <button
+              type="button"
+              className={`${BUTTON} border-accent-green/30 text-accent-green`}
+              disabled={!acceptance.allowed}
+              title={
+                acceptance.allowed
+                  ? "Accept reviewed work, then deliver its branch"
+                  : acceptance.reason
+              }
+              onClick={() => setDecision("accept")}
+            >
+              <Check size={11} /> Accept
+            </button>
+            <button type="button" className={BUTTON} onClick={() => setDecision("reject")}>
+              <XIcon size={11} /> Reject
+            </button>
+            {!acceptance.allowed && (
+              <p className="basis-full text-[11px] text-accent-amber">{acceptance.reason}</p>
+            )}
+          </>
+        )}
+        {attempt.status === "completed" && !delivery && !cooperativeTask && (
+          <>
+            <button
+              type="button"
+              className={`${BUTTON} border-accent-green/30 text-accent-green`}
+              disabled={!landability.allowed}
+              title={landability.reason}
+              onClick={() =>
+                void runAction(async () => {
+                  setLandNote(null);
+                  const result = await landAttempt(flight.id, attempt.id);
+                  if (!result.landed) throw new Error(result.message);
+                  setLandNote(result.message);
+                })
+              }
+            >
+              <GitMerge size={11} /> Land
+            </button>
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => void runAction(() => publishAttemptPr(flight.id, attempt.id))}
+            >
+              <GitPullRequest size={11} />{" "}
+              {attempt.draftPrNumber ? "Record PR delivery" : "Open PR"}
+            </button>
+            {!landability.allowed && (
+              <p className="basis-full text-[11px] text-text-muted">{landability.reason}</p>
+            )}
+          </>
+        )}
+        {conversation && (
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => openConversationInAgents(conversation.id)}
+          >
+            <MessageSquareText size={11} /> Open agent conversation
+          </button>
+        )}
+        <button type="button" className={BUTTON} onClick={inspectInWorkspace}>
+          <PanelsTopLeft size={11} /> Open in Workspace
+        </button>
+        {conversation && (
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() =>
+              void runAction(() =>
+                openMonitorWindow({
+                  kind: "agent_conversation",
+                  conversationId: attempt.sessionId,
+                }),
+              )
+            }
+          >
+            <MonitorUp size={11} /> Monitor
+          </button>
+        )}
+        {(inProgress || attempt.status === "reviewing") && (
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => void runAction(() => stopFlight(flight.id))}
+          >
+            <Square size={11} /> Stop Flight & retain work
+          </button>
+        )}
+      </fieldset>
+
+      <FlightAttemptEvidence attempt={attempt} conversation={conversation} />
+      {flight.reviewGatePolicy?.enabled && (
+        <section
+          aria-label="Independent review"
+          className="space-y-2 border-t border-bg-border px-3 py-3 text-xs"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <ShieldCheck size={13} className="text-accent-purple" />
+            <h4 className="font-semibold text-text-primary">Independent review</h4>
+            <span className="ml-auto text-[11px] text-text-muted">
+              {gate?.status.replace(/_/g, " ") ?? "pending"}
+            </span>
+          </div>
+          {gate?.evidence ? (
+            <div className="space-y-1 break-all text-[11px] text-text-muted">
+              <p>
+                Review bound to commit {gate.evidence.headSha.slice(0, 12)} from{" "}
+                {gate.evidence.baseSha.slice(0, 12)}.
+              </p>
+              <p title={gate.evidence.fingerprint}>
+                Evidence fingerprint: {gate.evidence.fingerprint}
+              </p>
+              <p>Code and criteria are checked again before acceptance and delivery.</p>
+            </div>
+          ) : (
+            <p className="text-[11px] text-accent-amber">
+              No bound review evidence yet. A review status alone does not establish verified code.
+            </p>
+          )}
+          {gate?.reviewerConversationId && (
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => openConversationInAgents(gate.reviewerConversationId!)}
+            >
+              <MessageSquareText size={11} /> Open reviewer conversation
+            </button>
+          )}
+          {gate?.report && (
+            <>
+              <p className="break-words text-text-secondary">{gate.report.summary}</p>
+              <ul className="space-y-2">
                 {gate.report.findings.map((finding, index) => (
-                  <div
+                  <li
                     key={`${finding.title}-${index}`}
-                    className={`rounded border px-2 py-1 ${
-                      finding.severity === "error"
-                        ? "border-accent-red/30 bg-accent-red/5 text-accent-red"
-                        : finding.severity === "warning"
-                          ? "border-accent-amber/30 bg-accent-amber/5 text-accent-amber"
-                          : "border-bg-border text-text-secondary"
-                    }`}
+                    className={`rounded border border-bg-border p-2 ${finding.severity === "error" ? "text-accent-red" : finding.severity === "warning" ? "text-accent-amber" : "text-text-secondary"}`}
                   >
-                    <span className="font-medium">{finding.title}</span>
+                    <p className="font-medium">{finding.title}</p>
                     {finding.filePath && (
-                      <span className="ml-1 font-mono text-text-muted">
+                      <p className="break-all font-mono text-[11px]">
                         {finding.filePath}
                         {finding.line ? `:${finding.line}` : ""}
-                      </span>
+                      </p>
                     )}
-                    <div className="mt-0.5 text-text-secondary">{finding.details}</div>
-                  </div>
+                    <p className="break-words text-text-secondary">{finding.details}</p>
+                  </li>
                 ))}
-              </div>
-            )}
-            {gate?.errorMessage && <p className="mt-1.5 text-accent-red">{gate.errorMessage}</p>}
-            {gate?.status === "overridden" && gate.overrideReason && (
-              <p className="mt-1.5 text-accent-amber">Override recorded: {gate.overrideReason}</p>
-            )}
-            {gate && ["changes_requested", "blocked", "error"].includes(gate.status) && (
-              <div className="mt-2 flex flex-wrap items-center gap-1">
+              </ul>
+              <details open>
+                <summary className="cursor-pointer text-text-secondary">
+                  Reviewer evidence ({gate.report.evidence.length})
+                </summary>
+                <ul className="mt-1 list-disc space-y-1 break-words pl-4 text-[11px] text-text-muted">
+                  {gate.report.evidence.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </details>
+            </>
+          )}
+          {gate?.errorMessage && (
+            <p role="alert" className="break-words text-accent-red">
+              {gate.errorMessage}
+            </p>
+          )}
+          {gate?.status === "overridden" && (
+            <p className="text-accent-amber">Manual override: {gate.overrideReason}</p>
+          )}
+          {gate && ["changes_requested", "blocked", "error"].includes(gate.status) && (
+            <div className="flex flex-wrap gap-2">
+              {attempt.status === "reviewing" && (
                 <button
+                  type="button"
+                  disabled={
+                    busy ||
+                    conversation?.status === "active" ||
+                    messages.some((message) => message.isStreaming)
+                  }
+                  className={BUTTON}
                   onClick={() => void runAction(() => retryReviewGate(flight.id, attempt.id))}
-                  className="flex items-center gap-1 rounded border border-bg-border px-2 py-0.5 text-text-secondary hover:text-text-primary"
                 >
-                  <RotateCcw size={9} /> Retry reviewer
+                  <RotateCcw size={11} /> Retry reviewer
                 </button>
-                {gate.report && (
-                  <button
-                    onClick={() =>
-                      void runAction(() => sendReviewFindingsToBuilder(flight.id, attempt.id))
-                    }
-                    className="flex items-center gap-1 rounded border border-bg-border px-2 py-0.5 text-text-secondary hover:text-text-primary"
-                  >
-                    <Send size={9} /> Send findings to builder
-                  </button>
-                )}
+              )}
+              {attempt.status === "reviewing" && gate.report && (
                 <button
-                  onClick={() => setOverrideOpen((value) => !value)}
-                  className="border-accent-amber/30 hover:bg-accent-amber/10 rounded border px-2 py-0.5 text-accent-amber"
+                  type="button"
+                  disabled={
+                    busy ||
+                    conversation?.status === "active" ||
+                    messages.some((message) => message.isStreaming)
+                  }
+                  className={BUTTON}
+                  onClick={() =>
+                    void runAction(() => sendReviewFindingsToBuilder(flight.id, attempt.id))
+                  }
                 >
-                  Override…
+                  <Send size={11} /> Send findings to builder
                 </button>
-              </div>
-            )}
-            {overrideOpen && gate?.status !== "overridden" && (
-              <div className="mt-2 flex items-start gap-1">
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                className={`${BUTTON} text-accent-amber`}
+                onClick={() => setOverrideOpen((value) => !value)}
+              >
+                Override…
+              </button>
+            </div>
+          )}
+          {gate?.status === "error" && attempt.status === "running" && (
+            <p className="text-text-secondary">
+              The builder is working. Retry the reviewer after this turn finishes.
+            </p>
+          )}
+          {attempt.status === "completed" && gate?.status === "error" && (
+            <p className="text-text-secondary">
+              This accepted attempt's worktree has been cleaned up. Inspect the retained branch,
+              start a new reviewed attempt, or record a manual override before delivery.
+            </p>
+          )}
+          {attempt.status === "completed" && gate?.status === "error" && onNewAttempt && (
+            <button type="button" className={BUTTON} onClick={onNewAttempt}>
+              Start a new reviewed attempt
+            </button>
+          )}
+          {overrideOpen && gate?.status !== "overridden" && (
+            <div className="flex flex-wrap items-start gap-2">
+              <label className="min-w-0 flex-1 text-[11px] text-text-secondary">
+                Override reason
                 <textarea
+                  aria-label="Override reason"
                   value={overrideReason}
                   onChange={(event) => setOverrideReason(event.target.value)}
                   rows={2}
-                  placeholder="Required reason for accepting despite the reviewer"
-                  className="border-accent-amber/30 flex-1 resize-none rounded border bg-bg-primary px-2 py-1 text-[10px] text-text-primary outline-none"
+                  className="mt-1 block w-full rounded border border-accent-amber/30 bg-bg-primary p-2 text-xs text-text-primary"
                 />
-                <button
-                  disabled={overrideReason.trim().length < 3}
-                  onClick={() =>
-                    void runAction(async () => {
-                      await overrideReviewGate(flight.id, attempt.id, overrideReason);
-                      setOverrideOpen(false);
-                      setOverrideReason("");
-                    })
-                  }
-                  className="border-accent-amber/30 bg-accent-amber/10 rounded border px-2 py-1 text-accent-amber disabled:opacity-40"
-                >
-                  Record
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              </label>
+              <button
+                type="button"
+                disabled={busy || overrideReason.trim().length < 3}
+                className={BUTTON}
+                onClick={() =>
+                  void runAction(async () => {
+                    await overrideReviewGate(flight.id, attempt.id, overrideReason);
+                    setOverrideOpen(false);
+                    setOverrideReason("");
+                  })
+                }
+              >
+                Record override
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
-        {actionError && (
-          <div className="border-accent-red/30 bg-accent-red/10 rounded border px-2 py-1 text-[10px] text-accent-red">
-            {actionError}
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="border-t border-bg-border bg-bg-secondary">
-        {/* Follow-up input — always visible while in progress or reviewing */}
-        {(isInProgress || attempt.status === "reviewing") && conversation && (
-          <div className="flex items-center gap-1 px-2 py-1.5">
+      {(inProgress || attempt.status === "reviewing") && conversation && (
+        <div className="space-y-1 border-t border-bg-border px-3 py-3">
+          <label
+            htmlFor={`followup-${attempt.id}`}
+            className="text-[11px] font-medium text-text-secondary"
+          >
+            Follow up with the builder
+          </label>
+          <div className="flex items-start gap-2">
             <textarea
+              id={`followup-${attempt.id}`}
               value={followUp}
-              onChange={(e) => setFollowUp(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Send a follow-up message…"
-              rows={1}
-              className="focus:border-accent-green/40 flex-1 resize-none rounded border border-bg-border bg-bg-primary px-2 py-1 text-[11px] text-text-primary outline-none placeholder:text-text-muted"
+              onChange={(event) => setFollowUp(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  sendFollowUp();
+                }
+              }}
+              rows={2}
+              className="min-w-0 flex-1 resize-y rounded border border-bg-border bg-bg-primary p-2 text-xs text-text-primary"
             />
             <button
-              onClick={handleSend}
-              disabled={!followUp.trim()}
-              className="hover:bg-accent-green/10 rounded p-1 text-accent-green disabled:opacity-30"
-              title="Send (Enter)"
+              type="button"
+              className={BUTTON}
+              disabled={busy || !followUp.trim()}
+              onClick={sendFollowUp}
             >
-              <Send size={12} />
+              <Send size={11} /> Send
             </button>
           </div>
-        )}
-
-        {/* F2: getting accepted work into the codebase. Accepting removes the
-            worktree but keeps `pkt/<attemptId>`, so both actions run off the
-            branch alone and stay available for as long as the attempt does. */}
-        {attempt.status === "completed" && (
-          <div className="border-bg-border/40 flex flex-wrap items-center gap-1 border-t px-2 py-1 text-[10px]">
-            <span className="truncate font-mono text-text-muted" title={attempt.branch}>
-              {attempt.branch}
-            </span>
-            {landNote && <span className="truncate text-accent-green">{landNote}</span>}
-            <span className="ml-auto" />
-            <button
-              onClick={() =>
-                void runAction(async () => {
-                  setLanding(true);
-                  setLandNote(null);
-                  try {
-                    const result = await landAttempt(flight.id, attempt.id);
-                    // "Nothing to land" is not a landing — report it as the
-                    // failure it is rather than as a green confirmation.
-                    if (!result.landed) throw new Error(result.message);
-                    setLandNote(result.message);
-                  } finally {
-                    setLanding(false);
-                  }
-                })
-              }
-              disabled={landing || !landability.allowed}
-              title={landability.reason}
-              className="bg-accent-green/10 border-accent-green/30 hover:bg-accent-green/20 flex items-center gap-1 rounded border px-2 py-0.5 text-accent-green disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              {landing ? <Loader2 size={10} className="animate-spin" /> : <GitMerge size={10} />}
-              {landing ? "Landing…" : "Land"}
-            </button>
-            <button
-              onClick={() => void runAction(() => publishAttemptPr(flight.id, attempt.id))}
-              disabled={Boolean(attempt.draftPrNumber)}
-              title={
-                attempt.draftPrNumber
-                  ? `Draft PR #${attempt.draftPrNumber} is already open for this branch`
-                  : `Push ${attempt.branch} and open a draft PR on the selected GitHub repo`
-              }
-              className="border-accent-purple/30 hover:bg-accent-purple/10 flex items-center gap-1 rounded border px-2 py-0.5 text-accent-purple disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              <GitPullRequest size={10} /> Open PR
-            </button>
-          </div>
-        )}
-
-        {/* Action row */}
-        <div className="border-bg-border/40 flex items-center justify-end gap-1 border-t px-2 py-1">
-          {conversation && (
-            <>
-              <button
-                onClick={() => {
-                  const result = openFlightAttemptInWorkspace(attempt.sessionId);
-                  if (!result.ok) setActionError(result.message);
-                }}
-                className="flex items-center gap-1 rounded border border-bg-border px-2 py-0.5 text-[10px] text-text-secondary hover:text-text-primary"
-                title="Open this attempt's project in a CLI-first Workspace"
-              >
-                <PanelsTopLeft size={10} /> Open in Workspace
-              </button>
-              <button
-                onClick={() =>
-                  void runAction(() =>
-                    openMonitorWindow({
-                      kind: "agent_conversation",
-                      conversationId: attempt.sessionId,
-                    }).then(() => {}),
-                  )
-                }
-                className="flex items-center gap-1 rounded border border-bg-border px-2 py-0.5 text-[10px] text-text-secondary hover:text-text-primary"
-                title="Open a read-only monitor for this attempt"
-              >
-                <MonitorUp size={10} /> Monitor
-              </button>
-            </>
-          )}
-          {attempt.status === "reviewing" && (
-            <>
-              <button
-                onClick={() => setDecision("accept")}
-                disabled={!acceptance.allowed}
-                title={
-                  acceptance.allowed
-                    ? "Accept this attempt — confirms before removing its worktree"
-                    : acceptance.reason
-                }
-                className="bg-accent-green/10 border-accent-green/30 hover:bg-accent-green/20 flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] text-accent-green disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                <Check size={10} /> Accept
-              </button>
-              <button
-                onClick={() => setDecision("reject")}
-                title="Reject this attempt — confirms before removing its worktree"
-                className="hover:bg-accent-red/10 flex items-center gap-1 rounded border border-bg-border px-2 py-0.5 text-[10px] text-accent-red"
-              >
-                <XIcon size={10} /> Reject
-              </button>
-            </>
-          )}
-          {isInProgress && (
-            <button
-              onClick={() => void cancelAttempt(flight.id, attempt.id)}
-              className="flex items-center gap-1 rounded border border-bg-border px-2 py-0.5 text-[10px] text-text-muted hover:text-accent-red"
-              title="Cancel attempt + remove worktree"
-            >
-              <Square size={10} /> Cancel
-            </button>
+        </div>
+      )}
+      <details className="border-t border-bg-border px-3 py-3 text-xs">
+        <summary className="cursor-pointer font-medium text-text-secondary">
+          Activity and transcript ({messages.length})
+        </summary>
+        <div className="mt-2 max-h-80 space-y-3 overflow-y-auto break-words">
+          {messages.length === 0 ? (
+            <p className="text-text-muted">No transcript is available on this device.</p>
+          ) : (
+            messages.map((message) => <MessageRow key={message.id} message={message} />)
           )}
         </div>
-      </div>
+      </details>
 
       {decision && (
         <ConfirmDeleteModal
@@ -490,118 +615,87 @@ export function AttemptTile({ flight, attempt }: AttemptTileProps) {
           entityName={attempt.branch}
           description={
             decision === "accept"
-              ? "is accepted as this Flight's result. The agent session closes and the attempt's git worktree is force-removed."
-              : "is rejected and marked failed. The agent session closes and the attempt's git worktree is force-removed."
+              ? "is accepted as this Flight's result. Review the consequences below before delivery."
+              : "is rejected and marked failed. Its worktree and branch are retained."
           }
           warningTitle={decision === "accept" ? "Accepting this also" : "Rejecting this also"}
           warnings={describeAttemptDecisionImpact(decision, attempt, cleanliness, flight)}
           confirmLabel={decision === "accept" ? "Accept attempt" : "Reject attempt"}
-          undoNote="Removing the worktree cannot be undone. The branch is kept."
+          undoNote={
+            decision === "accept"
+              ? "The git branch is kept. Worktree removal cannot be undone."
+              : "Files and branch are kept. Removing the worktree files requires a separate Discard confirmation."
+          }
           onConfirm={() => void confirmDecision()}
           onClose={() => setDecision(null)}
         />
       )}
-    </div>
+      {discardOpen && (
+        <ConfirmDeleteModal
+          title="Discard preserved work?"
+          entityName={attempt.target.worktreePath}
+          description="is removed. Uncommitted and untracked files in this worktree will be lost. The committed branch is kept."
+          warnings={[
+            `Exact worktree: ${attempt.target.worktreePath}`,
+            `Retained branch: ${attempt.branch}`,
+          ]}
+          warningTitle="Preserved files will be removed"
+          confirmLabel="Discard preserved work"
+          onConfirm={() => {
+            setDiscardOpen(false);
+            void runAction(() => discardRetainedWorktree(flight.id, attempt.id));
+          }}
+          onClose={() => setDiscardOpen(false)}
+        />
+      )}
+    </article>
   );
 }
 
 function MessageRow({ message }: { message: AgentMessage }) {
-  if (message.role === "user") {
-    return (
-      <div className="bg-bg-secondary/50 rounded-sm border-l-2 border-accent-purple px-2 py-1 text-[11px] text-text-secondary">
-        <span className="mr-1.5 text-[9px] uppercase tracking-wide text-accent-purple">You</span>
-        {message.content}
-      </div>
-    );
-  }
-  if (message.role === "system") {
-    return <div className="text-[10px] italic text-text-muted">{message.content}</div>;
-  }
-  // assistant
   return (
-    <div className="text-[11px] text-text-primary">
-      {message.toolCalls && message.toolCalls.length > 0 && (
-        <div className="mb-1.5 flex flex-col gap-0.5">
-          {message.toolCalls.map((tc) => (
-            <ToolCallChip key={tc.id} call={tc} />
-          ))}
-        </div>
-      )}
-      {message.content && (
-        <div className="prose prose-invert prose-sm max-w-none [&>*]:my-1 [&>*]:text-[11px]">
-          <MarkdownRenderer content={message.content} />
-        </div>
-      )}
+    <div className="space-y-1 text-xs">
+      <span className="font-medium text-text-muted">
+        {message.role === "user" ? "You" : message.role === "assistant" ? "Agent" : "System"}
+      </span>
+      {message.content && <MarkdownRenderer content={message.content} />}
+      {message.toolCalls?.map((call) => (
+        <details key={call.id} className="rounded border border-bg-border px-2 py-1 text-[11px]">
+          <summary
+            className={
+              call.status === "error"
+                ? "cursor-pointer text-accent-red"
+                : "cursor-pointer text-text-secondary"
+            }
+          >
+            {call.name} · {call.status}
+          </summary>
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-text-muted">
+            {call.fullContent ?? call.summary ?? call.input ?? "No tool output was recorded."}
+          </pre>
+        </details>
+      ))}
       {message.isStreaming && (
-        <div className="mt-1 flex items-center gap-1 text-[10px] text-text-muted">
-          <Loader2 size={10} className="animate-spin" /> streaming…
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ToolCallChip({
-  call,
-}: {
-  call: { id: string; name: string; status: string; summary?: string };
-}) {
-  const color =
-    call.status === "running"
-      ? "text-accent-blue"
-      : call.status === "error"
-        ? "text-accent-red"
-        : "text-accent-green";
-  return (
-    <div className={`flex items-center gap-1.5 text-[10px] ${color}`} title={call.summary ?? ""}>
-      <span className="font-mono">{call.name}</span>
-      {call.status === "running" && <Loader2 size={9} className="animate-spin" />}
-      {call.status === "done" && <Check size={9} />}
-      {call.status === "error" && <AlertTriangle size={9} />}
-      {call.summary && (
-        <span className="max-w-[200px] truncate text-text-muted">
-          {call.summary.split("\n")[0]}
+        <span role="status" className="text-text-muted">
+          Streaming…
         </span>
       )}
     </div>
   );
 }
-
-// Need to import React for React.createElement above
-import React from "react";
-
-/**
- * v0.8-G: small "Draft PR #N" pill rendered next to an attempt's status
- * header once its branch has been published. Clicking opens the PR on
- * GitHub in the user's default browser via the standard anchor target.
- */
-function DraftPrLink({ prNumber }: { prNumber: number }) {
-  const selectedRepo = useGitHubStore((s) => s.config.selectedRepo);
-  const href = selectedRepo
-    ? `https://github.com/${selectedRepo.owner}/${selectedRepo.repo}/pull/${prNumber}`
-    : undefined;
-  const inner = (
-    <>
-      <GitPullRequest size={10} className="text-accent-purple" />
-      <span className="font-medium">Draft PR #{prNumber}</span>
-    </>
-  );
-  if (!href) {
-    return (
-      <span className="border-accent-purple/30 bg-accent-purple/10 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] text-accent-purple">
-        {inner}
-      </span>
-    );
-  }
-  return (
+function DraftPrLink({ prNumber, href: savedHref }: { prNumber: number; href?: string }) {
+  const href = savedHref;
+  const label = `Draft PR #${prNumber}`;
+  return href ? (
     <a
+      className="text-[11px] text-accent-purple underline"
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="border-accent-purple/30 bg-accent-purple/10 hover:bg-accent-purple/20 inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] text-accent-purple"
-      title={`Open PR #${prNumber} on GitHub`}
     >
-      {inner}
+      {label}
     </a>
+  ) : (
+    <span className="text-[11px] text-accent-purple">{label}</span>
   );
 }

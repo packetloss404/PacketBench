@@ -30,6 +30,7 @@ interface ExplorationStats {
   running: number;
   /** Settled exploration calls whose status is "error". */
   failed: number;
+  interrupted: number;
 }
 
 const READ_TOOLS = new Set(["read_file", "Read"]);
@@ -70,9 +71,14 @@ function ExplorationRollupCardImpl({ toolCalls, isStreaming }: ExplorationRollup
     const listings: ExplorationStats["listings"] = [];
     let running = 0;
     let failed = 0;
+    let interrupted = 0;
     for (const tc of toolCalls) {
       const isExploration = isExplorationToolName(tc.name);
       if (!isExploration) continue;
+      if (tc.interrupted) {
+        interrupted += 1;
+        continue;
+      }
       if (tc.status === "running") {
         running += 1;
         continue;
@@ -91,7 +97,7 @@ function ExplorationRollupCardImpl({ toolCalls, isStreaming }: ExplorationRollup
         if (path) listings.push({ id: tc.id, path, failed: isFailed });
       }
     }
-    return { fileReads, searches, listings, running, failed };
+    return { fileReads, searches, listings, running, failed, interrupted };
   }, [toolCalls]);
 
   // Once the message has settled, any still-"running" calls are orphans
@@ -105,39 +111,36 @@ function ExplorationRollupCardImpl({ toolCalls, isStreaming }: ExplorationRollup
   // A lone failed exploration call (e.g. unparseable input, so it never made
   // it into fileReads/searches/listings) must still surface the card — never
   // let it vanish into a neutral rollup.
-  if (total === 0 && running === 0 && stats.failed === 0) return null;
+  if (total === 0 && running === 0 && stats.failed === 0 && stats.interrupted === 0) return null;
 
   const summaryParts: string[] = [];
   if (stats.fileReads.length > 0) {
-    summaryParts.push(
-      `${stats.fileReads.length} file${stats.fileReads.length === 1 ? "" : "s"}`,
-    );
+    summaryParts.push(`${stats.fileReads.length} file${stats.fileReads.length === 1 ? "" : "s"}`);
   }
   if (stats.searches.length > 0) {
-    summaryParts.push(
-      `${stats.searches.length} search${stats.searches.length === 1 ? "" : "es"}`,
-    );
+    summaryParts.push(`${stats.searches.length} search${stats.searches.length === 1 ? "" : "es"}`);
   }
   if (stats.listings.length > 0) {
-    summaryParts.push(
-      `${stats.listings.length} listing${stats.listings.length === 1 ? "" : "s"}`,
-    );
+    summaryParts.push(`${stats.listings.length} listing${stats.listings.length === 1 ? "" : "s"}`);
   }
   // Live/incremental: the card is THE streaming representation of exploration
   // tools (they never render individual cards), so counts tick up as results
   // land and only the verb flips at stream settle — no layout snap.
-  const verb = running > 0 ? "Exploring" : "Explored";
+  const verb =
+    running > 0
+      ? "Exploring"
+      : total === 0 && stats.interrupted > 0
+        ? "Exploration interrupted"
+        : "Explored";
   const summary =
     summaryParts.length > 0
-      ? `${verb} ${summaryParts.join(", ")}${
-          running > 0 ? ` (${running} in flight)` : ""
-        }`
+      ? `${verb} ${summaryParts.join(", ")}${running > 0 ? ` (${running} in flight)` : ""}`
       : running > 0
         ? `Exploring (${running} in flight)…`
-        // Reachable only when the only exploration activity is a failed
-        // call with unparseable input (no path/query to list) — the
-        // failed-count segment below carries the detail.
-        : verb;
+        : // Reachable only when the only exploration activity is a failed
+          // call with unparseable input (no path/query to list) — the
+          // failed-count segment below carries the detail.
+          verb;
 
   return (
     // `bg-bg-hover` is the app's PRESSED token — as a resting fill it made this
@@ -148,7 +151,7 @@ function ExplorationRollupCardImpl({ toolCalls, isStreaming }: ExplorationRollup
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:text-text-primary transition-colors text-left"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:text-text-primary"
       >
         <ChevronRight
           size={12}
@@ -156,25 +159,26 @@ function ExplorationRollupCardImpl({ toolCalls, isStreaming }: ExplorationRollup
             expanded ? "rotate-90" : ""
           }`}
         />
-        <Compass size={12} className="text-text-muted shrink-0" />
-        <span className="text-ui text-text-secondary truncate flex-1">{summary}</span>
+        <Compass size={12} className="shrink-0 text-text-muted" />
+        <span className="flex-1 truncate text-ui text-text-secondary">{summary}</span>
         {stats.failed > 0 && (
-          <span className="text-ui text-accent-red shrink-0">
-            · {stats.failed} failed
+          <span className="shrink-0 text-ui text-accent-red">· {stats.failed} failed</span>
+        )}
+        {stats.interrupted > 0 && (
+          <span className="shrink-0 text-ui text-accent-amber">
+            · {stats.interrupted} interrupted
           </span>
         )}
       </button>
       {expanded && (
-        <div className="selectable px-3 pb-2 border-t border-bg-border flex flex-col gap-0.5 max-h-64 overflow-y-auto">
+        <div className="selectable flex max-h-64 flex-col gap-0.5 overflow-y-auto border-t border-bg-border px-3 pb-2">
           {stats.fileReads.length > 0 && (
             <div className="pt-1">
-              <div className="text-meta uppercase tracking-wide text-text-faint mb-0.5">
-                Read
-              </div>
+              <div className="mb-0.5 text-meta uppercase tracking-wide text-text-faint">Read</div>
               {stats.fileReads.map((r) => (
                 <div
                   key={r.id}
-                  className={`flex items-center gap-1 font-mono text-meta truncate ${
+                  className={`flex items-center gap-1 truncate font-mono text-meta ${
                     r.failed ? "text-accent-red" : "text-text-secondary"
                   }`}
                   title={r.path}
@@ -187,13 +191,13 @@ function ExplorationRollupCardImpl({ toolCalls, isStreaming }: ExplorationRollup
           )}
           {stats.searches.length > 0 && (
             <div className="pt-1">
-              <div className="text-meta uppercase tracking-wide text-text-faint mb-0.5">
+              <div className="mb-0.5 text-meta uppercase tracking-wide text-text-faint">
                 Searched
               </div>
               {stats.searches.map((s) => (
                 <div
                   key={s.id}
-                  className={`flex items-center gap-1 font-mono text-meta truncate ${
+                  className={`flex items-center gap-1 truncate font-mono text-meta ${
                     s.failed ? "text-accent-red" : "text-text-secondary"
                   }`}
                   title={s.query}
@@ -206,13 +210,11 @@ function ExplorationRollupCardImpl({ toolCalls, isStreaming }: ExplorationRollup
           )}
           {stats.listings.length > 0 && (
             <div className="pt-1">
-              <div className="text-meta uppercase tracking-wide text-text-faint mb-0.5">
-                Listed
-              </div>
+              <div className="mb-0.5 text-meta uppercase tracking-wide text-text-faint">Listed</div>
               {stats.listings.map((l) => (
                 <div
                   key={l.id}
-                  className={`flex items-center gap-1 font-mono text-meta truncate ${
+                  className={`flex items-center gap-1 truncate font-mono text-meta ${
                     l.failed ? "text-accent-red" : "text-text-secondary"
                   }`}
                   title={l.path}

@@ -7,6 +7,8 @@ export interface AgentToolCall {
   name: string;
   file?: string;
   status: "running" | "done" | "error";
+  /** The owning turn stopped before this tool returned a result. */
+  interrupted?: boolean;
   /** Short preview (first ~200 chars) of the tool output for collapsed view. */
   summary?: string;
   /** Full tool output content. */
@@ -28,6 +30,8 @@ export interface AgentMessage {
   timestamp: number;
   toolCalls?: AgentToolCall[];
   isStreaming?: boolean;
+  /** Authoritative terminal outcome; idle alone can also mean cancellation. */
+  turnOutcome?: "completed" | "cancelled" | "failed";
   /** Whether this message was queued while the agent was running. */
   queued?: boolean;
   /** Input tokens consumed by this turn (assistant messages only). */

@@ -226,7 +226,9 @@ pub fn run() {
         // until the frontend routing store pushes; an empty map means
         // "auto (cheapest configured API key)", never a subscription login.
         .manage(core::aux_llm::AuxRoutingState::default())
-        .manage(std::sync::Arc::new(commands::insights::InsightsChatState::default()))
+        .manage(std::sync::Arc::new(
+            commands::insights::InsightsChatState::default(),
+        ))
         // PH6 — registry of live PacketAgent SSE consumer tasks.
         .manage(commands::packet_agent_stream::PacketAgentStreamState::default())
         .setup(|app| {
@@ -296,6 +298,11 @@ pub fn run() {
             commands::git::get_git_branch_remote,
             commands::git::get_git_status_remote,
             commands::git::get_git_review_evidence,
+            commands::flight_review::capture_attempt_review_evidence,
+            commands::flight_review::validate_attempt_review_gate,
+            commands::flight_review::validate_attempt_delivery,
+            commands::flight_review::land_reviewed_attempt,
+            commands::flight_review::push_reviewed_attempt,
             commands::git::prepare_flight_integration_branch,
             commands::git::integrate_flight_attempt,
             commands::git::land_flight_integration,
@@ -358,9 +365,16 @@ pub fn run() {
             // Flight lifecycle orchestration
             commands::flight_attempts::launch_flight_async,
             commands::flight_attempts::cancel_flight_attempt,
+            commands::flight_runtime::begin_flight_execution,
+            commands::flight_runtime::stop_flight_sessions,
+            commands::flight_runtime::resume_flight_attempt,
+            commands::flight_runtime::fail_prepared_flight_attempt,
+            commands::flight_runtime::record_attempt_delivery,
+            commands::flight_runtime::get_flight_attempt_origin,
             commands::flight_attempts::cleanup_attempt_worktree_ssh,
             commands::flight_attempts::cleanup_flight_integration_worktree,
             commands::flight_attempts::mark_attempt_status,
+            commands::flight_attempts::trace_flight_action,
             // v0.8-G pr modal upgrades — async-Flight draft-PR publish
             commands::flight_attempts::set_attempt_draft_pr,
             commands::flight_attempts::set_attempt_review_gate,

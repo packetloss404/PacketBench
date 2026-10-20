@@ -222,11 +222,27 @@ export interface ReviewGatePolicy {
   acceptanceCriteria: string[];
 }
 
+export interface ReviewGateEvidence {
+  fingerprint: string;
+  contextFingerprint: string;
+  contextJson?: string;
+  baseSha: string;
+  headSha: string;
+}
+
+export interface ReviewerSession {
+  sessionId: string;
+  provider: string;
+  model: string;
+}
+
 export interface AttemptReviewGate {
   status: ReviewGateStatus;
   reviewerConversationId?: string;
   reviewerAgentConfigId?: string;
   reviewerModel?: string;
+  evidence?: ReviewGateEvidence;
+  reviewerSessions?: ReviewerSession[];
   report?: ReviewGateReport;
   errorMessage?: string;
   startedAt?: number;
@@ -375,11 +391,35 @@ export interface AutonomyRuntime {
   stoppedAt?: number;
   hardStopReason?: string;
   actionHistory: AutonomyActionRecord[];
+  reviewRetryCounts?: Record<string, number>;
 }
 
 export type AttemptTarget =
   | { kind: "local"; basePath: string; worktreePath: string }
   | { kind: "ssh"; serverId: string; basePath: string; worktreePath: string };
+
+export interface AttemptRecovery {
+  state: "retained" | "discarded";
+  reason: string;
+  retainedAt: number;
+}
+
+export interface FlightDelivery {
+  kind: "landed" | "pull_request";
+  deliveredAt: number;
+  branch: string;
+  baseBranch: string;
+  commitSha?: string;
+  prNumber?: number;
+  prUrl?: string;
+  attemptId?: string;
+}
+
+export interface FlightExecutionTarget {
+  kind: "local" | "ssh";
+  serverId?: string;
+  basePath: string;
+}
 
 export interface Attempt {
   id: string;
@@ -392,6 +432,7 @@ export interface Attempt {
   baseBranch: string;
   sessionId: string;
   status: AttemptStatus;
+  sessionHistory?: ReviewerSession[];
   startedAt?: number;
   completedAt?: number;
   cost: number;
@@ -401,6 +442,8 @@ export interface Attempt {
   failureCategory?: AttemptFailureCategory;
   /** RG1: independent reviewer state for this attempt. */
   reviewGate?: AttemptReviewGate;
+  recovery?: AttemptRecovery;
+  delivery?: FlightDelivery;
   /** Cooperative graph task that owns this isolated attempt. */
   taskId?: string;
   /**
@@ -430,6 +473,9 @@ export interface Flight {
   createdAt: number;
   updatedAt: number;
   completedAt?: number;
+  delivery?: FlightDelivery;
+  archivedAt?: number;
+  stoppedAt?: number;
   coordinationLog?: CoordinationEvent[];
   totalCost: number;
   totalTokens: number;
@@ -441,6 +487,7 @@ export interface Flight {
   reviewGatePolicy?: ReviewGatePolicy;
   /** Undefined is the backward-compatible independent-attempt mode. */
   executionMode?: FlightExecutionMode;
+  executionTarget?: FlightExecutionTarget;
   /** Isolated branch/worktree where accepted cooperative tasks converge. */
   integrationBranch?: FlightIntegrationBranch;
   /** Versioned, append-only coordination mailbox. */

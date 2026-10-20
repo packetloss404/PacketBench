@@ -24,7 +24,10 @@ type StatusPillProps =
 const PILL_BASE =
   "inline-flex shrink-0 items-center gap-1 text-meta font-mono font-semibold uppercase tracking-[0.05em]";
 
-export function StatusPill(props: StatusPillProps) {
+export function StatusPill(props: StatusPillProps & { interrupted?: boolean }) {
+  if (props.interrupted) {
+    return <span className={`${PILL_BASE} text-accent-amber`}>Interrupted</span>;
+  }
   if (props.status === "running") {
     return (
       <span className={`${PILL_BASE} text-accent-blue`}>
@@ -37,9 +40,7 @@ export function StatusPill(props: StatusPillProps) {
   if (props.variant === "exit-code") {
     const ok = props.exitCode === 0;
     return (
-      <span
-        className={`${PILL_BASE} ${ok ? "text-accent-green" : "text-accent-red"}`}
-      >
+      <span className={`${PILL_BASE} ${ok ? "text-accent-green" : "text-accent-red"}`}>
         {ok ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
         exit {props.exitCode}
       </span>
@@ -48,11 +49,7 @@ export function StatusPill(props: StatusPillProps) {
 
   const isError = props.status === "error";
   return (
-    <span
-      className={`${PILL_BASE} ${
-        isError ? "text-accent-red" : "text-accent-green"
-      }`}
-    >
+    <span className={`${PILL_BASE} ${isError ? "text-accent-red" : "text-accent-green"}`}>
       {isError ? <XCircle size={10} /> : <CheckCircle2 size={10} />}
       {isError ? "error" : "done"}
     </span>

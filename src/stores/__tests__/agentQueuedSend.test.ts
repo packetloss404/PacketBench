@@ -20,6 +20,13 @@ vi.mock("@/lib/agentsMd", () => ({
   loadAgentsMd: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("@/lib/notifications", () => ({
+  notifyConversationDone: vi.fn().mockResolvedValue(undefined),
+  notifySessionComplete: vi.fn().mockResolvedValue(undefined),
+  notifySessionError: vi.fn().mockResolvedValue(undefined),
+  notifyApprovalNeeded: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/stores/memoryStore", () => ({
   useMemoryStore: {
     getState: vi.fn(() => ({
@@ -161,4 +168,119 @@ describe("agentTaskStore.sendMessage — queued-send-while-streaming (protected)
       expect(sendApiAgentMessageMock).toHaveBeenCalledWith(id, "idle send", attachments),
     );
   });
+
+  it("waits for native acknowledgment and rejects a failed follow-up dispatch", async () => {
+    const { useAgentTaskStore, id } = await createStreamingConversation();
+    useAgentTaskStore.setState((s) => ({
+      conversations: s.conversations.map((c) => ({
+        ...c,
+        status: "idle" as const,
+        messages: c.messages.map((m) => ({ ...m, isStreaming: false })),
+      })),
+    }));
+    let reject!: (error: Error) => void;
+    sendApiAgentMessageMock.mockReturnValueOnce(
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      }),
+    );
+    const settled = vi.fn();
+    const receipt = useAgentTaskStore
+      .getState()
+      .sendMessageWithReceipt(id, "repair", undefined, { requireIdle: true });
+    const result = receipt.then(settled, (error: Error) => error);
+    await vi.waitFor(() =>
+      expect(sendApiAgentMessageMock).toHaveBeenCalledWith(id, "repair", undefined),
+    );
+    expect(settled).not.toHaveBeenCalled();
+    reject(new Error("provider rejected dispatch"));
+    expect(await result).toEqual(new Error("provider rejected dispatch"));
+    const conv = useAgentTaskStore.getState().conversations.find((c) => c.id === id)!;
+    expect(conv.status).toBe("failed");
+    expect(conv.messages.slice(-1)[0]).toMatchObject({ isStreaming: false, turnOutcome: "failed" });
+  });
+
+  it("rejects a repair while an active turn or pending cancellation owns the builder", async () => {
+    const { useAgentTaskStore, id } = await createStreamingConversation();
+    const count = useAgentTaskStore.getState().conversations[0].messages.length;
+    await expect(
+      useAgentTaskStore
+        .getState()
+        .sendMessageWithReceipt(id, "repair", undefined, { requireIdle: true }),
+    ).rejects.toThrow("Wait for the builder");
+    expect(useAgentTaskStore.getState().conversations[0].messages).toHaveLength(count);
+    expect(sendApiAgentMessageMock).not.toHaveBeenCalled();
+    useAgentTaskStore.setState((s) => ({
+      conversations: s.conversations.map((c) => ({
+        ...c,
+        status: "idle" as const,
+        messages: c.messages.map((m) => ({ ...m, isStreaming: false })),
+      })),
+      cancellingConversationIds: new Set([id]),
+    }));
+    await expect(
+      useAgentTaskStore
+        .getState()
+        .sendMessageWithReceipt(id, "repair", undefined, { requireIdle: true }),
+    ).rejects.toThrow("Wait for the builder");
+    expect(sendApiAgentMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates resume startup failures through the receipt without changing ordinary send's void API", async () => {
+    const { useAgentTaskStore, id } = await createStreamingConversation();
+    const { releaseApiConversationListeners } = await import("@/stores/agentTaskStore");
+    releaseApiConversationListeners(id);
+    useAgentTaskStore.setState((s) => ({
+      conversations: s.conversations.map((c) => ({
+        ...c,
+        status: "idle" as const,
+        messages: c.messages.map((m) => ({ ...m, isStreaming: false })),
+      })),
+    }));
+    startApiAgentSessionMock.mockRejectedValueOnce(new Error("resume permission denied"));
+    await expect(
+      useAgentTaskStore
+        .getState()
+        .sendMessageWithReceipt(id, "retry repair", undefined, { requireIdle: true }),
+    ).rejects.toThrow("resume permission denied");
+    expect(useAgentTaskStore.getState().conversations[0].status).toBe("failed");
+    sendApiAgentMessageMock.mockRejectedValueOnce(new Error("ordinary send failed"));
+    expect(useAgentTaskStore.getState().sendMessage(id, "ordinary send")).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(
+        useAgentTaskStore.getState().conversations[0].messages.slice(-1)[0]?.content,
+      ).toContain("ordinary send failed"),
+    );
+  });
+
+  it.each(["completed", "cancelled", "failed"] as const)(
+    "clears terminal approvals and records the %s outcome",
+    async (outcome) => {
+      const { useAgentTaskStore, id } = await createStreamingConversation();
+      const { useAgentApprovalStore } = await import("@/stores/agentApprovalStore");
+      useAgentApprovalStore.setState({
+        permissions: new Map([[id, [{ id: "permission", name: "bash", arguments: "{}" }]]]),
+        edits: new Map([[id, [{ id: "edit", path: "/repo/file", before: "", content: "change" }]]]),
+      });
+      const kind = outcome === "failed" ? "error" : "done";
+      const callback = listenMock.mock.calls.find(
+        ([name]) => name === `api-agent:${kind}:${id}`,
+      )?.[1] as (event: { payload: unknown }) => void;
+      expect(callback).toBeTypeOf("function");
+      callback({
+        payload:
+          outcome === "failed"
+            ? { message: "provider failed" }
+            : { input_tokens: 1, output_tokens: 2, cancelled: outcome === "cancelled" },
+      });
+      expect(useAgentApprovalStore.getState().permissions.has(id)).toBe(false);
+      expect(useAgentApprovalStore.getState().edits.has(id)).toBe(false);
+      expect(
+        useAgentTaskStore
+          .getState()
+          .conversations.find((c) => c.id === id)
+          ?.messages.slice(-1)[0],
+      ).toMatchObject({ isStreaming: false, turnOutcome: outcome });
+    },
+  );
 });

@@ -351,6 +351,7 @@ impl ReasoningAcc {
             };
             let index = obj.get("index").and_then(|i| i.as_i64()).unwrap_or(0);
             let slot = self.entries.entry(index).or_default();
+            let mut displayed_fragments = Vec::new();
             for (key, value) in obj {
                 if REASONING_TEXT_FIELDS.contains(&key.as_str()) {
                     let Some(fragment) = value.as_str() else {
@@ -358,7 +359,11 @@ impl ReasoningAcc {
                     };
                     // "data" is opaque/encrypted — accumulate it, but never
                     // surface it as thinking text.
-                    if key != "data" {
+                    // Some gateways mirror the same delta in text and
+                    // summary. Display that exact fragment once, but keep
+                    // accumulating every provider-owned replay field below.
+                    if key != "data" && !displayed_fragments.contains(&fragment) {
+                        displayed_fragments.push(fragment);
                         fresh.push_str(fragment);
                     }
                     match slot.get_mut(key) {
@@ -391,6 +396,31 @@ impl ReasoningAcc {
                 .collect(),
         )
     }
+}
+
+/// Select visible fragments from this delta only. Replay accumulation remains
+/// independent: dual-field gateways may mirror display text without either
+/// provider-owned representation being safe to discard from later requests.
+fn reasoning_display_fragments(
+    delta: &serde_json::Value,
+    reasoning: &mut ReasoningAcc,
+) -> Vec<String> {
+    let primary = delta
+        .get("reasoning_content")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let detailed = delta
+        .get("reasoning_details")
+        .map(|details| reasoning.absorb(details))
+        .unwrap_or_default();
+    let mut fragments = Vec::new();
+    if !primary.is_empty() {
+        fragments.push(primary.to_string());
+    }
+    if !detailed.is_empty() && detailed != primary {
+        fragments.push(detailed);
+    }
+    fragments
 }
 
 /// Drain the accumulator into a `ToolUseEnd` per call, in `index` order. Pure.
@@ -817,28 +847,9 @@ pub async fn stream_chat_compat(
                             };
 
                             replay.absorb(delta);
-                            if let Some(text) =
-                                delta.get("reasoning_content").and_then(|v| v.as_str())
-                            {
+                            for text in reasoning_display_fragments(delta, &mut reasoning) {
                                 thinking_open = true;
-                                let _ = tx
-                                    .send(StreamChunk::ThinkingDelta {
-                                        text: text.to_string(),
-                                    })
-                                    .await;
-                            }
-                            // Provider-owned reasoning (MiniMax M3
-                            // `reasoning_split`). Accumulated for verbatim
-                            // replay in history, and mirrored to the thinking
-                            // pane so the reasoning stays visible now that it
-                            // no longer arrives inside `content`.
-                            if let Some(details) = delta.get("reasoning_details") {
-                                let fresh = reasoning.absorb(details);
-                                if !fresh.is_empty() {
-                                    thinking_open = true;
-                                    let _ =
-                                        tx.send(StreamChunk::ThinkingDelta { text: fresh }).await;
-                                }
+                                let _ = tx.send(StreamChunk::ThinkingDelta { text }).await;
                             }
 
                             // Text content
@@ -1127,6 +1138,59 @@ mod tests {
         }]));
         assert_eq!(surfaced, "", "opaque blobs are not thinking text");
         assert_eq!(acc.finish()[0]["data"], "AAAA");
+    }
+
+    #[test]
+    fn mirrored_reasoning_fields_display_once_and_preserve_both_replay_forms() {
+        let delta = json!({
+            "reasoning_content": "synthetic fragment",
+            "reasoning_details": [{"index": 0, "type": "reasoning.text", "id": "r1",
+                "text": "synthetic fragment", "summary": "synthetic fragment", "signature": "opaque"}]
+        });
+        let mut reasoning = ReasoningAcc::default();
+        let mut replay = CompatReplay::new("sugar");
+        replay.absorb(&delta);
+        assert_eq!(
+            reasoning_display_fragments(&delta, &mut reasoning),
+            vec!["synthetic fragment"]
+        );
+        assert_eq!(reasoning.finish(), delta["reasoning_details"]);
+        assert_eq!(
+            replay.finish()["reasoning_content"],
+            delta["reasoning_content"]
+        );
+    }
+
+    #[test]
+    fn complementary_reasoning_fields_remain_visible_and_opaque_data_stays_hidden() {
+        let delta = json!({"reasoning_content": "primary fragment",
+            "reasoning_details": [{"index": 0, "text": "distinct detail", "data": "opaque-encrypted"}]
+        });
+        let mut reasoning = ReasoningAcc::default();
+        assert_eq!(
+            reasoning_display_fragments(&delta, &mut reasoning),
+            vec!["primary fragment", "distinct detail"]
+        );
+        assert_eq!(reasoning.finish(), delta["reasoning_details"]);
+    }
+
+    #[test]
+    fn identical_reasoning_in_separate_deltas_is_never_deduplicated() {
+        let delta = json!({"reasoning_content": "repeat ",
+            "reasoning_details": [{"index": 0, "text": "repeat ", "summary": "repeat "}]
+        });
+        let mut reasoning = ReasoningAcc::default();
+        assert_eq!(
+            reasoning_display_fragments(&delta, &mut reasoning),
+            vec!["repeat "]
+        );
+        assert_eq!(
+            reasoning_display_fragments(&delta, &mut reasoning),
+            vec!["repeat "]
+        );
+        let stored = reasoning.finish();
+        assert_eq!(stored[0]["text"], "repeat repeat ");
+        assert_eq!(stored[0]["summary"], "repeat repeat ");
     }
 
     /// The MiniMax contract: the assistant turn replayed to the model carries
