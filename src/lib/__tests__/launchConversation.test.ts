@@ -13,8 +13,9 @@ import type { MemoryEvent } from "@/types/memory";
  * worktree provisioning) is mocked. Asserts:
  *   - worktree mode stamps `conversation.worktree` with
  *     basePath / worktreePath / branch / baseBranch / state:"active".
- *   - provisioning failure falls back to the project root and stamps NO
- *     worktree (the root-cause fix must degrade gracefully).
+ *   - provisioning failure is fail-closed (F1): no conversation is created,
+ *     no agent starts and the draft survives for a retry or explicit Local
+ *     launch.
  */
 
 const listenMock = vi.fn();
@@ -119,7 +120,7 @@ describe("launchConversation — worktree stamping", () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    const dispatched = launchConversation(baseParams({ composerMode: "worktree" }));
+    const dispatched = await launchConversation(baseParams({ composerMode: "worktree" }));
     expect(dispatched).toBe(true);
 
     await vi.waitFor(() => {
@@ -157,12 +158,16 @@ describe("launchConversation — worktree stamping", () => {
 
     expect(useAgentTaskStore.getState().conversations[0]?.worktree?.baseBranch).toBe("HEAD");
     // getGitBranch was cut off with an explicit HEAD base handed to provisioning.
-    expect(createConversationWorktreeMock).toHaveBeenCalledWith(SELECTED_REPO, expect.any(String), "HEAD");
+    expect(createConversationWorktreeMock).toHaveBeenCalledWith(
+      SELECTED_REPO,
+      expect.any(String),
+      "HEAD",
+    );
   });
 });
 
-describe("launchConversation — fallback to project root on provisioning failure", () => {
-  it("runs in the project root and stamps NO worktree when provisioning throws", async () => {
+describe("launchConversation — fail-closed worktree provisioning (F1)", () => {
+  it("starts nothing and creates no conversation when provisioning throws", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     getGitBranchMock.mockResolvedValue("main");
     createConversationWorktreeMock.mockRejectedValue(new Error("worktree add failed"));
@@ -170,45 +175,44 @@ describe("launchConversation — fallback to project root on provisioning failur
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    launchConversation(baseParams({ composerMode: "worktree" }));
+    const launched = await launchConversation(baseParams({ composerMode: "worktree" }));
 
-    await vi.waitFor(() => {
-      expect(useAgentTaskStore.getState().conversations[0]).toBeDefined();
-    });
-
-    const conv = useAgentTaskStore.getState().conversations[0];
+    expect(launched).toBe(false);
     expect(createConversationWorktreeMock).toHaveBeenCalledTimes(1);
-    expect(conv?.projectPath).toBe(SELECTED_REPO);
-    expect(conv?.worktree).toBeUndefined();
+    expect(useAgentTaskStore.getState().conversations).toHaveLength(0);
+    expect(startApiAgentSessionMock).not.toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 
-  // FAULT: the fallback was a console.warn only, so a user who asked for
-  // worktree isolation got the project root with nothing telling them the
-  // isolation they picked had been revoked.
-  it("reports the root fallback through setLaunchError, not just the console", async () => {
+  it("reports an actionable failure and keeps the draft for a retry", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const setLaunchError = vi.fn();
     getGitBranchMock.mockResolvedValue("main");
     createConversationWorktreeMock.mockRejectedValue(new Error("worktree add failed"));
 
+    const { useAgentDraftStore, LAUNCH_DRAFT_KEY } = await import("@/stores/agentDraftStore");
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    launchConversation(baseParams({ composerMode: "worktree", setLaunchError }));
+    useAgentDraftStore.getState().setDraft(LAUNCH_DRAFT_KEY, "keep this prompt");
 
-    await vi.waitFor(() => {
-      expect(useAgentTaskStore.getState().conversations[0]).toBeDefined();
-    });
+    const launched = await launchConversation(
+      baseParams({ composerMode: "worktree", setLaunchError }),
+    );
+
+    expect(launched).toBe(false);
+    expect(useAgentTaskStore.getState().conversations).toHaveLength(0);
 
     const message = setLaunchError.mock.calls
       .map(([arg]) => arg)
       .find((arg): arg is string => typeof arg === "string");
     expect(message).toBeDefined();
-    expect(message).toContain("project root");
+    expect(message).toContain("nothing was launched");
+    expect(message).toContain("Local");
     // The underlying git failure has to survive into the message — "it failed"
     // with no reason is barely better than silence.
     expect(message).toContain("worktree add failed");
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_DRAFT_KEY]).toBe("keep this prompt");
     warnSpy.mockRestore();
   });
 
@@ -220,7 +224,7 @@ describe("launchConversation — fallback to project root on provisioning failur
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    launchConversation(baseParams({ composerMode: "worktree", setLaunchError }));
+    await launchConversation(baseParams({ composerMode: "worktree", setLaunchError }));
 
     await vi.waitFor(() => {
       expect(useAgentTaskStore.getState().conversations[0]?.worktree).toBeDefined();
@@ -296,7 +300,7 @@ describe("launchConversation — P3-S4 draft-tile additions", () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    const ok = launchConversation(
+    const ok = await launchConversation(
       baseParams({
         selectedAgent: "api-claude",
         selectedRepo: makeSshUri("srv-1", "/srv/app"),
@@ -463,7 +467,9 @@ describe("launchConversation — real memory-injection seam", () => {
     expect(prompt).toContain("PROFILE_DIRECTIVE_SENTINEL");
     // The brief lands BEFORE the profile's own directive (memory is context,
     // the profile prompt wins conflicts by living last).
-    expect(prompt.indexOf(MEMORY_MARKER)).toBeLessThan(prompt.indexOf("PROFILE_DIRECTIVE_SENTINEL"));
+    expect(prompt.indexOf(MEMORY_MARKER)).toBeLessThan(
+      prompt.indexOf("PROFILE_DIRECTIVE_SENTINEL"),
+    );
 
     const conv = useAgentTaskStore.getState().conversations[0];
     expect(conv?.systemPromptOverride ?? "").toContain(MEMORY_MARKER);
@@ -511,7 +517,10 @@ describe("launchConversation — real memory-injection seam", () => {
       baseParams({
         selectedAgent: "api-claude",
         selectedRepo: makeSshUri("srv-1", "/srv/app"),
-        profile: profile({ memoryContextEnabled: true, systemPrompt: "PROFILE_DIRECTIVE_SENTINEL" }),
+        profile: profile({
+          memoryContextEnabled: true,
+          systemPrompt: "PROFILE_DIRECTIVE_SENTINEL",
+        }),
       }),
     );
 

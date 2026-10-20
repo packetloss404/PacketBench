@@ -53,10 +53,10 @@ export interface LaunchComposerProps {
   selectedAgent: AgentCli;
   onAgentChange: (agent: AgentCli) => void;
   /** Called when the user submits with the composed text + staged image
-   * attachments. Return true to accept (clears the staged attachments; the
-   * caller clears the launch draft once the async launch succeeds so a
-   * failed launch keeps the prompt for a retry). */
-  onLaunch: (text: string, attachments: ImageAttachment[]) => boolean;
+   * attachments. Return true to accept, or a promise settling the async launch
+   * outcome. Staged attachments are cleared only on success so a failed launch
+   * keeps the full prompt for a retry. */
+  onLaunch: (text: string, attachments: ImageAttachment[]) => boolean | Promise<boolean>;
   selectedModel: string;
   onModelChange: (model: string) => void;
   agentMode?: AgentMode;
@@ -142,7 +142,14 @@ export function Composer(props: ComposerProps) {
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
 
   // ─── Attachment staging (paste / drag-drop) — both variants ──────────
-  const { staged, addFiles, removeStaged, clear: clearStaged } = useAttachmentStaging();
+  const {
+    staged,
+    rejections,
+    addFiles,
+    removeStaged,
+    dismissRejection,
+    clear: clearStaged,
+  } = useAttachmentStaging(draftKey);
   const [dragActive, setDragActive] = useState(false);
   // Enter/leave depth counter so the drag border doesn't flicker off when the
   // pointer crosses into nested children (textarea, staged chips, popovers).
@@ -157,7 +164,7 @@ export function Composer(props: ComposerProps) {
         const item = items[i];
         if (item.kind === "file") {
           const f = item.getAsFile();
-          if (f && f.type.startsWith("image/")) files.push(f);
+          if (f) files.push(f);
         }
       }
       if (files.length > 0) {
@@ -469,10 +476,10 @@ export function Composer(props: ComposerProps) {
   // sentence.
 
   // ─── Submit ───────────────────────────────────────────────────────────
-  // Single-flight guard (launch): onLaunch returns synchronously while async
-  // work (worktree provisioning, conversation creation) is still in flight,
-  // so a second submit can race the first. The 500ms window blocks rapid
-  // Enter/Send mashing without delaying legitimate quick consecutive submits.
+  // Single-flight guard (launch): hold the latch until an async launch settles
+  // (worktree provisioning + conversation creation), so repeated Enter/Send
+  // cannot create a second operation. Legacy synchronous callers still get the
+  // 500ms window that blocks rapid mashing.
   const submitInFlightRef = useRef(false);
   const submitLaunch = useCallback(() => {
     if (!launch || !launchReady) return;
@@ -480,12 +487,27 @@ export function Composer(props: ComposerProps) {
     submitInFlightRef.current = true;
     const toSend = staged.map((s) => s.attachment);
     const accepted = launch.onLaunch(input, toSend);
-    if (accepted) {
-      clearStaged();
+    if (typeof accepted === "boolean") {
+      if (accepted) {
+        clearStaged();
+        window.setTimeout(() => {
+          submitInFlightRef.current = false;
+        }, 500);
+      } else {
+        submitInFlightRef.current = false;
+      }
+      return;
     }
-    window.setTimeout(() => {
-      submitInFlightRef.current = false;
-    }, 500);
+    accepted.then(
+      (ok) => {
+        // F1: keep staged images until the launch actually succeeds.
+        if (ok) clearStaged();
+        submitInFlightRef.current = false;
+      },
+      () => {
+        submitInFlightRef.current = false;
+      },
+    );
   }, [launch, launchReady, staged, input, clearStaged]);
 
   const isActive = conversation?.status === "active";
@@ -579,32 +601,64 @@ export function Composer(props: ComposerProps) {
     </div>
   );
 
-  const stagedChips = staged.length > 0 && (
-    <div className="flex flex-wrap gap-1.5 pb-2">
-      {staged.map((s) => (
-        <div
-          key={s.id}
-          className="flex items-center gap-1.5 rounded-md bg-bg-secondary py-0.5 pl-1 pr-1.5 text-meta text-text-secondary"
-        >
-          <Tooltip content={`${s.name} · ${(s.sizeBytes / 1024).toFixed(1)} KB`}>
-            <span className="flex items-center gap-1.5">
-              <img src={s.previewUrl} alt="" className="h-5 w-5 rounded object-cover" />
-              <span className="max-w-[140px] truncate">{s.name}</span>
-            </span>
-          </Tooltip>
-          <Tooltip content="Remove">
-            <button
-              type="button"
-              aria-label="Remove"
-              onClick={() => removeStaged(s.id)}
-              className="rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-accent-red"
-            >
-              <X size={9} />
-            </button>
-          </Tooltip>
+  const attachmentNotices = rejections.length > 0 && (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex flex-col gap-1 pb-2 text-[11px] text-accent-amber"
+    >
+      {rejections.map((rejection) => (
+        <div key={rejection.id} className="flex items-start gap-2">
+          <span className="flex-1">{rejection.message}</span>
+          <button
+            type="button"
+            aria-label={`Dismiss ${rejection.name} error`}
+            onClick={() => dismissRejection(rejection.id)}
+            className="rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary"
+          >
+            <X size={9} />
+          </button>
         </div>
       ))}
     </div>
+  );
+
+  const stagedChips = staged.length > 0 && (
+    <div className="flex flex-col gap-1 pb-2">
+      <span className="text-[10px] text-text-muted">Kept in this session</span>
+      <div className="flex flex-wrap gap-1.5">
+        {staged.map((s) => (
+          <div
+            key={s.id}
+            className="flex items-center gap-1.5 rounded-md bg-bg-secondary py-0.5 pl-1 pr-1.5 text-meta text-text-secondary"
+          >
+            <Tooltip content={`${s.name} � ${(s.sizeBytes / 1024).toFixed(1)} KB`}>
+              <span className="flex items-center gap-1.5">
+                <img src={s.previewUrl} alt="" className="h-5 w-5 rounded object-cover" />
+                <span className="max-w-[140px] truncate">{s.name}</span>
+              </span>
+            </Tooltip>
+            <Tooltip content="Remove">
+              <button
+                type="button"
+                aria-label={`Remove ${s.name}`}
+                onClick={() => removeStaged(s.id)}
+                className="rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-accent-red"
+              >
+                <X size={9} />
+              </button>
+            </Tooltip>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const attachmentArea = (
+    <>
+      {attachmentNotices}
+      {stagedChips}
+    </>
   );
 
   const textarea = (
@@ -684,7 +738,7 @@ export function Composer(props: ComposerProps) {
                 : "border-bg-border focus-within:border-accent-green/50"
             }`}
           >
-            {stagedChips}
+            {attachmentArea}
             {textarea}
 
             {/* Composer row: posture + turn control left, model/effort/send
@@ -821,7 +875,9 @@ export function Composer(props: ComposerProps) {
           {/* Popovers positioned above the textarea. */}
           {popovers}
 
-          {staged.length > 0 && <div className="px-4 pt-3">{stagedChips}</div>}
+          {(staged.length > 0 || rejections.length > 0) && (
+            <div className="px-4 pt-3">{attachmentArea}</div>
+          )}
 
           {textarea}
 

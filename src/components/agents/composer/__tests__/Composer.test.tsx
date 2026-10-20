@@ -150,7 +150,9 @@ vi.mock("@/lib/tauri", () => ({
   gitSafetyCheck: vi.fn(() => Promise.resolve(null)),
 }));
 
-function renderLaunch(onLaunch: (text: string, attachments: unknown[]) => boolean) {
+function renderLaunch(
+  onLaunch: (text: string, attachments: unknown[]) => boolean | Promise<boolean>,
+) {
   return render(
     <Composer
       variant="launch"
@@ -182,8 +184,8 @@ function makeConversation(id: string): AgentConversation {
   };
 }
 
-function renderChat(conversation: AgentConversation) {
-  return render(
+function chatElement(conversation: AgentConversation) {
+  return (
     <Composer
       variant="chat"
       conversationId={conversation.id}
@@ -194,13 +196,20 @@ function renderChat(conversation: AgentConversation) {
       onSelectMode={vi.fn()}
       onSetApproveWrites={vi.fn()}
       onChangeModel={vi.fn()}
-    />,
+    />
   );
 }
 
-async function stageImage(name = "shot.png") {
+function renderChat(conversation: AgentConversation) {
+  return render(chatElement(conversation));
+}
+
+async function stageImage(
+  name = "shot.png",
+  placeholder: RegExp = /what would you like to work on/i,
+) {
   const file = new File(["image-bytes"], name, { type: "image/png" });
-  const textarea = screen.getByPlaceholderText(/what would you like to work on/i);
+  const textarea = screen.getByPlaceholderText(placeholder);
   fireEvent.paste(textarea, {
     clipboardData: {
       items: [
@@ -217,7 +226,12 @@ async function stageImage(name = "shot.png") {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
-  useAgentDraftStore.setState({ drafts: {} });
+  useAgentDraftStore.setState({
+    drafts: {},
+    stagedAttachments: {},
+    attachmentRejections: {},
+    stagingGenerations: {},
+  });
   mocks.agentTaskState.selectedRepo = "D:\\projects\\PacketBench";
   mocks.agentTaskState.cancellingConversationIds = new Set<string>();
   // jsdom has no layout engine, and `InputPopover` scrolls its highlighted row
@@ -254,18 +268,123 @@ describe("Composer (launch variant) — image attachments", () => {
     expect(mocks.revokeObjectURL).not.toHaveBeenCalled();
   });
 
-  it("revokes preview URLs when attachments are removed and on unmount", async () => {
+  it("keeps staged images while an async launch is pending and clears them on success", async () => {
+    let resolveLaunch!: (accepted: boolean) => void;
+    const onLaunch = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveLaunch = resolve;
+        }),
+    );
+    renderLaunch(onLaunch);
+    await stageImage("pending.png");
+
+    const launch = await screen.findByRole("button", { name: /launch/i });
+    await waitFor(() => expect(launch).not.toBeDisabled());
+    fireEvent.click(launch);
+    fireEvent.click(launch);
+
+    // The single-flight latch holds until the async launch settles.
+    expect(onLaunch).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("pending.png")).toBeInTheDocument();
+
+    resolveLaunch(true);
+    await waitFor(() => expect(screen.queryByText("pending.png")).not.toBeInTheDocument());
+  });
+
+  it("keeps staged images when an async launch fails", async () => {
+    let resolveLaunch!: (accepted: boolean) => void;
+    const onLaunch = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveLaunch = resolve;
+        }),
+    );
+    renderLaunch(onLaunch);
+    await stageImage("retry.png");
+
+    const launch = await screen.findByRole("button", { name: /launch/i });
+    await waitFor(() => expect(launch).not.toBeDisabled());
+    fireEvent.click(launch);
+
+    resolveLaunch(false);
+    await waitFor(() => expect(screen.getByText("retry.png")).toBeInTheDocument());
+
+    // A failed async launch releases the latch so Retry can run.
+    fireEvent.click(launch);
+    expect(onLaunch).toHaveBeenCalledTimes(2);
+    resolveLaunch(true);
+    await waitFor(() => expect(screen.queryByText("retry.png")).not.toBeInTheDocument());
+  });
+
+  it("keeps each conversation's staged images while switching A -> B -> A", async () => {
+    const conversationA = makeConversation("conv-a");
+    const conversationB = makeConversation("conv-b");
+    const { rerender } = renderChat(conversationA);
+
+    await stageImage("only-a.png", /do anything/i);
+    expect(screen.getByText("only-a.png")).toBeInTheDocument();
+
+    rerender(chatElement(conversationB));
+    expect(screen.queryByText("only-a.png")).not.toBeInTheDocument();
+
+    await stageImage("only-b.png", /do anything/i);
+    expect(screen.getByText("only-b.png")).toBeInTheDocument();
+    expect(screen.queryByText("only-a.png")).not.toBeInTheDocument();
+
+    rerender(chatElement(conversationA));
+    expect(screen.getByText("only-a.png")).toBeInTheDocument();
+    expect(screen.queryByText("only-b.png")).not.toBeInTheDocument();
+  });
+
+  it("labels in-memory attachments as kept only for this session", async () => {
+    renderLaunch(vi.fn(() => false));
+    await stageImage();
+
+    expect(screen.getByText("Kept in this session")).toBeInTheDocument();
+  });
+
+  it("shows an unsupported-type rejection instead of silently dropping the file", async () => {
+    renderLaunch(vi.fn(() => false));
+    const file = new File(["plain text"], "notes.txt", { type: "text/plain" });
+    fireEvent.paste(screen.getByPlaceholderText(/what would you like to work on/i), {
+      clipboardData: {
+        items: [{ kind: "file", getAsFile: () => file }],
+      },
+    });
+
+    expect(
+      await screen.findByText("notes.txt was not added: only image files are supported"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an oversized-image rejection with the 5 MiB limit", async () => {
+    renderLaunch(vi.fn(() => false));
+    const file = new File(["image-bytes"], "huge.png", { type: "image/png" });
+    Object.defineProperty(file, "size", { value: 5 * 1024 * 1024 + 1 });
+    fireEvent.paste(screen.getByPlaceholderText(/what would you like to work on/i), {
+      clipboardData: {
+        items: [{ kind: "file", getAsFile: () => file }],
+      },
+    });
+
+    expect(
+      await screen.findByText("huge.png was not added: images must be 5 MiB or smaller"),
+    ).toBeInTheDocument();
+  });
+
+  it("revokes a preview URL when its chip is removed, but retains images across unmount", async () => {
     const onLaunch = vi.fn(() => false);
     const { unmount } = renderLaunch(onLaunch);
 
     await stageImage("remove-me.png");
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: /remove remove-me\.png/i }));
     await waitFor(() => expect(screen.queryByText("remove-me.png")).not.toBeInTheDocument());
     expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:preview-1");
 
     await stageImage("unmount-me.png");
     unmount();
-    expect(mocks.revokeObjectURL).toHaveBeenCalledWith("blob:preview-2");
+    expect(mocks.revokeObjectURL).not.toHaveBeenCalledWith("blob:preview-2");
   });
 
   it("reads and writes its draft in the launch slot of the draft store", () => {

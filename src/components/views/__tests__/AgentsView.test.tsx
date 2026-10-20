@@ -138,6 +138,29 @@ describe("AgentsView", () => {
     expect(getProviderAuthStatus).not.toHaveBeenCalled();
   });
 
+  it("keeps a failed launch alert visible instead of auto-dismissing", () => {
+    vi.useFakeTimers();
+    try {
+      launchConversation.mockImplementationOnce((params: unknown) => {
+        (params as { setLaunchError: (message: string) => void }).setLaunchError(
+          "Worktree provisioning failed — nothing was launched.",
+        );
+        return false;
+      });
+
+      render(<AgentsView />);
+      fireEvent.click(screen.getByRole("button", { name: "Launch agent" }));
+
+      expect(screen.getByRole("alert")).toHaveTextContent("nothing was launched");
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("nothing was launched");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders the selected conversation and inspector in the main window", () => {
     agentState.selectedConversationId = "conv-1";
 

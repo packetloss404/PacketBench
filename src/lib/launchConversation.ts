@@ -8,11 +8,7 @@ import { useProjectHistoryStore } from "@/stores/projectHistoryStore";
 import { useServerStore } from "@/stores/serverStore";
 import { LAUNCH_DRAFT_KEY, useAgentDraftStore } from "@/stores/agentDraftStore";
 import { getDefaultModel } from "@/lib/api-models";
-import {
-  createConversationWorktree,
-  getGitBranch,
-  type ImageAttachment,
-} from "@/lib/tauri";
+import { createConversationWorktree, getGitBranch, type ImageAttachment } from "@/lib/tauri";
 import { generateId } from "@/lib/storage";
 import { isSshUri, parseSshUri } from "@/lib/ssh-uri";
 import type { AgentMode, ComposerMode } from "@/components/agents/composer/utils";
@@ -65,18 +61,17 @@ export interface LaunchConversationParams {
 }
 
 /**
- * Launch an API conversation from the Agents launcher. Returns `true` when the
- * launch was dispatched (the async backend work runs fire-and-forget) and
- * `false` for the synchronous guard failures (empty text, no repo, unresolved
- * SSH target). Mirrors the previous `handleLaunch` contract exactly.
+ * Launch an API conversation from the Agents launcher. Returns `false` for the
+ * synchronous guard failures (empty text, no repo, unresolved SSH target), and
+ * a promise settling `true`/`false` for a dispatched launch so callers can keep
+ * the draft and staged attachments until the outcome is known.
  *
  * tile-program D: when launched in worktree mode, the worktree provenance —
  * including the `baseBranch` that was previously computed then discarded — is
  * stamped onto the conversation's `worktree` field so later phases can land or
- * discard it. On provisioning failure the launch falls back to the project
- * root and no `worktree` field is stamped — and, since that silently revokes
- * the isolation the user asked for, the fallback is reported through
- * `setLaunchError` rather than only to the console.
+ * discard it. A provisioning failure is fail-closed (F1): nothing is launched,
+ * no conversation is created and no root-checkout fallback occurs. The user's
+ * prompt/attachments stay intact for a retry or an explicit Local launch.
  */
 export function launchConversation({
   rawText,
@@ -91,7 +86,7 @@ export function launchConversation({
   postureOverride,
   onCreated,
   onLaunched,
-}: LaunchConversationParams): boolean {
+}: LaunchConversationParams): boolean | Promise<boolean> {
   const text = rawText.trim();
   if (!text) return false;
   if (!selectedRepo) return false;
@@ -111,10 +106,7 @@ export function launchConversation({
   // B9: profile.pinnedModel overrides the launcher selection so the
   // launcher's auto-pick or default doesn't silently switch a known-
   // good model out from under a Reviewer / Scout / pinned profile.
-  const model =
-    profile?.pinnedModel ||
-    selectedModel ||
-    getDefaultModel(selectedAgent);
+  const model = profile?.pinnedModel || selectedModel || getDefaultModel(selectedAgent);
 
   // `getDefaultModel` answers `""` for any row with no bundled models, and that
   // empty string used to travel all the way to the backend, where it becomes a
@@ -133,7 +125,9 @@ export function launchConversation({
   // When the caller supplies an explicit `postureOverride` (draft tile), it
   // wins over the coarse agentMode mapping and can express the full
   // PermissionMode range.
-  const planMode = postureOverride ? postureOverride.planMode : agentMode === "ask" || agentMode === "plan";
+  const planMode = postureOverride
+    ? postureOverride.planMode
+    : agentMode === "ask" || agentMode === "plan";
   const launchPermissionMode: PermissionMode = postureOverride
     ? postureOverride.permissionMode
     : agentMode === "manual"
@@ -151,13 +145,9 @@ export function launchConversation({
 
   if (isSshUri(selectedRepo)) {
     const parsed = parseSshUri(selectedRepo);
-    const server = parsed
-      ? useServerStore.getState().getServer(parsed.serverId)
-      : undefined;
+    const server = parsed ? useServerStore.getState().getServer(parsed.serverId) : undefined;
     if (!parsed || !server) {
-      setLaunchError(
-        "SSH server no longer exists. Pick another from the project dropdown.",
-      );
+      setLaunchError("SSH server no longer exists. Pick another from the project dropdown.");
       return false;
     }
     // Per-session remote path comes from the URI (edited inline in
@@ -167,9 +157,7 @@ export function launchConversation({
         ? parsed.remotePath.trim()
         : server.remotePath?.trim()) ?? "";
     if (!remotePath) {
-      setLaunchError(
-        "Enter a remote project path for this SSH server before launching.",
-      );
+      setLaunchError("Enter a remote project path for this SSH server before launching.");
       return false;
     }
     sshProjectPath = remotePath;
@@ -187,7 +175,7 @@ export function launchConversation({
   }
 
   setLaunchError(null);
-  void (async () => {
+  return (async () => {
     try {
       if (sshTarget && sshProjectPath) {
         // Stamp lastConnectedAt so the recents ordering reflects use.
@@ -213,8 +201,6 @@ export function launchConversation({
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
       } else {
-        useProjectHistoryStore.getState().recordOpen(selectedRepo);
-
         // T3.F: when worktree mode is on, provision a fresh worktree at
         // <projectPath>/.pkt-worktrees/<convId> on a new pkt/<convId>
         // branch off the current HEAD. The conversation then runs inside
@@ -223,8 +209,7 @@ export function launchConversation({
         let explicitConvId: string | undefined;
         // tile-program D: retain the worktree provenance so it can be
         // stamped onto the conversation (the unlandable-work fix). Null
-        // when not in worktree mode or when provisioning fails (root
-        // fallback).
+        // when not in worktree mode; provisioning failure aborts the launch.
         let worktreeMeta: NonNullable<AgentConversation["worktree"]> | null = null;
         if (composerMode === "worktree") {
           const provisionalConvId = generateId("conv");
@@ -247,21 +232,19 @@ export function launchConversation({
               state: "active",
             };
           } catch (e) {
-            // FAULT: this fallback used to be a bare console.warn. The user
-            // picked "worktree" precisely so the agent could not touch the
-            // main checkout — running in the project root instead is the one
-            // outcome they were guarding against, so it has to reach the UI.
-            // The launch still proceeds (a working pane beats no pane), but
-            // `setLaunchError` puts the downgrade in front of them.
+            // F1: fail closed. The user picked "worktree" precisely so the
+            // agent could not touch the main checkout; silently running in the
+            // project root is the one outcome they were guarding against.
+            // Start nothing, create no conversation, and keep the draft and
+            // staged attachments so the user can retry or explicitly choose
+            // Local mode.
             const reason = e instanceof Error ? e.message : String(e);
-            console.warn(
-              "Worktree provisioning failed; falling back to project root:",
-              e,
-            );
+            console.warn("Worktree provisioning failed; launch aborted:", e);
             setLaunchError(
-              `Worktree provisioning failed — this agent is running in the project root, ` +
-                `NOT an isolated worktree. ${reason}`,
+              `Worktree provisioning failed — nothing was launched. ` +
+                `Retry, or switch execution mode to Local to run in the project checkout. ${reason}`,
             );
+            return false;
           }
         }
 
@@ -295,6 +278,7 @@ export function launchConversation({
           }));
           requestConversationSave(convId);
         }
+        useProjectHistoryStore.getState().recordOpen(selectedRepo);
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
@@ -302,11 +286,10 @@ export function launchConversation({
       // Clear the composer only once the launch actually succeeded, so a
       // failed launch keeps the user's typed prompt intact for a retry.
       useAgentDraftStore.getState().clearDraft(LAUNCH_DRAFT_KEY);
+      return true;
     } catch (e) {
-      setLaunchError(
-        e instanceof Error ? e.message : "Failed to launch agent.",
-      );
+      setLaunchError(e instanceof Error ? e.message : "Failed to launch agent.");
+      return false;
     }
   })();
-  return true;
 }

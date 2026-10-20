@@ -94,12 +94,6 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
   }, [selectedConversationId]);
 
   useEffect(() => {
-    if (!launchError) return;
-    const timer = window.setTimeout(() => setLaunchError(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [launchError]);
-
-  useEffect(() => {
     // A pinned provider is the caller's explicit choice — never override it
     // with the credential auto-pick.
     if (pinnedAgent || autoPickStarted.current || selectedConversationId) return;
@@ -216,13 +210,18 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
       )}
 
       {launchError && (
-        <div className="absolute bottom-4 left-1/2 z-40 flex max-w-[480px] -translate-x-1/2 items-center gap-2 rounded border border-accent-red/30 bg-bg-elevated px-3 py-2 text-[11px] text-accent-red shadow-lg">
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="absolute bottom-4 left-1/2 z-40 flex max-w-[480px] -translate-x-1/2 items-start gap-2 rounded border border-accent-red/30 bg-bg-elevated px-3 py-2 text-[11px] text-accent-red shadow-lg"
+        >
           <span className="flex-1">{launchError}</span>
           <button
             type="button"
             onClick={() => setLaunchError(null)}
             className="transition-colors hover:text-text-primary"
             title="Dismiss launch error"
+            aria-label="Dismiss launch error"
           >
             <X size={12} />
           </button>
