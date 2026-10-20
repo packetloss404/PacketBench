@@ -3,7 +3,8 @@
 ## Provider acceptance — October 15
 
 Live evidence and installation scope are in [the current handoff](HANDOFF.md#sugar-default-activation--october-15-2026).
-The local Sugar-default rebuild of 0.14.9 is installed. Sugar passed six-model
+The October 19 Flight rebuild of 0.14.9 supersedes the earlier Sugar-default
+installation; exact installed identity is in the current handoff. Sugar passed six-model
 discovery, streaming, follow-up memory and a synthetic local-file tool/result
 exchange through the actual native adapter. Ollama `qwen3.5:4b` passed its
 earlier provider checks; the packaged helper passed two protocol-12 echo turns.
@@ -123,6 +124,13 @@ and the remaining native/provider and adoption evidence boundary.
       role/provider, billing or adoption matrix. See the dated Flight review
       for exact build and evidence boundaries.
 
+      Installed-app closeout also passed: all 8,683 payload hashes, two bundled
+      sidecar turns, archived-delivery UI, durable local/SSH review/usage state
+      and all nine project-history entries. Test Flights are archived, the
+      disposable SSH server is stopped, and the app is back on the workstation
+      repository. The owner can now dogfood real work; this does not close the
+      broader acceptance/adoption item.
+
 Provider status reconciled: 2026-10-15; loop/graph and Flight reviews: 2026-10-19;
 remaining backlog baseline: 2026-10-06 (dogfooding incomplete)
 
@@ -138,7 +146,7 @@ Priority: **P1** = release blocker, real bug, or major user-facing gap;
 
 **Current direction, 2026-09-24:** no feature expansion. Stabilize and finish
 the existing product paths identified below before resuming expansion plans.
-The owner pinned 0.14.8 to the desktop; 0.14.9 was installed October 6 and its executable hash was reverified October 15. Workspace dogfooding remains incomplete.
+The owner pinned PacketBench to the desktop; the October 19 local 0.14.9 Flight rebuild is installed and its payload/UI/state checks passed. The October 6 tagged build and October 15 Sugar rebuild are historical. Broader Workspace dogfooding remains incomplete.
 On October 6 the owner confirmed they have not dogfooded enough yet. Resume
 with reported defects, prioritizing Workspaces; no feature expansion or
 deployment is requested by the pre-tag review.

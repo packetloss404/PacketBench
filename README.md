@@ -6,7 +6,15 @@
 
 PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, issue tracking, memory, and workspace management into a single native environment. It is built for running real development workflows across multiple agent CLIs without leaving the app.
 
-The local Windows **0.14.9** rebuild installed October 15 uses **Sugar** and
+The local Windows **0.14.9 Flight overhaul** installed October 19 completed
+disposable local and pinned Docker SSH Stop/restart/Resume, review/repair,
+fresh review, delivery and archive/restore walkthroughs. The installed build
+passed payload, sidecar, UI and persisted-state smoke checks and is ready for
+workstation dogfooding. Exact source identity, installation hash and proof limits
+are in the [current handoff](./HANDOFF.md#workstation-dogfood-handoff--october-19-2026).
+This is a local rebuild; it does not replace the existing `v0.14.9` release tag.
+
+The configured default remains **Sugar** and
 its `sugar/conduit` routing alias as the default for new API chats and workflow
 executors. Sugar is preferred when connected; other providers stay selectable.
 Its authenticated live catalog, streaming replies, follow-up memory and tool
@@ -45,10 +53,11 @@ there — not here, and never the generated HTML.
   current owner questions, build evidence, and guardrails.
 - [`ROADMAP.md`](./ROADMAP.md) — current product direction and release path.
 - [`backlog.md`](./backlog.md) — master ledger for outstanding work.
-- [`dev/release-v0.10.3.md`](./dev/release-v0.10.3.md) — immutable tagged-source,
-  gate, artifact, and hash record for `v0.10.3`. Still the newest annotated tag,
-  but no longer current source; `CHANGELOG.md` records 0.11.0 through 0.13.2
-  after it.
+- [`dev/provider-release-0.14.9.md`](./dev/provider-release-0.14.9.md) — the
+  October 6 tagged release. The installed October 19 local rebuild is recorded
+  in [`dev/flight-overhaul-review-2026-10-19.md`](./dev/flight-overhaul-review-2026-10-19.md).
+- [`dev/release-v0.10.3.md`](./dev/release-v0.10.3.md) — historical immutable
+  source, gate and artifact record for `v0.10.3`.
 - [`dev/acceptance.md`](./dev/acceptance.md) — the packaged
   acceptance checklist. Sections 0, 1 and 2 have run against installed 0.13.2;
   sections 3–5 (dictation, analytics, Monitor) have not.
@@ -81,7 +90,7 @@ before any external beta.
 - See the effective raw-terminal shell in each pane header, and get a native
   Claude Code model/context/cost bar without installing a separate statusline
   script or changing global Claude settings
-- Launch and supervise larger units of work from the **Flight Deck** — a single-screen master-detail flight control surface
+- Take a task through brief, run, review, delivery and archive from the **Flight Deck**, with one agent in Assisted mode by default
 - Track issues on a kanban board and send them directly to workspace sessions
 - Connect to remote servers via SSH and run agent sessions over the wire
 - Keep project context close with auto-learning memory, history, and git-host integration (GitHub + self-hosted Gitea/Forgejo)
@@ -93,8 +102,8 @@ before any external beta.
 
 ![PacketBench Agents view with the conversation sidebar and new-agent composer](./docs/reports/visual-audit-2026-07-30/04-agents-empty-1920.png)
 
-| Flight planning and supervised launch                                                                                                                   | CLI clients and installation recovery                                                                                                               |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flight planning and supervised launch                                                                                                                     | CLI clients and installation recovery                                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ![PacketBench Flight launch dialog with planning and execution-supervision controls](./docs/reports/visual-audit-2026-07-30/13-modal-new-flight-1280.png) | ![PacketBench Workspaces and Terminal settings showing detected CLI clients](./docs/reports/visual-audit-2026-07-30/11-settings-cli-clients-1920.png) |
 
 ### Issue board
@@ -131,29 +140,28 @@ PacketBench connects two complementary execution styles.
 streaming, tool calls, permission gating, plans, review, Memory, and worktree
 endings:
 
-| Row                     | Internal id         | Auth                                     |
-| ----------------------- | ------------------- | ---------------------------------------- |
-| Claude Agent SDK (API)  | `api-claude-oauth`  | Anthropic API key in OS keyring          |
-| Claude (API)            | `api-claude`        | Anthropic API key in OS keyring          |
-| OpenAI (API)            | `api-openai`        | `OPENAI_API_KEY` in OS keyring           |
-| OpenAI Agents SDK (API) | `api-openai-agents` | `OPENAI_API_KEY` in OS keyring           |
-| MiniMax (Token Plan)    | `api-minimax`       | API key in OS keyring                    |
-| OpenRouter              | `api-openrouter`    | API key in OS keyring                    |
-| Ollama (Local)          | `api-ollama`        | none — local daemon at `localhost:11434` |
-| Custom endpoint        | `api-custom`        | optional API key; configured OpenAI-compatible URL |
-| Sugar | `api-sugar` | Sugar API key in OS keyring |
-| ClinePass | `api-cline-pass` | Cline API key with Pass subscription |
-| OpenCode Go | `api-opencode-go` | Go subscription API key |
-| Ollama Cloud | `api-ollama-cloud` | Ollama account API key |
-| Google Gemini | `api-google` | Google AI Studio API key |
-| xAI | `api-xai` | xAI API key |
+| Row                     | Internal id         | Auth                                               |
+| ----------------------- | ------------------- | -------------------------------------------------- |
+| Claude Agent SDK (API)  | `api-claude-oauth`  | Anthropic API key in OS keyring                    |
+| Claude (API)            | `api-claude`        | Anthropic API key in OS keyring                    |
+| OpenAI (API)            | `api-openai`        | `OPENAI_API_KEY` in OS keyring                     |
+| OpenAI Agents SDK (API) | `api-openai-agents` | `OPENAI_API_KEY` in OS keyring                     |
+| MiniMax (Token Plan)    | `api-minimax`       | API key in OS keyring                              |
+| OpenRouter              | `api-openrouter`    | API key in OS keyring                              |
+| Ollama (Local)          | `api-ollama`        | none — local daemon at `localhost:11434`           |
+| Custom endpoint         | `api-custom`        | optional API key; configured OpenAI-compatible URL |
+| Sugar                   | `api-sugar`         | Sugar API key in OS keyring                        |
+| ClinePass               | `api-cline-pass`    | Cline API key with Pass subscription               |
+| OpenCode Go             | `api-opencode-go`   | Go subscription API key                            |
+| Ollama Cloud            | `api-ollama-cloud`  | Ollama account API key                             |
+| Google Gemini           | `api-google`        | Google AI Studio API key                           |
+| xAI                     | `api-xai`           | xAI API key                                        |
 
 These six providers have configurable API endpoints and live model discovery.
 Direct Anthropic and OpenAI also fetch current models. Use **Refresh models**
 in Providers & Models or the conversation model picker; existing conversation
 selections are retained. See [provider setup and validation](dev/provider-integrations-2026-10-06.md)
 for local Sugar configuration, plan entitlement limits and runtime details.
-
 
 **Hosted provider rows use API keys.** Ollama is keyless, and Custom endpoints
 can be configured without a key. PacketBench does not offer
@@ -275,12 +283,25 @@ The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that 
 
 ### Flight Deck — Flight Control
 
-- Single-screen master-detail layout: a status-grouped flight list on the left, the selected flight's flight control on the right
+- Start with an objective and acceptance checks; one-agent **Assisted** mode is
+  the default. Workspace, issue and conversation entry points carry their context
+  into the same brief. Compare and cooperative execution are advanced choices.
+- The detail page leads with the next action, blockers and results. Changes,
+  builder-reported checks and independent review share one evidence surface;
+  historical activity and integrations are collapsed.
 - **Plan first** starts a normal read-only agent conversation against the selected target; refine the plan in chat, then apply its latest structured milestones/tasks to the Flight before launching attempts
 - Launch one or more local or SSH agents against isolated worktrees, choosing the provider, model, base path, and branch per target
 - **Attention** grouping automatically surfaces paused, failed, and approval-needed Flights; active path collisions and unpinned SSH targets are blocked before launch
-- Optional **Reviewer Gate** starts one read-only reviewer, enforces its
-  structured verdict, and records any explicit human override
+- **Stop** cancels owned work and retains the worktree. Inspect, Continue
+  preserved work and explicit Discard are separate decisions. Resume preserves
+  file/index state and starts a new owner; previous owners remain in history.
+- **Reviewer Gate** binds its verdict to the reviewed commit and current brief.
+  Send findings starts one repair turn and invalidates the old verdict; obtain a
+  fresh reviewer pass before acceptance. Builder-reported checks remain labelled
+  separately from independently executed verification.
+- **Accept** means ready to deliver. **Land** or **Open PR** records actual
+  delivery. Archive/restore preserves delivery, evidence, owner history and usage;
+  acceptance alone does not mark the Flight delivered.
 - Optional **Cooperative Flight graph** validates task dependencies/ownership,
   launches user-selected ready batches, and serializes accepted work onto an
   isolated Flight integration branch
@@ -290,7 +311,7 @@ The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that 
   recovery/review/graph/routing switches, cost/time/retry/concurrency/root
   limits, action history, and Pause/Resume/Stop
 - Each Attempt tile streams the agent conversation, accepts follow-up turns,
-  exposes review/complete/reject/cancel controls, and can open that same
+  exposes review, recovery and delivery controls, and can open that same
   attempt in Workspace or a read-only Monitor; terminal status, tokens, cost,
   and coordination events persist on the Flight
 - Optional local draft-PR publishing pushes the Attempt branch before worktree cleanup, while SSH worktree cleanup is resolved through the saved Server configuration
@@ -310,6 +331,8 @@ The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that 
 
 - Add and manage remote servers with SSH agent, key, or password authentication
 - Detect installed agent CLIs and create workspaces that run agent sessions over SSH on remote machines
+- Built-in SSH bash execution requires `setsid` on the remote host for supervised
+  cancellation. The live Flight proof covers Linux; Windows SSH remains unverified.
 - Optionally clone a git repo into the remote path when creating a workspace
 - Remote git dashboard with per-file diffs (symlink-confined), staging, commit, and push — with an actionable message on a non-fast-forward push
 - Optional SSH password storage in the OS keyring (under `ssh-<server-id>`); otherwise prompted at connect time and held in memory only. Host-key pinning is enforced when a server's fingerprint is known, with a TOFU `accept-new` fallback for interactive PTY connections
@@ -559,12 +582,14 @@ PacketBench is developed on Windows but is designed to ship on macOS and Linux a
 
 ### Beta Distribution Status
 
-**0.14.8 is a local owner build.** Unsigned Windows NSIS/MSI installers were
-built from `9367b7a1`; the NSIS upgrade and normal startup were verified on
-September 24. It is installed for owner dogfooding. No public release or
-deployment was performed for this build, and the full acceptance matrix is
-not complete. Exact artifact and installed-executable hashes are in the
-[release record](./dev/existing-code-stabilization-2026-09-24.md#windows-build-0148).
+**The October 19 Flight overhaul is installed as a local 0.14.9 rebuild.** Its
+exact source contents were committed as `0b6dbf52`; both Windows installers were
+built, and the NSIS update verified all 8,683 installed payload files. Packaged
+sidecar, normal launch, Flight UI and persisted-state smoke checks passed.
+The October 6 `v0.14.9` tag still identifies the published baseline; no new tag
+or public installer release is implied. Broader acceptance remains open.
+See the [current handoff](./HANDOFF.md#workstation-dogfood-handoff--october-19-2026)
+and [Flight evidence](./dev/flight-overhaul-review-2026-10-19.md).
 
 Windows Authenticode signing, macOS Developer ID signing/notarization, and the
 Tauri v2 auto-updater are planned release-trust gates and are not enabled in the

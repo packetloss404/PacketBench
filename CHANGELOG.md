@@ -7,6 +7,22 @@ For current direction, use [`ROADMAP.md`](./ROADMAP.md). For planning briefs and
 runbooks, use [`dev/README.md`](./dev/README.md). This file is history, not a
 task list.
 
+## 2026-10-19 — Flight overhaul (local 0.14.9 rebuild)
+
+- Made one-agent Assisted the default Flight flow, with contextual briefs,
+  review evidence and explicit delivery before archive.
+- Retained stopped, failed and cancelled worktrees; added explicit recovery
+  decisions and supervised SSH cancellation that drains owned remote processes.
+- Bound reviews to source/brief identity, preserved reviewer and historical-owner
+  usage, bounded retries, and required fresh review after repair.
+- Corrected repair admission, rejected-cleanup state refresh, stale cancellation
+  receipts, clipped menus and project-history preservation.
+- Built both Windows installers and installed through NSIS. All 8,683 payload
+  hashes, two packaged-sidecar turns and installed UI/state smoke checks passed.
+  The full paid local/Docker SSH walkthrough and later installer smoke have
+  separate proof scopes. Source contents: `0b6dbf52`; no new release tag.
+- Validation and limitations: [Flight overhaul evidence](dev/flight-overhaul-review-2026-10-19.md).
+
 ## [0.14.9] - 2026-10-06
 
 - Added configurable Sugar, ClinePass, OpenCode Go, Ollama Cloud, Google Gemini

@@ -660,6 +660,8 @@ uncertain cleanup blocks a replacement owner. Seven focused SSH tests passed,
 including a real `execute_bash` Docker case covering abort, timeout, default
 signal behavior, background commands, preservation and SSH failure
 acknowledgement.
+Built-in remote bash now requires `setsid` and fails explicitly when it is absent;
+this acceptance used Linux SSH and does not validate other remote platforms.
 
 The repeated native SSH Stop occurred 30,734 ms into a command whose child would
 write at 120 seconds. After 125 seconds both owned processes were no longer
@@ -769,9 +771,50 @@ frontend, through build E2. The final installer includes the later SSH catalogue
 rejected-status refresh and cancelled-receipt fixes; these received the source
 and gate coverage above. The installer receives payload-hash, packaged-sidecar,
 normal-launch and persisted-state smoke verification rather than another paid
-walkthrough. This document is frozen before canonical packaging so the manifest
-can identify the exact source snapshot. The installation manifest and final
+walkthrough. The source was frozen before canonical packaging so the manifest
+identifies the exact source snapshot. The later documentation closeout changes
+no application inputs. The installation manifest and final
 launch/state results are linked from the ignored local
 `test-results/acceptance/flight-native-2026-10-19/installer-update.json` record;
 that record, not an older same-version installer, establishes completion of the
 installer update.
+
+### Installed-app smoke and workstation handoff
+
+The October 19 local 0.14.9 update is installed and the final smoke check passed.
+Both NSIS and MSI built successfully; NSIS installation exited 0 and all **8,683**
+installed files match the manifest. Bundled Node is **24.15.0**; the packaged
+sidecar passed two protocol-**12** turns. Installed executable SHA-256:
+`6a69c35cbbdca49d1b09b5076ceb70bd9ad3b86996a2ac2464965e53b2dc55cb`.
+
+The build's exact source contents were subsequently committed as
+`0b6dbf52d2f32fadf190e9b8f88e1c56941a8f2b`. Source SHA-256
+`9d313c532e63e5e9fa80bca2668cf572c132ad22baf0b113886402e4115b2d3a`
+matches the manifest before and after that commit. Documentation-only closeout
+does not require another build. This is a local rebuild of 0.14.9; the existing
+release tag is unchanged.
+
+The installed executable opened a responding native window with the packaged
+sidecar ready. Its archived local result showed the delivered main SHA, passed
+review, usage and Restore action. Independent persisted-state checks confirmed
+both local and SSH delivery records, review fingerprints, reviewer owners and
+usage totals match the completed walkthrough. All seven original and two recent
+project-history paths remain unique with non-regressing timestamps.
+
+All three test Flights are now archived and hidden from the active list. The
+installed app is left open on `D:/projects/PacketBench`; the owned inspection
+workspace was rebound to that repository. Retained worktrees/branches, failed
+attempt evidence and verified Git bundles remain recoverable. The disposable
+SSH container is stopped and its filesystem is preserved. Owned development
+servers are closed. Each desktop burst ended with the control kernel reset;
+desktop control is released.
+
+The canonical manifest and installation evidence live under
+`test-results/acceptance/windows/2026-10-20T01-56-47-983Z/` (UTC timestamp).
+The fixture evidence directory additionally contains `installed-state-proof.json`,
+`installed-app-boot-history-proof.json` and `installed-source-commit.json`.
+These ignored artifacts are local verification records and are not published
+with the source. README and HANDOFF now describe the current build and the
+Assisted brief → review/repair → fresh review → Accept → Land → archive path.
+The workstation is ready for owner dogfooding; the broader proof limits above
+remain open in the single backlog.

@@ -1,11 +1,66 @@
 # PacketBench Handoff
 
-Last reconciled: 2026-10-15 (Sugar defaults, Insights chat and issue investigation; local 0.14.9 rebuild installed)
+Last reconciled: 2026-10-19 (Flight overhaul, local/Docker SSH walkthroughs and installed-app smoke complete; ready for workstation dogfooding)
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
 `docs/handoff.md` and `docs/audit-2026-09-04.md` describe the September audit;
 the current contracts below supersede their older protocol and queue details.
+
+## Workstation dogfood handoff — October 19, 2026
+
+The Flight overhaul is installed as a local **0.14.9** rebuild. Its exact source
+snapshot was subsequently committed as `0b6dbf52d2f32fadf190e9b8f88e1c56941a8f2b`:
+the committed tree's source fingerprint matches the installer manifest. The
+documentation closeout changes no application inputs, so another compilation or
+installation is unnecessary. No new version tag or public installer release is
+created by this handoff. The October 6 `v0.14.9` tag remains the published baseline.
+
+- Installed executable: `%LOCALAPPDATA%/PacketBench/packetbench.exe`, SHA-256
+  `6a69c35cbbdca49d1b09b5076ceb70bd9ad3b86996a2ac2464965e53b2dc55cb`.
+  NSIS exited 0; **8,683 installed files** match the canonical manifest. Bundled
+  Node **24.15.0** and two protocol-**12** sidecar turns passed. Both NSIS and MSI
+  were built; installation was exercised through NSIS.
+- Disposable local and pinned Docker Linux SSH Flights completed Stop during a
+  tool command, restart/Resume, independent changes-requested review, repair,
+  fresh passing review, Accept, Land and archive/restore/rearchive. Independent
+  tests pass 4/4 on each delivered main tree and immutable reviewed commit.
+  File/index preservation, review identity and builder/reviewer usage agree.
+- Final gates: **1,118 native tests**, **3,138 frontend tests in 312 files**,
+  **18 Chromium cases**, Rust check, schema parity, formatting, lint, typecheck,
+  production frontend build and explicit sidecar checks passed. Ten native tests
+  remain intentionally ignored in the normal suite; the separate live-fixture
+  SSH run passed seven focused tests, including actual bash cancellation.
+- The installed app opened normally and showed the archived local delivery,
+  passing review and Restore action. Persisted local/SSH delivery, review owners,
+  usage and all nine project-history entries survived. The full paid walkthrough
+  ran in native debug builds; the final installer received payload, sidecar,
+  UI and persisted-state smoke verification. These scopes are not interchangeable.
+- Cleanup: all three test Flights are archived and hidden from the active list;
+  retained branches/worktrees and verified Git bundles remain as evidence. The
+  owned Docker SSH container is stopped, development servers are closed, and
+  desktop control is released. The installed app is open on `D:/projects/PacketBench`.
+  Existing user projects and provider choices remain available.
+
+For the next real task, use one agent in **Assisted** mode: enter the objective
+and acceptance checks, run, inspect the changes/checks/review, send findings for
+repair when needed, then request a fresh reviewer pass. **Accept** prepares the
+result; **Land** performs delivery. Archive after delivery. Stop retains work;
+Continue preserved work creates a new owner in the same worktree. Record any
+failure's steps, target, expected/actual result and installed hash in `backlog.md`.
+
+The broader provider/WAN/cooperative/PR, role-by-role Stop and adoption matrices
+remain open. Sugar's positive token totals have no configured USD rate; the
+zero-dollar ledger does not establish free usage or verified billing.
+Built-in SSH bash execution requires remote `setsid`; a missing prerequisite
+fails with an explicit error. The live Flight matrix covers Linux SSH.
+
+Durable scope and results: [Flight overhaul evidence](dev/flight-overhaul-review-2026-10-19.md).
+Ignored workstation evidence is under `test-results/acceptance/flight-native-2026-10-19/`.
+The canonical manifest and installation report are under
+`test-results/acceptance/windows/2026-10-20T01-56-47-983Z/` (UTC artifact date).
+`installer-update.json`, `installed-state-proof.json`, `installed-app-boot-history-proof.json`
+and `installed-source-commit.json` link the installed payload to its checks.
 
 ## Sugar default activation — October 15, 2026
 
@@ -281,11 +336,12 @@ reply test is deferred at the user's request pending subscription renewal;
 GUI-to-SSH and wider hardware acceptance remain separate. Historical release
 evidence: `dev/workspace-release-0.14.7.md`.
 
-Current installation and startup evidence is in
-`dev/existing-code-stabilization-2026-09-24.md`, including the executable hash
-and local report paths. It supersedes older installed-version statements.
+Current installation, Flight and startup evidence is in
+`dev/flight-overhaul-review-2026-10-19.md` and the workstation handoff above.
+The September 24 report remains historical; its installed-version statements
+are superseded by this local 0.14.9 rebuild.
 
-1. Resume with the owner's 0.14.8 dogfood feedback. Prioritize Workspace
+1. Resume with the owner's installed 0.14.9 dogfood feedback. Prioritize Workspace
    local/SSH panes, focus/approval ownership, saved layouts and restart,
    Git actions, prompt delivery and restored chats. Record concrete steps,
    expected/actual behavior and the affected version in `backlog.md`.
