@@ -7,6 +7,9 @@ use crate::core::{
     agent_config as core_agent, flight as core_flight, orchestrator as core_orchestrator,
     storage as core_storage, workspace as core_workspace,
 };
+use crate::commands::draft_assets::{
+    DraftAssetMeta, ReadDraftAssetDto, StageDraftAssetInput, StagedDraftAssetDto,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub enum WorkspaceAgentSlotDto {
@@ -3131,7 +3134,10 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(WorkspaceStatusDto);
     push_decl!(ThemeDto);
     push_decl!(GridPositionDto);
-    push_decl!(TerminalShellSelectionDto);
+    push_decl!(StageDraftAssetInput);
+    push_decl!(StagedDraftAssetDto);
+    push_decl!(ReadDraftAssetDto);
+    push_decl!(DraftAssetMeta);    push_decl!(TerminalShellSelectionDto);
     push_decl!(WorkspacePaneDto);
     push_decl!(GithubRepoDto);
     push_decl!(ExecutionTargetRefDto);

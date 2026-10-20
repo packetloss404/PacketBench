@@ -15,6 +15,7 @@ pub mod conversations;
 pub mod crashes;
 pub mod custom_agents;
 pub mod dictation;
+pub mod draft_assets;
 pub mod error_classifier;
 pub mod flight_attempts;
 pub mod flight_review;

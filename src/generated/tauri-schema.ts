@@ -8,6 +8,14 @@ export type ThemeDto = "dark" | "light";
 
 export type GridPositionDto = { row: number, col: number, };
 
+export type StageDraftAssetInput = { name: string, mimeType: string, dataBase64: string, };
+
+export type StagedDraftAssetDto = { attachmentId: string, name: string, mimeType: string, byteLength: number, sha256: string, };
+
+export type ReadDraftAssetDto = { mediaType: string, dataBase64: string, };
+
+export type DraftAssetMeta = { attachmentId: string, name: string, mimeType: string, byteLength: number, sha256: string, createdAtMs: bigint, };
+
 export type TerminalShellSelectionDto = { profile: string, executable?: string, args?: Array<string>, wslDistro?: string, };
 
 export type WorkspacePaneDto = { id: string, agentId: WorkspaceAgentSlotDto, sessionId: string | null, gridPosition: GridPositionDto, accentColor?: string, pinnedCommands?: Array<string>, taskId?: string, flightId?: string, agentConfigId?: string, initialPrompt?: string, overrideCommand?: string, overrideArgs?: Array<string>,

@@ -43,6 +43,7 @@ import {
   type ComposerMode,
 } from "./utils";
 import { buildComposerKeyboardHandler } from "./buildComposerKeyboardHandler";
+import { stagedToImageAttachments, stagedAttachmentsReadySync } from "@/lib/agentDraftAssets";
 import { buildSlashItems, templatesToSlashDefs, type SlashItem } from "./slashCommandSource";
 import { slashCommandHandlers } from "./slashCommandHandlers";
 
@@ -150,6 +151,15 @@ export function Composer(props: ComposerProps) {
     dismissRejection,
     clear: clearStaged,
   } = useAttachmentStaging(draftKey);
+
+  // Backfill session previews for durable refs hydrated from the v2 envelope.
+  useEffect(() => {
+    for (const item of staged) {
+      if (item.ref && !item.previewUrl) {
+        void useAgentDraftStore.getState().loadStagedPreview(draftKey, item.id);
+      }
+    }
+  }, [staged, draftKey]);
   const [dragActive, setDragActive] = useState(false);
   // Enter/leave depth counter so the drag border doesn't flicker off when the
   // pointer crosses into nested children (textarea, staged chips, popovers).
@@ -479,26 +489,27 @@ export function Composer(props: ComposerProps) {
   // sentence.
 
   // ─── Submit ───────────────────────────────────────────────────────────
-  // Single-flight guard (launch): hold the latch until an async launch settles
-  // (worktree provisioning + conversation creation), so repeated Enter/Send
-  // cannot create a second operation. Legacy synchronous callers still get the
-  // 500ms window that blocks rapid mashing.
   const submitInFlightRef = useRef(false);
-  const submitLaunch = useCallback(() => {
+  const submitLaunch = useCallback(async () => {
     if (!launch || !launchReady) return;
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
-    const toSend = staged.map((s) => s.attachment);
+    const syncToSend = stagedAttachmentsReadySync(staged);
+    let toSend: ImageAttachment[];
+    if (syncToSend) {
+      toSend = syncToSend;
+    } else {
+      try {
+        toSend = await stagedToImageAttachments(staged);
+      } catch {
+        submitInFlightRef.current = false;
+        return;
+      }
+    }
     const accepted = launch.onLaunch(input, toSend);
     if (typeof accepted === "boolean") {
-      if (accepted) {
-        clearStaged();
-        window.setTimeout(() => {
-          submitInFlightRef.current = false;
-        }, 500);
-      } else {
-        submitInFlightRef.current = false;
-      }
+      if (accepted) clearStaged();
+      else submitInFlightRef.current = false;
       return;
     }
     accepted.then(
@@ -515,7 +526,7 @@ export function Composer(props: ComposerProps) {
 
   const isActive = conversation?.status === "active";
 
-  const submitChat = useCallback(() => {
+  const submitChat = useCallback(async () => {
     if (!isChat || !conversation) return;
     const text = input.trim();
     if (!text) return;
@@ -525,7 +536,9 @@ export function Composer(props: ComposerProps) {
     // instead of silently dropping them.
     const streaming =
       conversation.status === "active" && conversation.messages.some((m) => m.isStreaming);
-    const attachments = streaming ? null : staged.map((s) => s.attachment);
+    const syncAttachments = streaming ? null : stagedAttachmentsReadySync(staged);
+    const attachments =
+      syncAttachments ?? (streaming ? null : await stagedToImageAttachments(staged));
     setInput("");
     mention.close();
     slash.close();

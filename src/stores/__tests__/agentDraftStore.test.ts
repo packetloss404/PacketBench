@@ -1,7 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { LAUNCH_DRAFT_KEY, useAgentDraftStore, type StagedAttachment } from "../agentDraftStore";
 
+vi.mock("@/lib/tauri", () => ({
+  readAgentDraftAsset: vi.fn().mockResolvedValue({
+    mediaType: "image/png",
+    dataBase64: "eA==",
+  }),
+  releaseAgentDraftAsset: vi.fn().mockResolvedValue(undefined),
+}));
+
 const STORAGE_KEY = "packetbench:agent-drafts";
+const V2_STORAGE_KEY = "packetbench:agent-drafts-v2";
 
 const store = () => useAgentDraftStore.getState();
 
@@ -12,6 +21,20 @@ function stagedAttachment(id: string): StagedAttachment {
     sizeBytes: 12,
     attachment: { media_type: "image/png", data_base64: id },
     previewUrl: `blob:${id}`,
+  };
+}
+
+function stagedWithRef(id: string): StagedAttachment {
+  return {
+    ...stagedAttachment(id),
+    ref: {
+      attachmentId: `asset-${id}`,
+      name: `${id}.png`,
+      mimeType: "image/png",
+      byteLength: 12,
+      sha256: "abc",
+      state: "ready" as const,
+    },
   };
 }
 
@@ -141,6 +164,89 @@ describe("agentDraftStore", () => {
 
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
     expect(persisted).toEqual({ conv_a: "text only" });
+  });
+
+  it("persists only metadata refs in the v2 envelope — never bytes or blob URLs", () => {
+    store().appendStagedAttachment("conv_a", 0, stagedWithRef("a1"));
+    store().setDraft("conv_a", "text only");
+
+    const envelope = JSON.parse(localStorage.getItem(V2_STORAGE_KEY) ?? "{}");
+    expect(envelope.version).toBe(2);
+    expect(envelope.drafts).toEqual({ conv_a: "text only" });
+    expect(envelope.attachments.conv_a).toEqual([
+      {
+        attachmentId: "asset-a1",
+        name: "a1.png",
+        mimeType: "image/png",
+        byteLength: 12,
+        sha256: "abc",
+        state: "ready",
+      },
+    ]);
+    // No base64 or object URL ever touches the envelope.
+    expect(JSON.stringify(envelope)).not.toContain("blob:");
+    expect(JSON.stringify(envelope)).not.toContain("data:image");
+  });
+
+  it("hydrates durable refs back as staged chips without bytes", async () => {
+    localStorage.setItem(
+      V2_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        drafts: { conv_a: "persisted text" },
+        attachments: {
+          conv_a: [
+            {
+              attachmentId: "asset-h1",
+              name: "h1.png",
+              mimeType: "image/png",
+              byteLength: 12,
+              sha256: "def",
+              state: "ready",
+            },
+          ],
+        },
+        updatedAt: 1,
+      }),
+    );
+    vi.resetModules();
+    const { useAgentDraftStore: fresh } = await import("../agentDraftStore");
+    const freshStore = fresh.getState();
+    expect(freshStore.drafts.conv_a).toBe("persisted text");
+    expect(freshStore.stagedAttachments.conv_a).toHaveLength(1);
+    expect(freshStore.stagedAttachments.conv_a[0]).toMatchObject({
+      name: "h1.png",
+      previewUrl: "",
+      ref: { attachmentId: "asset-h1", state: "ready" },
+    });
+    // Hydrated refs carry no in-memory base64.
+    expect(freshStore.stagedAttachments.conv_a[0].attachment.data_base64).toBe("");
+  });
+
+  it("migrates the v1 text map when no v2 envelope exists", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ conv_a: "legacy text" }));
+    vi.resetModules();
+    const { useAgentDraftStore: fresh } = await import("../agentDraftStore");
+    expect(fresh.getState().drafts.conv_a).toBe("legacy text");
+    expect(fresh.getState().stagedAttachments).toEqual({});
+  });
+
+  it("loads a durable ref's preview on demand", async () => {
+    store().appendStagedAttachment("conv_a", 0, { ...stagedWithRef("a1"), previewUrl: "" });
+    const tauri = await import("@/lib/tauri");
+    vi.mocked(tauri.readAgentDraftAsset).mockResolvedValue({
+      mediaType: "image/png",
+      dataBase64: "aGVsbG8=",
+    });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:loaded"),
+    });
+
+    await store().loadStagedPreview("conv_a", "a1");
+
+    expect(tauri.readAgentDraftAsset).toHaveBeenCalledWith("asset-a1");
+    expect(store().stagedAttachments.conv_a[0].previewUrl).toBe("blob:loaded");
   });
 
   it("ignores non-string / empty persisted entries on load", async () => {

@@ -47,10 +47,15 @@ read-only transcript revision, changes no files and starts no turn; parent
 deletion retains a checkout still referenced by a fork. F4 core followed: late
 auth probes no longer overwrite explicit provider/model/profile choices, and a
 slow launch no longer steals conversation selection; single-flight holds through
-settlement. Flight-owned mutation gating, old message-link resolution, native
-restart evidence, F2B durable assets and the F4 phase surface remain open.
-Focused Vitest, TypeScript and ESLint pass. No build or installation was run and
-native Windows acceptance (including real IME confirmation) remains open.
+settlement. F2B core landed: a backend draft-asset service (stage/read/release/
+gc) persists image bytes in app-data with type/size/digest validation, the
+frontend keeps only metadata refs in a versioned v2 envelope and re-reads
+previews after restart, and the legacy v1 text map still migrates. Flight-owned
+mutation gating, old message-link resolution, submission/checkpoint pins,
+scheduled GC/capacity, H2 typed-image replay, native restart evidence and the
+F4 phase surface remain open. Focused Vitest, Rust unit tests, TypeScript and
+ESLint pass. No build or installation was run and native Windows acceptance
+(including real IME confirmation and paste/drop restart) remains open.
 
 ## Later agent and experience review — October 19, 2026
 

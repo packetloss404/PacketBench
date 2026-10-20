@@ -30,8 +30,9 @@ function rejectionFor(file: File, reason: string): AttachmentRejection {
 
 /** Draft-bound image staging. The complete text/image draft is owned by
  * `agentDraftStore` per conversation or launch key, so unmounting or switching
- * A -> B -> A neither loses A's images nor leaks them into B. Bytes are
- * in-memory only for this slice; the UI labels them "Kept in this session". */
+ * A -> B -> A neither loses A's images nor leaks them into B. Bytes are staged
+ * to the backend draft-asset store (F2B) so refs survive restart; only the
+ * transient preview object URL is session-scoped. */
 export function useAttachmentStaging(draftKey: string): UseAttachmentStagingResult {
   const staged = useAgentDraftStore((state) => state.stagedAttachments[draftKey] ?? EMPTY_STAGED);
   const rejections = useAgentDraftStore(
@@ -55,12 +56,32 @@ export function useAttachmentStaging(draftKey: string): UseAttachmentStagingResu
         }
         try {
           const attachment = await fileToImageAttachment(file);
+          let ref: StagedAttachment["ref"];
+          try {
+            const { stageAgentDraftAsset } = await import("@/lib/tauri");
+            const stagedAsset = await stageAgentDraftAsset({
+              name: file.name || "pasted-image",
+              mimeType: file.type,
+              dataBase64: attachment.data_base64,
+            });
+            ref = {
+              attachmentId: stagedAsset.attachmentId,
+              name: stagedAsset.name,
+              mimeType: stagedAsset.mimeType,
+              byteLength: stagedAsset.byteLength,
+              sha256: stagedAsset.sha256,
+              state: "ready",
+            };
+          } catch {
+            // Offline/unavailable backend: fall back to session-only staging.
+          }
           accepted.push({
             id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             name: file.name || "pasted-image",
             sizeBytes: file.size,
             attachment,
             previewUrl: URL.createObjectURL(file),
+            ref,
           });
         } catch {
           rejected.push(rejectionFor(file, "the image could not be read"));

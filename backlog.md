@@ -41,13 +41,20 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       failure aborts it. A read-only **View previous history** surface exposes
       saved revisions, and parent deletion retains a checkout still referenced by
       a fork. Focused store/UI tests and TypeScript/ESLint pass.
+- [x] **P1 — Durable draft assets (F2B core).** A backend draft-asset service
+      (`stage`/`read`/`release`/`gc`) stores image bytes in app-data with
+      type/size/base64/digest validation and no caller-controlled paths. The
+      frontend persists a versioned `agent-drafts-v2` envelope holding only
+      metadata refs (never bytes or blob URLs), hydrates refs back as staged
+      chips, re-reads previews on demand after restart, and materializes wire
+      attachments from refs when in-memory bytes are gone. The legacy v1 text
+      map still migrates. Rust unit tests and focused Vitest pass.
+- [ ] **P1 — Draft asset residuals and runtime pins.** Submission/checkpoint
+      ownership refs, scheduled GC cadence and capacity limits, H2 typed-image
+      replay validation, and native WebView paste/drop/restart evidence.
 - [ ] **P1 — F3 residuals.** Prevent transcript mutation/fork on Flight-owned
       builder/reviewer conversations; resolve old message links to saved
       revisions; native local/SSH restart evidence for lineage and revisions.
-- [ ] **P1 — Durable draft assets (F2B).** Add the backend asset
-      service/migration and submission/checkpoint pins; verify failed-send,
-      restart and capacity behavior. No crash-durable attachment claim until
-      this lands.
 - [ ] **P1 — Comfortable, adjustable reading defaults (V1–V3).** Raise shared
       typography, repair informative-text contrast in both themes, and add
       persisted reading base/App scale plus a separately owned terminal size

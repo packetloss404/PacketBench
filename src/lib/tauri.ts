@@ -3,6 +3,9 @@ import type {
   AgentConfigDto,
   PersistedStateDto,
   PersistedUiStateDto,
+  ReadDraftAssetDto,
+  StageDraftAssetInput,
+  StagedDraftAssetDto,
   WorkspaceDto,
 } from "@/generated/tauri-schema";
 import type { AgentConfig } from "@/types/agent";
@@ -4110,6 +4113,25 @@ export async function closeApiAgentSession(sessionId: string): Promise<void> {
 // API Agent: persistence + utilities
 export async function saveConversation(id: string, data: string): Promise<void> {
   return invoke("save_conversation", { id, data });
+}
+
+// Draft attachment assets (F2B)
+export async function stageAgentDraftAsset(
+  input: StageDraftAssetInput,
+): Promise<StagedDraftAssetDto> {
+  return invoke<StagedDraftAssetDto>("stage_agent_draft_asset", { input });
+}
+
+export async function readAgentDraftAsset(attachmentId: string): Promise<ReadDraftAssetDto> {
+  return invoke<ReadDraftAssetDto>("read_agent_draft_asset", { attachmentId });
+}
+
+export async function releaseAgentDraftAsset(attachmentId: string): Promise<void> {
+  return invoke("release_agent_draft_asset", { attachmentId });
+}
+
+export async function gcAgentDraftAssets(keep: string[]): Promise<number> {
+  return invoke<number>("gc_agent_draft_assets", { keep });
 }
 
 export async function loadConversations(): Promise<string[]> {

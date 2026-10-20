@@ -585,6 +585,11 @@ pub fn run() {
             commands::conversations::load_conversations,
             commands::conversations::delete_conversation_file,
             commands::conversations::export_conversation_markdown,
+            // Draft attachment assets (F2B)
+            commands::draft_assets::stage_agent_draft_asset,
+            commands::draft_assets::read_agent_draft_asset,
+            commands::draft_assets::release_agent_draft_asset,
+            commands::draft_assets::gc_agent_draft_assets,
             // Slash commands (user-defined)
             commands::slash_commands::list_slash_commands,
             // Skills (Claude-Code-style ~/.claude/skills/<name>/SKILL.md)
