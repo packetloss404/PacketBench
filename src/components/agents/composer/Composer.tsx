@@ -308,6 +308,12 @@ export function Composer(props: ComposerProps) {
   // ─── Chat prompt history (↑/↓ recall) ────────────────────────────────
   const [historyIndex, setHistoryIndex] = useState(-1);
   const historySourceRef = useRef<"user" | "history">("user");
+  const historyDraftRef = useRef("");
+  useEffect(() => {
+    setHistoryIndex(-1);
+    historySourceRef.current = "user";
+    historyDraftRef.current = "";
+  }, [draftKey]);
   const messages = useMemo(() => conversation?.messages ?? [], [conversation?.messages]);
   const turnCount = useMemo(() => messages.filter((m) => m.role === "user").length, [messages]);
 
@@ -317,11 +323,8 @@ export function Composer(props: ComposerProps) {
       setInput(value);
       const caret = e.target.selectionStart ?? value.length;
       detectTriggers(value, caret);
-      if (historySourceRef.current === "history") {
-        historySourceRef.current = "user";
-      } else if (historyIndex !== -1) {
-        setHistoryIndex(-1);
-      }
+      if (historyIndex !== -1) setHistoryIndex(-1);
+      historySourceRef.current = "user";
     },
     [setInput, detectTriggers, historyIndex],
   );
@@ -527,6 +530,7 @@ export function Composer(props: ComposerProps) {
     mention.close();
     slash.close();
     setHistoryIndex(-1);
+    historySourceRef.current = "user";
     if (!streaming) clearStaged();
     chatActions.sendMessage(
       conversationId,
@@ -564,7 +568,9 @@ export function Composer(props: ComposerProps) {
     slashItems,
     pickSlashItem,
     submit,
-    history: isChat ? { messages, historyIndex, setHistoryIndex, historySourceRef } : undefined,
+    history: isChat
+      ? { messages, historyIndex, setHistoryIndex, historySourceRef, historyDraftRef }
+      : undefined,
     cycleMode: isChat ? props.onCycleMode : undefined,
   });
 

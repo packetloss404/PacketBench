@@ -10,6 +10,8 @@ export interface ComposerHistoryDeps {
   historyIndex: number;
   setHistoryIndex: (n: number) => void;
   historySourceRef: { current: "user" | "history" };
+  /** Draft that existed before the first ArrowUp recall. */
+  historyDraftRef: { current: string };
 }
 
 export interface ComposerKeyboardDeps {
@@ -65,6 +67,12 @@ export function buildComposerKeyboardHandler(deps: ComposerKeyboardDeps) {
   } = deps;
 
   return function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // IME candidate confirmation owns Enter/Escape/arrows. Acting on them here
+    // sends partial text or mutates history while the composition is live.
+    const native = e.nativeEvent as (KeyboardEvent & { isComposing?: boolean }) | undefined;
+    const synthetic = e as { isComposing?: boolean };
+    if (synthetic.isComposing || native?.isComposing || e.keyCode === 229) return;
+
     if (slash.state.active) {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -133,20 +141,18 @@ export function buildComposerKeyboardHandler(deps: ComposerKeyboardDeps) {
       !e.metaKey &&
       !e.shiftKey
     ) {
-      const { messages, historyIndex, setHistoryIndex, historySourceRef } =
+      const { messages, historyIndex, setHistoryIndex, historySourceRef, historyDraftRef } =
         history;
       const ta = textareaRef.current;
-      const caretAtStart =
-        !!ta && ta.selectionStart === 0 && ta.selectionEnd === 0;
+      const caretAtStart = !!ta && ta.selectionStart === 0 && ta.selectionEnd === 0;
       const eligible = input.length === 0 || caretAtStart;
-      const userMsgs = messages
-        .filter((m) => m.role === "user")
-        .map((m) => m.content);
+      const userMsgs = messages.filter((m) => m.role === "user").map((m) => m.content);
 
       if (e.key === "ArrowUp" && eligible && userMsgs.length > 0) {
         const nextIdx = Math.min(userMsgs.length - 1, historyIndex + 1);
         if (nextIdx !== historyIndex) {
           e.preventDefault();
+          if (historyIndex < 0) historyDraftRef.current = input;
           setHistoryIndex(nextIdx);
           historySourceRef.current = "history";
           setInput(userMsgs[userMsgs.length - 1 - nextIdx]);
@@ -154,18 +160,26 @@ export function buildComposerKeyboardHandler(deps: ComposerKeyboardDeps) {
         return;
       }
       if (e.key === "ArrowDown" && historyIndex >= 0) {
+        // A user edit after recall switches ownership back to the draft; do
+        // not overwrite that deliberate edit with older history.
+        if (historySourceRef.current !== "history") return;
         e.preventDefault();
         const nextIdx = historyIndex - 1;
         setHistoryIndex(nextIdx);
-        historySourceRef.current = "history";
-        setInput(nextIdx < 0 ? "" : userMsgs[userMsgs.length - 1 - nextIdx]);
+        if (nextIdx < 0) {
+          historySourceRef.current = "user";
+          setInput(historyDraftRef.current);
+        } else {
+          historySourceRef.current = "history";
+          setInput(userMsgs[userMsgs.length - 1 - nextIdx]);
+        }
         return;
       }
       if (e.key === "Escape" && historyIndex >= 0) {
         e.preventDefault();
         setHistoryIndex(-1);
-        historySourceRef.current = "history";
-        setInput("");
+        historySourceRef.current = "user";
+        setInput(historyDraftRef.current);
         return;
       }
     }

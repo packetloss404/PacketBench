@@ -14,6 +14,8 @@ function makeEvent(
     altKey: boolean;
     metaKey: boolean;
     shiftKey: boolean;
+    isComposing: boolean;
+    keyCode: number;
   }> = {},
 ) {
   const preventDefault = vi.fn();
@@ -24,14 +26,20 @@ function makeEvent(
     altKey: opts.altKey ?? false,
     metaKey: opts.metaKey ?? false,
     shiftKey: opts.shiftKey ?? false,
+    keyCode: opts.keyCode ?? 0,
+    nativeEvent: { isComposing: opts.isComposing ?? false },
     preventDefault,
   } as unknown as KeyEvent;
   return { e, preventDefault };
 }
 
-function makeMatcher(
-  state: Partial<Deps["mention"]["state"]> = {},
-): Deps["mention"] {
+function textareaAtStart(): Deps["textareaRef"] {
+  return {
+    current: { selectionStart: 0, selectionEnd: 0 } as HTMLTextAreaElement,
+  };
+}
+
+function makeMatcher(state: Partial<Deps["mention"]["state"]> = {}): Deps["mention"] {
   return {
     state: {
       active: false,
@@ -70,6 +78,7 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
       historyIndex: -1,
       setHistoryIndex: vi.fn(),
       historySourceRef: { current: "user" as const },
+      historyDraftRef: { current: "" },
     },
     cycleMode: vi.fn(),
     ...overrides,
@@ -84,6 +93,24 @@ describe("buildComposerKeyboardHandler", () => {
     handler(e);
     expect(deps.submit).toHaveBeenCalledTimes(1);
     expect(preventDefault).toHaveBeenCalled();
+  });
+
+  it("ignores Enter while an IME composition is active", () => {
+    const deps = makeDeps();
+    const handler = buildComposerKeyboardHandler(deps);
+    const { e, preventDefault } = makeEvent("Enter", { isComposing: true });
+    handler(e);
+    expect(deps.submit).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("ignores the legacy keyCode 229 composition event", () => {
+    const deps = makeDeps();
+    const handler = buildComposerKeyboardHandler(deps);
+    const { e, preventDefault } = makeEvent("Enter", { keyCode: 229 });
+    handler(e);
+    expect(deps.submit).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("Ctrl+Enter submits", () => {
@@ -259,6 +286,7 @@ describe("buildComposerKeyboardHandler", () => {
           historyIndex: -1,
           setHistoryIndex,
           historySourceRef: { current: "user" as const },
+          historyDraftRef: { current: "" },
         },
       });
       const handler = buildComposerKeyboardHandler(deps);
@@ -267,6 +295,92 @@ describe("buildComposerKeyboardHandler", () => {
       expect(preventDefault).toHaveBeenCalled();
       expect(setHistoryIndex).toHaveBeenCalledWith(0);
       expect(setInput).toHaveBeenCalledWith("second");
+    });
+
+    it("ArrowDown past the newest entry restores the pre-history draft", () => {
+      const setInput = vi.fn();
+      const setHistoryIndex = vi.fn();
+      const historyDraftRef = { current: "" };
+      const historySourceRef: { current: "user" | "history" } = { current: "user" };
+      const upDeps = makeDeps({
+        input: "my multiline\ndraft",
+        setInput,
+        textareaRef: textareaAtStart(),
+        history: {
+          messages,
+          historyIndex: -1,
+          setHistoryIndex,
+          historySourceRef,
+          historyDraftRef,
+        },
+      });
+      buildComposerKeyboardHandler(upDeps)(makeEvent("ArrowUp").e);
+
+      expect(historyDraftRef.current).toBe("my multiline\ndraft");
+      expect(setInput).toHaveBeenLastCalledWith("second");
+
+      historySourceRef.current = "history";
+      const downDeps = makeDeps({
+        input: "second",
+        setInput,
+        history: {
+          messages,
+          historyIndex: 0,
+          setHistoryIndex,
+          historySourceRef,
+          historyDraftRef,
+        },
+      });
+      const { e } = makeEvent("ArrowDown");
+      buildComposerKeyboardHandler(downDeps)(e);
+
+      expect(setInput).toHaveBeenLastCalledWith("my multiline\ndraft");
+      expect(setHistoryIndex).toHaveBeenLastCalledWith(-1);
+      expect(historySourceRef.current).toBe("user");
+    });
+
+    it("Escape leaves history and restores the pre-history draft", () => {
+      const setInput = vi.fn();
+      const historySourceRef: { current: "user" | "history" } = { current: "history" };
+      const deps = makeDeps({
+        input: "second",
+        setInput,
+        history: {
+          messages,
+          historyIndex: 0,
+          setHistoryIndex: vi.fn(),
+          historySourceRef,
+          historyDraftRef: { current: "kept draft" },
+        },
+      });
+
+      buildComposerKeyboardHandler(deps)(makeEvent("Escape").e);
+
+      expect(setInput).toHaveBeenCalledWith("kept draft");
+      expect(historySourceRef.current).toBe("user");
+    });
+
+    it("does not overwrite a deliberate edit after recalling history", () => {
+      const setInput = vi.fn();
+      const setHistoryIndex = vi.fn();
+      const deps = makeDeps({
+        input: "edited recall",
+        setInput,
+        history: {
+          messages,
+          historyIndex: 0,
+          setHistoryIndex,
+          historySourceRef: { current: "user" as const },
+          historyDraftRef: { current: "original" },
+        },
+      });
+
+      const { e, preventDefault } = makeEvent("ArrowDown");
+      buildComposerKeyboardHandler(deps)(e);
+
+      expect(setInput).not.toHaveBeenCalled();
+      expect(setHistoryIndex).not.toHaveBeenCalled();
+      expect(preventDefault).not.toHaveBeenCalled();
     });
 
     it("ArrowUp does nothing without history deps (launch variant)", () => {

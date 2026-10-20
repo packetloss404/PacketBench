@@ -39,9 +39,12 @@ no conversation, no root fallback) and the draft plus staged images survive for
 Retry or an explicit Local launch. F2A followed: staged images are scoped per
 conversation/launch draft in memory, late decodes are generation-fenced, and
 type/size/read rejections are visible with a session-only disclosure. Text
-persistence is unchanged. Focused Vitest, TypeScript and ESLint pass. No build
-or installation was run and native Windows acceptance remains open; F2B durable
-assets are not implemented.
+persistence is unchanged. F8 landed next: IME composition now suppresses
+composer shortcuts, history recall restores the pre-recall draft, and a
+deliberate edit after recall is not overwritten. Focused Vitest, TypeScript and
+ESLint pass. No build or installation was run and native Windows acceptance
+(including real IME confirmation) remains open; F2B durable assets are not
+implemented.
 
 ## Later agent and experience review — October 19, 2026
 

@@ -395,6 +395,39 @@ describe("Composer (launch variant) — image attachments", () => {
   });
 });
 
+describe("Composer (chat variant) — history recall", () => {
+  it("restores the draft when leaving history without an edit", async () => {
+    const conversation: AgentConversation = {
+      ...makeConversation("conv-history"),
+      messages: [
+        { id: "m1", role: "user", content: "first", timestamp: 1 },
+        { id: "m2", role: "assistant", content: "reply", timestamp: 2 },
+        { id: "m3", role: "user", content: "second", timestamp: 3 },
+      ],
+    };
+    renderChat(conversation);
+    const textarea = screen.getByPlaceholderText(/do anything/i) as HTMLTextAreaElement;
+
+    fireEvent.change(textarea, { target: { value: "my draft" } });
+    textarea.setSelectionRange(0, 0);
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    expect(textarea.value).toBe("second");
+
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    expect(textarea.value).toBe("my draft");
+  });
+
+  it("does not submit while an IME composition is active", async () => {
+    renderChat(makeConversation("conv-ime"));
+    const textarea = screen.getByPlaceholderText(/do anything/i);
+    fireEvent.change(textarea, { target: { value: "partial" } });
+
+    fireEvent.keyDown(textarea, { key: "Enter", isComposing: true });
+
+    expect(mocks.agentTaskState.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe("Composer (chat variant) — per-conversation drafts + send (protected)", () => {
   it("persists the draft under the conversation id with no bleed", () => {
     useAgentDraftStore.getState().setDraft("conv-other", "other draft");

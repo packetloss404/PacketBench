@@ -45,10 +45,16 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       persisted reading base/App scale plus a separately owned terminal size
       control. Keep Inter initially; verify native
       Windows/Mac and enlarged text before claiming experience parity.
-- [ ] **P2 — Agents continuity and composition (F4–F8).** Preserve explicit
+- [x] **P1 — Safe IME and history input (F8).** The composer now ignores
+      Enter/Escape/arrows and shortcuts while an IME composition is active
+      (`isComposing` and legacy keyCode 229). Leaving history restores the
+      pre-recall draft; a deliberate edit after recall is never overwritten by
+      ArrowDown; history resets on conversation switch. Focused handler and
+      Composer tests pass; native IME confirmation remains unverified.
+- [ ] **P2 — Agents continuity and composition (F4–F7).** Preserve explicit
       provider choices during probes, hold launch single-flight through startup,
-      group stable base projects, resolve exact attention blockers over review,
-      retain search/reading position and protect IME/history drafts.
+      group stable base projects, resolve exact attention blockers over review
+      and retain search/reading position.
 - [ ] **P2 — Shared GUI accessibility and layout (V4–V8).** Unify scalable
       theme-aware code, name icon actions, reveal keyboard focus, enlarge targets,
       resize/read sidebar titles and adapt narrow execution context. Use source
