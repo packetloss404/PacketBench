@@ -53,7 +53,9 @@ frontend keeps only metadata refs in a versioned v2 envelope and re-reads
 previews after restart, and the legacy v1 text map still migrates. F5 core
 followed: worktree and root conversations group under their base project,
 two repositories on one SSH host are labelled repo @ server, and New opens
-against the selected conversation's base project. Flight-owned mutation
+against the selected conversation's base project. Review fixes: draft-asset
+I/O runs on a blocking worker thread, and discard/archive cleanup now retains a
+checkout that a live fork still references. Flight-owned mutation
 gating, old message-link resolution, submission/checkpoint pins,
 scheduled GC/capacity, H2 typed-image replay, native restart evidence and the
 F4 phase surface remain open. Focused Vitest, Rust unit tests, TypeScript and

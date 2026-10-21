@@ -1402,6 +1402,17 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     // lives on the remote host) — nothing to discard locally.
     if (!wt || conv.sshTarget) return;
 
+    // F3: a fork borrows this checkout. Never remove a directory a live child
+    // still points at; the caller gets an actionable refusal.
+    const dependentForks = get().conversations.filter(
+      (c) => c.id !== id && c.lineage?.parentConversationId === id,
+    );
+    if (dependentForks.length > 0) {
+      throw new Error(
+        `${dependentForks.length} fork(s) still reference this checkout; discard or move them first.`,
+      );
+    }
+
     // Dirty-check the worktree BEFORE removing anything. A dirty tree may only
     // be discarded with explicit confirmation; otherwise refuse and leave the
     // tree untouched (Bravo's safety spec — no non-Discard path removes a

@@ -273,6 +273,16 @@ export async function archiveWorkspaceWithFanout(
       continue;
     }
 
+    // F3: a fork borrows this checkout. Keep the tree while any live child
+    // still references it, even when the cleanup predicate says "safe".
+    const hasDependentForks = useAgentTaskStore
+      .getState()
+      .conversations.some((c) => c.id !== convId && c.lineage?.parentConversationId === convId);
+    if (hasDependentForks) {
+      keptWorktreeConversationIds.push(convId);
+      continue;
+    }
+
     let facts: WorktreeCleanupFacts;
     try {
       facts = await gather({

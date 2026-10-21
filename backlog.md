@@ -40,15 +40,17 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       through the selected turn, changes no files and starts no turn; Stop
       failure aborts it. A read-only **View previous history** surface exposes
       saved revisions, and parent deletion retains a checkout still referenced by
-      a fork. Focused store/UI tests and TypeScript/ESLint pass.
+      a fork. Discard and archive cleanup apply the same dependent-fork guard.
+      Focused store/UI tests and TypeScript/ESLint pass.
 - [x] **P1 — Durable draft assets (F2B core).** A backend draft-asset service
       (`stage`/`read`/`release`/`gc`) stores image bytes in app-data with
       type/size/base64/digest validation and no caller-controlled paths. The
       frontend persists a versioned `agent-drafts-v2` envelope holding only
       metadata refs (never bytes or blob URLs), hydrates refs back as staged
       chips, re-reads previews on demand after restart, and materializes wire
-      attachments from refs when in-memory bytes are gone. The legacy v1 text
-      map still migrates. Rust unit tests and focused Vitest pass.
+      attachments from refs when in-memory bytes are gone. Staging/read/gc run
+      on a blocking worker thread, never the Tauri main thread. The legacy v1
+      text map still migrates. Rust unit tests and focused Vitest pass.
 - [ ] **P1 — Draft asset residuals and runtime pins.** Submission/checkpoint
       ownership refs, scheduled GC cadence and capacity limits, H2 typed-image
       replay validation, and native WebView paste/drop/restart evidence.

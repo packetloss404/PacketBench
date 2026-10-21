@@ -208,6 +208,37 @@ describe("archive fan-out — worktree cleanup policy", () => {
     expect(c?.worktree?.state).toBe("landed");
   });
 
+  it("only-when-safe: keeps a checkout still referenced by a fork", async () => {
+    useAgentTaskStore.setState({
+      conversations: [
+        conv({ id: "conv-1", worktree: activeWorktree() }),
+        conv({
+          id: "fork-1",
+          projectPath: "/proj/.pkt-worktrees/conv-1",
+          lineage: {
+            parentConversationId: "conv-1",
+            forkedFromMessageId: "msg-1",
+            kind: "fork",
+            contextMode: "semantic",
+            createdAt: 1,
+          },
+        }),
+      ],
+    });
+    useWorkspaceStore.setState({ workspaces: [workspace("ws-1", [conversationPane("conv-1")])] });
+
+    const result = await archiveWorkspaceWithFanout("ws-1", {
+      policy: "only-when-safe",
+      gatherFacts: safeFacts,
+    });
+
+    expect(removeConversationWorktreeMock).not.toHaveBeenCalled();
+    expect(result?.keptWorktreeConversationIds).toEqual(["conv-1"]);
+    expect(result?.cleanedWorktreeConversationIds).toEqual([]);
+    const c = useAgentTaskStore.getState().conversations.find((x) => x.id === "conv-1");
+    expect(c?.worktree?.state).toBe("active");
+  });
+
   it("never: a provably-safe tree is still KEPT", async () => {
     useAgentTaskStore.setState({ conversations: [conv({ id: "conv-1", worktree: activeWorktree() })] });
     useWorkspaceStore.setState({ workspaces: [workspace("ws-1", [conversationPane("conv-1")])] });

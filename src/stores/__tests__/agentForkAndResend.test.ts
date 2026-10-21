@@ -243,6 +243,30 @@ describe("agentTaskStore.forkConversation", () => {
     expect(outcome?.error).toContain("fork(s) still reference");
     expect(removeWorktree).not.toHaveBeenCalled();
   });
+
+  it("refuses to discard a checkout while a fork references it", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const tauri = await import("@/lib/tauri");
+    const removeWorktree = vi.mocked(tauri.removeConversationWorktree);
+    seedConversation(
+      useAgentTaskStore,
+      conversation({
+        worktree: {
+          basePath: "D:/projects/example",
+          worktreePath: "D:/projects/example/.pkt-worktrees/conv-A",
+          branch: "pkt/conv-A",
+          createdAt: 1,
+          state: "active",
+        },
+      }),
+    );
+    await useAgentTaskStore.getState().forkConversation("conv-A", "msg-3", "edited");
+
+    await expect(
+      useAgentTaskStore.getState().discardConversationWorktree("conv-A"),
+    ).rejects.toThrow(/fork\(s\) still reference/);
+    expect(removeWorktree).not.toHaveBeenCalled();
+  });
 });
 
 describe("agentTaskStore.rewindConversation", () => {

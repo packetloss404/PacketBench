@@ -95,7 +95,8 @@ fn bin_path(dir: &Path, id: &str) -> PathBuf {
 }
 
 fn write_meta(dir: &Path, meta: &DraftAssetMeta) -> Result<(), String> {
-    let json = serde_json::to_string(meta).map_err(|e| format!("Failed to serialize metadata: {e}"))?;
+    let json =
+        serde_json::to_string(meta).map_err(|e| format!("Failed to serialize metadata: {e}"))?;
     fs::write(meta_path(dir, &meta.attachment_id), json)
         .map_err(|e| format!("Failed to write attachment metadata: {e}"))
 }
@@ -184,24 +185,48 @@ fn gc_in(dir: &Path, keep: &HashSet<String>) -> Result<usize, String> {
 }
 
 #[tauri::command]
-pub fn stage_agent_draft_asset(input: StageDraftAssetInput) -> Result<StagedDraftAssetDto, String> {
-    stage_in(&assets_dir()?, &input)
+pub async fn stage_agent_draft_asset(
+    input: StageDraftAssetInput,
+) -> Result<StagedDraftAssetDto, String> {
+    // base64 decode + SHA-256 + up to 5 MiB write must not run on the Tauri
+    // main thread (same freeze class as the statusline/analytics commands).
+    tokio::task::spawn_blocking(move || {
+        let dir = assets_dir()?;
+        stage_in(&dir, &input)
+    })
+    .await
+    .map_err(|e| format!("Draft asset staging task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn read_agent_draft_asset(attachment_id: String) -> Result<ReadDraftAssetDto, String> {
-    read_in(&assets_dir()?, &attachment_id)
+pub async fn read_agent_draft_asset(attachment_id: String) -> Result<ReadDraftAssetDto, String> {
+    tokio::task::spawn_blocking(move || {
+        let dir = assets_dir()?;
+        read_in(&dir, &attachment_id)
+    })
+    .await
+    .map_err(|e| format!("Draft asset read task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn release_agent_draft_asset(attachment_id: String) -> Result<(), String> {
-    release_in(&assets_dir()?, &attachment_id)
+pub async fn release_agent_draft_asset(attachment_id: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let dir = assets_dir()?;
+        release_in(&dir, &attachment_id)
+    })
+    .await
+    .map_err(|e| format!("Draft asset release task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn gc_agent_draft_assets(keep: Vec<String>) -> Result<usize, String> {
-    let keep: HashSet<String> = keep.into_iter().collect();
-    gc_in(&assets_dir()?, &keep)
+pub async fn gc_agent_draft_assets(keep: Vec<String>) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        let keep: HashSet<String> = keep.into_iter().collect();
+        let dir = assets_dir()?;
+        gc_in(&dir, &keep)
+    })
+    .await
+    .map_err(|e| format!("Draft asset gc task failed: {e}"))?
 }
 
 #[cfg(test)]
@@ -284,7 +309,9 @@ mod tests {
         .unwrap();
         // Truncate the bytes behind the metadata's back.
         fs::write(bin_path(&dir, &staged.attachment_id), vec![9u8; 8]).unwrap();
-        assert!(read_in(&dir, &staged.attachment_id).unwrap_err().contains("digest"));
+        assert!(read_in(&dir, &staged.attachment_id)
+            .unwrap_err()
+            .contains("digest"));
         fs::remove_dir_all(&dir).ok();
     }
 
