@@ -23,6 +23,13 @@ pub fn default_base_url(provider: &str) -> Result<&'static str, String> {
 
 pub fn resolve(provider: &str) -> Result<String, String> {
     let default = default_base_url(provider)?;
+    if provider == "sugar" {
+        if let Ok(raw) = std::env::var("SUGAR_TASK_API_ROOT") {
+            if !raw.trim().is_empty() {
+                return task_bridge_base_url(&raw);
+            }
+        }
+    }
     Ok(super::storage::load_named_provider_base_url(provider)
         .unwrap_or_else(|| default.to_string()))
 }
@@ -47,5 +54,51 @@ pub fn go_protocol(model: &str) -> GoProtocol {
         GoProtocol::Responses
     } else {
         GoProtocol::Chat
+    }
+}
+
+/// Explicit per-process bridge connection. Saved endpoints and keyring credentials stay intact.
+fn task_bridge_base_url(raw: &str) -> Result<String, String> {
+    let invalid = || {
+        "SUGAR_TASK_API_ROOT must be the loopback API root printed by Sugar's task bridge."
+            .to_string()
+    };
+    let url = reqwest::Url::parse(raw).map_err(|_| invalid())?;
+    let parts: Vec<_> = url.path().split('/').collect();
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port().unwrap_or(0) <= 3050
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || parts.len() != 5
+        || parts[1] != "task"
+        || parts[3] != "api"
+        || parts[4] != "v1"
+        || uuid::Uuid::parse_str(parts[2])
+            .map(|id| id.get_version_num() != 4)
+            .unwrap_or(true)
+        || url.as_str() != raw
+    {
+        return Err(invalid());
+    }
+    Ok(url.to_string())
+}
+
+#[cfg(test)]
+mod task_bridge_tests {
+    use super::*;
+    #[test]
+    fn accepts_only_the_explicit_local_task_bridge() {
+        let root = "http://127.0.0.1:3218/task/36dcc4a4-e386-4b1a-882c-dfb58d68a20c/api/v1";
+        assert_eq!(task_bridge_base_url(root).unwrap(), root);
+        for invalid in [
+            root.replace("127.0.0.1", "example.com"),
+            root.replace("3218", "3000"),
+            format!("{root}?key=secret"),
+        ] {
+            assert!(task_bridge_base_url(&invalid).is_err());
+        }
     }
 }

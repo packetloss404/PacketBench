@@ -142,3 +142,58 @@ async fn sugar_live_packetbench_acceptance() {
     assert!(final_turn.text.contains(&value));
     println!("Sugar native local-file tool and result round-trip: passed");
 }
+
+#[tokio::test]
+#[ignore = "Uses live Sugar and writes only the explicitly supplied task fixture"]
+async fn sugar_live_coding_task() {
+    assert_eq!(
+        std::env::var("PACKETBENCH_LIVE_SUGAR_TEST").as_deref(),
+        Ok("1")
+    );
+    assert!(std::env::var("SUGAR_TASK_API_ROOT")
+        .unwrap()
+        .contains("/task/"));
+    let root = std::path::PathBuf::from(
+        std::env::var("PACKETBENCH_TASK_FIXTURE").expect("explicit fixture required"),
+    );
+    assert!(root.join("acceptance.mjs").is_file());
+    let key = crate::commands::api_keys::load_api_key("sugar")
+        .expect("Connect Sugar in Packetbench first");
+    let tools = vec![ToolDefinition {
+        name: "write_duration".into(),
+        description: "Write duration.mjs in the isolated coding-task checkout. Supply the complete JavaScript module as content.".into(),
+        parameters: json!({"type":"object","properties":{"content":{"type":"string"}},"required":["content"]}),
+    }];
+    let mut messages=vec![user("Implement and export parseDuration(input) in duration.mjs. Convert nonnegative decimal values followed by ms, s, m, h into milliseconds. Trim outer whitespace. Return null for non-string input, invalid syntax, negatives, or non-finite values. Use a fully anchored expression and finite-number check. Call write_duration with the entire module; do not change acceptance.mjs. Then finish.")];
+    let mut wrote = false;
+    for _ in 0..4 {
+        let turn = live_turn(&key, messages.clone(), tools.clone()).await;
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            content: MessageContent::Blocks(turn.blocks),
+        });
+        if turn.calls.is_empty() {
+            assert!(wrote, "model did not write the task change");
+            return;
+        }
+        for call in turn.calls {
+            assert_eq!(call.name, "write_duration");
+            let content = call
+                .arguments
+                .get("content")
+                .and_then(|value| value.as_str())
+                .expect("module content");
+            std::fs::write(root.join("duration.mjs"), content).unwrap();
+            wrote = true;
+            messages.push(ChatMessage {
+                role: ChatRole::Tool,
+                content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                    tool_call_id: call.id,
+                    content: "duration.mjs written".into(),
+                    is_error: false,
+                }]),
+            });
+        }
+    }
+    panic!("coding task exceeded its bounded tool rounds");
+}
