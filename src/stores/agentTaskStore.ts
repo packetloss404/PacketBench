@@ -1722,8 +1722,6 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       // worktree. Dropping these means child deletion cannot remove the
       // parent's directory.
       worktree: undefined,
-      mcpTrustSnapshot: undefined,
-      mcpSources: undefined,
       createdAt: now,
       updatedAt: now,
     };

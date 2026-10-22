@@ -127,6 +127,22 @@ describe("agentTaskStore.forkConversation", () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const parent = conversation({
       resumeToken: "stale-token",
+      mcpTrustSnapshot: [
+        {
+          schemaVersion: 1,
+          serverId: "srv-fs",
+          serverName: "filesystem",
+          workspacePath: "D:/projects/example",
+          allowReads: true,
+          allowWrites: false,
+          allowNetwork: false,
+          allowedRoots: ["D:/projects/example"],
+          allowedToolNames: ["read_file"],
+          denialFloors: [],
+          revision: 1,
+          updatedAt: 1,
+        },
+      ],
       worktree: {
         basePath: "D:/projects/example",
         worktreePath: "D:/projects/example/.pkt-worktrees/conv-A",
@@ -165,6 +181,9 @@ describe("agentTaskStore.forkConversation", () => {
     expect(child!.worktree).toBeUndefined();
     expect(child!.resumeToken).toBeUndefined();
     expect(child!.sessionId).toBeNull();
+    // F3/D3: the child keeps the parent's frozen MCP authority so a fork can
+    // never silently gain servers trusted after the parent started.
+    expect(child!.mcpTrustSnapshot).toEqual(parent.mcpTrustSnapshot);
   });
 
   it("does not start anything for whitespace-only content", async () => {
