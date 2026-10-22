@@ -101,6 +101,25 @@ fn write_meta(dir: &Path, meta: &DraftAssetMeta) -> Result<(), String> {
         .map_err(|e| format!("Failed to write attachment metadata: {e}"))
 }
 
+/// Content sniffing for the image formats the composer accepts. The declared
+/// MIME is only a hint; the stored type is derived from the bytes so a caller
+/// cannot label arbitrary content as an image.
+fn detect_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    None
+}
+
 fn stage_in(dir: &Path, input: &StageDraftAssetInput) -> Result<StagedDraftAssetDto, String> {
     if !input.mime_type.starts_with("image/") {
         return Err("Only image attachments are supported".to_string());
@@ -114,13 +133,16 @@ fn stage_in(dir: &Path, input: &StageDraftAssetInput) -> Result<StagedDraftAsset
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err("Image must be 5 MiB or smaller".to_string());
     }
+    let detected = detect_image_mime(&bytes)
+        .ok_or_else(|| "Unsupported image content".to_string())?
+        .to_string();
 
     let attachment_id = Uuid::new_v4().to_string();
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let meta = DraftAssetMeta {
         attachment_id: attachment_id.clone(),
         name: input.name.clone(),
-        mime_type: input.mime_type.clone(),
+        mime_type: detected,
         byte_length: bytes.len(),
         sha256: sha256.clone(),
         created_at_ms: now_ms(),
@@ -238,8 +260,10 @@ mod tests {
         std::env::temp_dir().join(format!("packetbench-draft-assets-test-{id}"))
     }
 
-    fn base64_bytes(prefix: u8) -> String {
-        BASE64.encode(vec![prefix; 64])
+    fn png_base64(seed: u8) -> String {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        bytes.extend(std::iter::repeat(seed).take(56));
+        BASE64.encode(bytes)
     }
 
     #[test]
@@ -249,7 +273,7 @@ mod tests {
         let input = StageDraftAssetInput {
             name: "shot.png".into(),
             mime_type: "image/png".into(),
-            data_base64: base64_bytes(1),
+            data_base64: png_base64(1),
         };
         let staged = stage_in(&dir, &input).unwrap();
         assert!(staged.attachment_id.len() > 0);
@@ -286,11 +310,45 @@ mod tests {
             &StageDraftAssetInput {
                 name: "notes.txt".into(),
                 mime_type: "text/plain".into(),
-                data_base64: base64_bytes(2),
+                data_base64: png_base64(2),
             },
         )
         .unwrap_err();
         assert!(err.contains("Only image"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_content_that_is_not_a_known_image() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let err = stage_in(
+            &dir,
+            &StageDraftAssetInput {
+                name: "fake.png".into(),
+                mime_type: "image/png".into(),
+                data_base64: BASE64.encode(vec![0u8; 32]),
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("Unsupported image content"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stores_the_detected_type_not_the_declared_one() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let staged = stage_in(
+            &dir,
+            &StageDraftAssetInput {
+                name: "mislabeled.jpg".into(),
+                mime_type: "image/jpeg".into(),
+                data_base64: png_base64(7),
+            },
+        )
+        .unwrap();
+        assert_eq!(staged.mime_type, "image/png");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -303,7 +361,7 @@ mod tests {
             &StageDraftAssetInput {
                 name: "a.png".into(),
                 mime_type: "image/png".into(),
-                data_base64: base64_bytes(3),
+                data_base64: png_base64(3),
             },
         )
         .unwrap();
@@ -324,7 +382,7 @@ mod tests {
             &StageDraftAssetInput {
                 name: "a.png".into(),
                 mime_type: "image/png".into(),
-                data_base64: base64_bytes(4),
+                data_base64: png_base64(4),
             },
         )
         .unwrap();
@@ -333,7 +391,7 @@ mod tests {
             &StageDraftAssetInput {
                 name: "b.png".into(),
                 mime_type: "image/png".into(),
-                data_base64: base64_bytes(5),
+                data_base64: png_base64(5),
             },
         )
         .unwrap();
