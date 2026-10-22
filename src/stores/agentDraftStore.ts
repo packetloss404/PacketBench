@@ -83,6 +83,9 @@ async function releaseAsset(attachmentId: string | undefined): Promise<void> {
  */
 export const LAUNCH_DRAFT_KEY = "__launch__";
 
+/** Aggregate cap for one draft's staged images (implementation default). */
+export const MAX_DRAFT_BYTES = 20 * 1024 * 1024;
+
 interface AgentDraftStore {
   /** conversationId -> in-progress composer text */
   drafts: Record<string, string>;
@@ -246,6 +249,13 @@ export const useAgentDraftStore = create<AgentDraftStore>((set, get) => ({
 
   appendStagedAttachment: (conversationId, expectedGeneration, attachment) => {
     if ((get().stagingGenerations[conversationId] ?? 0) !== expectedGeneration) {
+      revokePreviewUrl(attachment.previewUrl);
+      void releaseAsset(attachment.ref?.attachmentId);
+      return false;
+    }
+    const existing = get().stagedAttachments[conversationId] ?? [];
+    const totalBytes = existing.reduce((sum, item) => sum + item.sizeBytes, 0);
+    if (totalBytes + attachment.sizeBytes > MAX_DRAFT_BYTES) {
       revokePreviewUrl(attachment.previewUrl);
       void releaseAsset(attachment.ref?.attachmentId);
       return false;

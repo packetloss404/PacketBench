@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import {
+  MAX_DRAFT_BYTES,
   useAgentDraftStore,
   type AttachmentRejection,
   type StagedAttachment,
@@ -44,6 +45,10 @@ export function useAttachmentStaging(draftKey: string): UseAttachmentStagingResu
       const generation = useAgentDraftStore.getState().stagingGenerations[draftKey] ?? 0;
       const accepted: StagedAttachment[] = [];
       const rejected: AttachmentRejection[] = [];
+      let projectedBytes = (useAgentDraftStore.getState().stagedAttachments[draftKey] ?? []).reduce(
+        (sum, item) => sum + item.sizeBytes,
+        0,
+      );
 
       for (const file of files) {
         if (!file.type.startsWith("image/")) {
@@ -54,6 +59,11 @@ export function useAttachmentStaging(draftKey: string): UseAttachmentStagingResu
           rejected.push(rejectionFor(file, "images must be 5 MiB or smaller"));
           continue;
         }
+        if (projectedBytes + file.size > MAX_DRAFT_BYTES) {
+          rejected.push(rejectionFor(file, "the draft is limited to 20 MiB of images"));
+          continue;
+        }
+        projectedBytes += file.size;
         try {
           const attachment = await fileToImageAttachment(file);
           let ref: StagedAttachment["ref"];

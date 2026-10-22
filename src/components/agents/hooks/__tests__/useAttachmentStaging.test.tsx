@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useAgentDraftStore } from "@/stores/agentDraftStore";
+import { useAgentDraftStore, MAX_DRAFT_BYTES } from "@/stores/agentDraftStore";
 import { useAttachmentStaging, type UseAttachmentStagingResult } from "../useAttachmentStaging";
 
 vi.mock("@/lib/tauri", () => ({
@@ -59,6 +59,31 @@ describe("useAttachmentStaging — durable staging (F2B)", () => {
     expect(JSON.stringify(localStorage.getItem("packetbench:agent-drafts-v2"))).not.toContain(
       "data:image",
     );
+  });
+
+  it("rejects an image that would exceed the per-draft cap", async () => {
+    useAgentDraftStore.setState({
+      stagedAttachments: {
+        "conv-1": [
+          {
+            id: "big",
+            name: "big.png",
+            sizeBytes: MAX_DRAFT_BYTES - 1,
+            attachment: { media_type: "image/png", data_base64: "x" },
+            previewUrl: "blob:big",
+          },
+        ],
+      },
+    });
+    render(<Harness />);
+
+    await act(async () => {
+      await latest!.addFiles([new File(["ab"], "extra.png", { type: "image/png" })]);
+    });
+
+    const rejections = useAgentDraftStore.getState().attachmentRejections["conv-1"];
+    expect(rejections?.[0]?.message).toContain("20 MiB");
+    expect(useAgentDraftStore.getState().stagedAttachments["conv-1"]).toHaveLength(1);
   });
 
   it("falls back to session-only staging when the backend is unavailable", async () => {

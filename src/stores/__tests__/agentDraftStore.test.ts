@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   gcOrphanDraftAssets,
   LAUNCH_DRAFT_KEY,
+  MAX_DRAFT_BYTES,
   useAgentDraftStore,
   type StagedAttachment,
 } from "../agentDraftStore";
@@ -261,6 +262,16 @@ describe("agentDraftStore", () => {
     vi.resetModules();
     const { useAgentDraftStore: fresh } = await import("../agentDraftStore");
     expect(fresh.getState().drafts).toEqual({ good: "keep me" });
+  });
+
+  it("enforces the aggregate per-draft cap", () => {
+    store().appendStagedAttachment("conv_a", 0, {
+      ...stagedAttachment("big"),
+      sizeBytes: MAX_DRAFT_BYTES - 1,
+    });
+    const added = store().appendStagedAttachment("conv_a", 0, stagedAttachment("over"));
+    expect(added).toBe(false);
+    expect(store().stagedAttachments.conv_a.map((a) => a.id)).toEqual(["big"]);
   });
 
   it("never overwrites a newer envelope schema", async () => {
