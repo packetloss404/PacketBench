@@ -25,6 +25,7 @@ import { startBoundedAutonomyRuntime } from "@/stores/boundedAutonomyRuntime";
 import { startCostGuardrailMonitor } from "@/stores/analyticsStore";
 import { sampleWorkspaceAgentsDisplayTopology } from "@/stores/workspaceAgentsDogfoodStore";
 import { hydrateConversations } from "@/stores/agentConversationPersistence";
+import { gcOrphanDraftAssets } from "@/stores/agentDraftStore";
 
 import { storageKey } from "@/lib/brand";
 const PROJECT_PATH_KEY = storageKey("project-path");
@@ -112,9 +113,7 @@ export async function initializeApp(): Promise<void> {
     useServerStore.getState().hydrateFromBackend(state.servers);
     // Synchronous: the account list gates PTY launches, so it must be
     // authoritative before the first session picker can be opened.
-    useCliAccountStore
-      .getState()
-      .hydrateFromBackend(state.cliAccounts, state.cliAccountDefaults);
+    useCliAccountStore.getState().hydrateFromBackend(state.cliAccounts, state.cliAccountDefaults);
     useIssueStore.getState().hydrateFromBackend(state.issues);
 
     // Phase 2: one-time migration of legacy SshTarget records from
@@ -233,6 +232,8 @@ export async function initializeApp(): Promise<void> {
     }
     await conversationsReady;
     useAppStore.getState().setInitialized(true);
+    // Reclaim draft assets no longer referenced by the persisted envelope.
+    void gcOrphanDraftAssets();
   }
 
   startBoundedAutonomyRuntime();

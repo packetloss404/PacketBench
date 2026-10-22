@@ -123,8 +123,14 @@ function loadTextDrafts(): Record<string, string> {
 function hydrateV2(): {
   drafts: Record<string, string>;
   stagedAttachments: Record<string, StagedAttachment[]>;
+  preserveExistingEnvelope: boolean;
 } {
   const envelope = loadFromStorage<DraftsV2Envelope | null>(V2_STORAGE_KEY, null);
+  // A newer schema written by a later build must never be downgraded by this
+  // one: keep the key untouched and fall back to the legacy text map.
+  if (envelope && typeof envelope.version === "number" && envelope.version > 2) {
+    return { drafts: loadTextDrafts(), stagedAttachments: {}, preserveExistingEnvelope: true };
+  }
   if (envelope && envelope.version === 2) {
     const drafts: Record<string, string> = {};
     for (const [id, text] of Object.entries(envelope.drafts ?? {})) {
@@ -144,15 +150,22 @@ function hydrateV2(): {
           ref: { ...r, state: "ready" },
         }));
     }
-    return { drafts, stagedAttachments };
+    return { drafts, stagedAttachments, preserveExistingEnvelope: false };
   }
-  return { drafts: loadTextDrafts(), stagedAttachments: {} };
+  return { drafts: loadTextDrafts(), stagedAttachments: {}, preserveExistingEnvelope: false };
 }
+
+const hydrated = hydrateV2();
+/** Set when a newer envelope schema is on disk; `persist` then leaves it alone. */
+const preserveExistingEnvelope = hydrated.preserveExistingEnvelope;
 
 function persist(state: {
   drafts: Record<string, string>;
   stagedAttachments: Record<string, StagedAttachment[]>;
 }): void {
+  // The v1 text map is always safe to write (separate key).
+  saveToStorage(STORAGE_KEY, state.drafts);
+  if (preserveExistingEnvelope) return;
   const attachments: Record<string, DraftAttachmentRef[]> = {};
   for (const [key, arr] of Object.entries(state.stagedAttachments)) {
     const refs = arr
@@ -167,11 +180,31 @@ function persist(state: {
     updatedAt: Date.now(),
   };
   saveToStorage(V2_STORAGE_KEY, envelope);
-  // Keep the v1 text map so older code paths still read text.
-  saveToStorage(STORAGE_KEY, state.drafts);
 }
 
-const hydrated = hydrateV2();
+/**
+ * Startup reclamation for draft assets. Keeps every ref named in the persisted
+ * v2 envelope and removes the rest (orphans from a crash between staging and
+ * the envelope write). Best-effort; never throws.
+ */
+export async function gcOrphanDraftAssets(): Promise<number> {
+  try {
+    const envelope = loadFromStorage<DraftsV2Envelope | null>(V2_STORAGE_KEY, null);
+    const keep: string[] = [];
+    if (envelope && envelope.version === 2) {
+      for (const refs of Object.values(envelope.attachments ?? {})) {
+        if (!Array.isArray(refs)) continue;
+        for (const ref of refs) {
+          if (ref?.attachmentId) keep.push(ref.attachmentId);
+        }
+      }
+    }
+    const { gcAgentDraftAssets } = await import("@/lib/tauri");
+    return await gcAgentDraftAssets(keep);
+  } catch {
+    return 0;
+  }
+}
 
 export const useAgentDraftStore = create<AgentDraftStore>((set, get) => ({
   drafts: hydrated.drafts,

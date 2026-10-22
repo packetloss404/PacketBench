@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { LAUNCH_DRAFT_KEY, useAgentDraftStore, type StagedAttachment } from "../agentDraftStore";
+import {
+  gcOrphanDraftAssets,
+  LAUNCH_DRAFT_KEY,
+  useAgentDraftStore,
+  type StagedAttachment,
+} from "../agentDraftStore";
 
 vi.mock("@/lib/tauri", () => ({
   readAgentDraftAsset: vi.fn().mockResolvedValue({
@@ -7,6 +12,7 @@ vi.mock("@/lib/tauri", () => ({
     dataBase64: "eA==",
   }),
   releaseAgentDraftAsset: vi.fn().mockResolvedValue(undefined),
+  gcAgentDraftAssets: vi.fn().mockResolvedValue(0),
 }));
 
 const STORAGE_KEY = "packetbench:agent-drafts";
@@ -255,5 +261,49 @@ describe("agentDraftStore", () => {
     vi.resetModules();
     const { useAgentDraftStore: fresh } = await import("../agentDraftStore");
     expect(fresh.getState().drafts).toEqual({ good: "keep me" });
+  });
+
+  it("never overwrites a newer envelope schema", async () => {
+    localStorage.setItem(
+      V2_STORAGE_KEY,
+      JSON.stringify({ version: 3, drafts: {}, attachments: {}, updatedAt: 1 }),
+    );
+    vi.resetModules();
+    const { useAgentDraftStore: fresh } = await import("../agentDraftStore");
+
+    fresh.getState().setDraft("conv_a", "text");
+
+    // The newer envelope is left byte-identical; only the v1 text map is written.
+    const envelope = JSON.parse(localStorage.getItem(V2_STORAGE_KEY) ?? "{}");
+    expect(envelope.version).toBe(3);
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toEqual({ conv_a: "text" });
+  });
+
+  it("reclaims assets while keeping every ref named by the envelope", async () => {
+    localStorage.setItem(
+      V2_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        drafts: { conv_a: "x" },
+        attachments: {
+          conv_a: [
+            {
+              attachmentId: "asset-keep",
+              name: "k.png",
+              mimeType: "image/png",
+              byteLength: 1,
+              sha256: "a",
+              state: "ready",
+            },
+          ],
+        },
+        updatedAt: 1,
+      }),
+    );
+    const tauri = await import("@/lib/tauri");
+
+    await gcOrphanDraftAssets();
+
+    expect(tauri.gcAgentDraftAssets).toHaveBeenCalledWith(["asset-keep"]);
   });
 });
