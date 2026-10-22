@@ -173,6 +173,7 @@ describe("agentTaskStore.forkConversation", () => {
     expect(child!.messages.some((m) => m.id === "msg-3")).toBe(false);
     expect(child!.lineage).toMatchObject({
       parentConversationId: "conv-A",
+      sourceRevisionId: "initial",
       forkedFromMessageId: "msg-3",
       kind: "fork",
       contextMode: "semantic",
@@ -330,6 +331,9 @@ describe("agentTaskStore.rewindConversation", () => {
       throughMessageId: "msg-3",
       messageCount: 4,
     });
+    // First rewind has no parent revision; the active revision points at it.
+    expect(updated!.transcriptRevisions![0].parentRevisionId).toBeUndefined();
+    expect(updated!.activeRevisionId).toBe(updated!.transcriptRevisions![0].revisionId);
     expect(updated!.transcriptRevisions![0].messages.map((m) => m.id)).toEqual([
       "msg-1",
       "msg-2",

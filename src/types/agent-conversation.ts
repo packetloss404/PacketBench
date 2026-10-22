@@ -117,6 +117,8 @@ export interface DiffComment {
 
 export interface ConversationLineage {
   parentConversationId: string;
+  /** Parent transcript revision the fork was cut from (`"initial"` when none). */
+  sourceRevisionId?: string;
   forkedFromMessageId: string;
   kind: "fork";
   /** Semantic forks reuse the parent's current files, not historical state. */
@@ -128,6 +130,8 @@ export interface TranscriptRevision {
   revisionId: string;
   conversationId: string;
   operation: "initial" | "transcript_rewind";
+  /** The active revision this one superseded. */
+  parentRevisionId?: string;
   throughMessageId?: string;
   messageCount: number;
   messages: AgentMessage[];
@@ -218,6 +222,8 @@ export interface AgentConversation {
   lineage?: ConversationLineage;
   /** F3: saved transcripts moved aside by Rewind. Files are never restored. */
   transcriptRevisions?: TranscriptRevision[];
+  /** F3: the revision currently shown as the active transcript. */
+  activeRevisionId?: string;
   /** T3.F / tile-program D: worktree provenance for conversations launched in
    * worktree mode. Stamped at provisioning in `launchConversation` (the
    * `baseBranch` that was historically computed then discarded — the

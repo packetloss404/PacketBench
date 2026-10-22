@@ -1713,6 +1713,10 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
       parentConversationId: undefined,
       lineage: {
         parentConversationId: parent.id,
+        sourceRevisionId:
+          parent.activeRevisionId ??
+          parent.transcriptRevisions?.[parent.transcriptRevisions.length - 1]?.revisionId ??
+          "initial",
         forkedFromMessageId: messageId,
         kind: "fork",
         contextMode: "semantic",
@@ -1771,21 +1775,24 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     }
 
     const now = Date.now();
+    const revisionId = generateId("rev");
     const next: AgentConversation = {
       ...conv,
       messages: conv.messages.slice(0, idx + 1),
       transcriptRevisions: [
         ...(conv.transcriptRevisions ?? []),
         {
-          revisionId: generateId("rev"),
+          revisionId,
           conversationId: id,
           operation: "transcript_rewind" as const,
+          parentRevisionId: conv.activeRevisionId,
           throughMessageId: messageId,
           messageCount: conv.messages.length,
           messages: conv.messages,
           createdAt: now,
         },
       ].slice(-10),
+      activeRevisionId: revisionId,
       sessionId: null,
       resumeToken: undefined,
       status: "idle",
