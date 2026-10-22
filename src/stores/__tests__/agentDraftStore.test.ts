@@ -256,6 +256,16 @@ describe("agentDraftStore", () => {
     expect(store().stagedAttachments.conv_a[0].previewUrl).toBe("blob:loaded");
   });
 
+  it("marks a ref missing when its bytes cannot be read", async () => {
+    store().appendStagedAttachment("conv_a", 0, { ...stagedWithRef("a1"), previewUrl: "" });
+    const tauri = await import("@/lib/tauri");
+    vi.mocked(tauri.readAgentDraftAsset).mockRejectedValueOnce(new Error("gone"));
+
+    await store().loadStagedPreview("conv_a", "a1");
+
+    expect(store().stagedAttachments.conv_a[0].ref?.state).toBe("missing");
+  });
+
   it("ignores non-string / empty persisted entries on load", async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ good: "keep me", bad: 42, empty: "" }));
     // Re-import a fresh module instance so the store re-runs load().

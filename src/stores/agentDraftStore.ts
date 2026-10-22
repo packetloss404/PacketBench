@@ -334,7 +334,7 @@ export const useAgentDraftStore = create<AgentDraftStore>((set, get) => ({
 
   loadStagedPreview: async (conversationId, attachmentId) => {
     const item = (get().stagedAttachments[conversationId] ?? []).find((s) => s.id === attachmentId);
-    if (!item?.ref || item.previewUrl) return;
+    if (!item?.ref || item.previewUrl || item.ref.state === "missing") return;
     try {
       const { readAgentDraftAsset } = await import("@/lib/tauri");
       const read = await readAgentDraftAsset(item.ref.attachmentId);
@@ -350,7 +350,16 @@ export const useAgentDraftStore = create<AgentDraftStore>((set, get) => ({
         },
       }));
     } catch {
-      // Leave preview empty; the chip still shows the ref metadata.
+      // Mark the ref missing so the chip can say "reattach" and sending can
+      // refuse rather than silently dropping the image.
+      set((s) => ({
+        stagedAttachments: {
+          ...s.stagedAttachments,
+          [conversationId]: (s.stagedAttachments[conversationId] ?? []).map((a) =>
+            a.id === attachmentId && a.ref ? { ...a, ref: { ...a.ref, state: "missing" } } : a,
+          ),
+        },
+      }));
     }
   },
 }));

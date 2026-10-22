@@ -155,7 +155,7 @@ export function Composer(props: ComposerProps) {
   // Backfill session previews for durable refs hydrated from the v2 envelope.
   useEffect(() => {
     for (const item of staged) {
-      if (item.ref && !item.previewUrl) {
+      if (item.ref && item.ref.state !== "missing" && !item.previewUrl) {
         void useAgentDraftStore.getState().loadStagedPreview(draftKey, item.id);
       }
     }
@@ -490,9 +490,24 @@ export function Composer(props: ComposerProps) {
 
   // ─── Submit ───────────────────────────────────────────────────────────
   const submitInFlightRef = useRef(false);
+
+  // Sending must never silently drop a missing image: surface it and stop.
+  const blockMissingAttachments = useCallback((): boolean => {
+    const missing = staged.filter((s) => s.ref?.state === "missing");
+    if (missing.length === 0) return false;
+    const state = useAgentDraftStore.getState();
+    state.addAttachmentRejection(draftKey, state.stagingGenerations[draftKey] ?? 0, {
+      id: `rej_${Date.now()}_missing`,
+      name: missing[0].name,
+      message: `${missing[0].name}: missing image — reattach or remove it before sending.`,
+    });
+    return true;
+  }, [staged, draftKey]);
+
   const submitLaunch = useCallback(async () => {
     if (!launch || !launchReady) return;
     if (submitInFlightRef.current) return;
+    if (blockMissingAttachments()) return;
     submitInFlightRef.current = true;
     const syncToSend = stagedAttachmentsReadySync(staged);
     let toSend: ImageAttachment[];
@@ -522,7 +537,7 @@ export function Composer(props: ComposerProps) {
         submitInFlightRef.current = false;
       },
     );
-  }, [launch, launchReady, staged, input, clearStaged]);
+  }, [launch, launchReady, staged, input, clearStaged, blockMissingAttachments]);
 
   const isActive = conversation?.status === "active";
 
@@ -530,6 +545,7 @@ export function Composer(props: ComposerProps) {
     if (!isChat || !conversation) return;
     const text = input.trim();
     if (!text) return;
+    if (blockMissingAttachments()) return;
     // While a turn is streaming the store QUEUES the text (protected
     // queued-send-while-streaming behavior) — queued messages carry no
     // attachments, so keep any staged images for the next live send
@@ -561,6 +577,7 @@ export function Composer(props: ComposerProps) {
     clearStaged,
     chatActions,
     conversationId,
+    blockMissingAttachments,
   ]);
 
   const submit = isChat ? submitChat : submitLaunch;
@@ -646,29 +663,41 @@ export function Composer(props: ComposerProps) {
     <div className="flex flex-col gap-1 pb-2">
       <span className="text-[10px] text-text-muted">Kept in this session</span>
       <div className="flex flex-wrap gap-1.5">
-        {staged.map((s) => (
-          <div
-            key={s.id}
-            className="flex items-center gap-1.5 rounded-md bg-bg-secondary py-0.5 pl-1 pr-1.5 text-meta text-text-secondary"
-          >
-            <Tooltip content={`${s.name} � ${(s.sizeBytes / 1024).toFixed(1)} KB`}>
-              <span className="flex items-center gap-1.5">
-                <img src={s.previewUrl} alt="" className="h-5 w-5 rounded object-cover" />
-                <span className="max-w-[140px] truncate">{s.name}</span>
-              </span>
-            </Tooltip>
-            <Tooltip content="Remove">
-              <button
-                type="button"
-                aria-label={`Remove ${s.name}`}
-                onClick={() => removeStaged(s.id)}
-                className="rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-accent-red"
+        {staged.map((s) => {
+          const missing = s.ref?.state === "missing";
+          return (
+            <div
+              key={s.id}
+              className="flex items-center gap-1.5 rounded-md bg-bg-secondary py-0.5 pl-1 pr-1.5 text-meta text-text-secondary"
+            >
+              <Tooltip
+                content={
+                  missing
+                    ? "Missing — reattach image"
+                    : `${s.name} — ${(s.sizeBytes / 1024).toFixed(1)} KB`
+                }
               >
-                <X size={9} />
-              </button>
-            </Tooltip>
-          </div>
-        ))}
+                <span className="flex items-center gap-1.5">
+                  <img src={s.previewUrl} alt="" className="h-5 w-5 rounded object-cover" />
+                  <span className={`max-w-[140px] truncate ${missing ? "text-accent-amber" : ""}`}>
+                    {s.name}
+                    {missing ? " (missing)" : ""}
+                  </span>
+                </span>
+              </Tooltip>
+              <Tooltip content="Remove">
+                <button
+                  type="button"
+                  aria-label={`Remove ${s.name}`}
+                  onClick={() => removeStaged(s.id)}
+                  className="rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-accent-red"
+                >
+                  <X size={9} />
+                </button>
+              </Tooltip>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -373,6 +373,39 @@ describe("Composer (launch variant) — image attachments", () => {
     ).toBeInTheDocument();
   });
 
+  it("blocks launch while a staged image is missing", async () => {
+    useAgentDraftStore.setState({
+      stagedAttachments: {
+        [LAUNCH_DRAFT_KEY]: [
+          {
+            id: "m1",
+            name: "gone.png",
+            sizeBytes: 1,
+            attachment: { media_type: "image/png", data_base64: "" },
+            previewUrl: "",
+            ref: {
+              attachmentId: "a1",
+              name: "gone.png",
+              mimeType: "image/png",
+              byteLength: 1,
+              sha256: "s",
+              state: "missing",
+            },
+          },
+        ],
+      },
+    });
+    const onLaunch = vi.fn(() => true);
+    renderLaunch(onLaunch);
+
+    const launch = await screen.findByRole("button", { name: /launch/i });
+    await waitFor(() => expect(launch).not.toBeDisabled());
+    fireEvent.click(launch);
+
+    expect(onLaunch).not.toHaveBeenCalled();
+    expect(await screen.findByText(/missing image/)).toBeInTheDocument();
+  });
+
   it("revokes a preview URL when its chip is removed, but retains images across unmount", async () => {
     const onLaunch = vi.fn(() => false);
     const { unmount } = renderLaunch(onLaunch);
