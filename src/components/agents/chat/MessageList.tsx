@@ -76,6 +76,19 @@ interface MessageListProps {
    * live in `PendingApprovalsSection` and are NOT duplicated here.
    */
   approvals?: InlineApprovalsBinding;
+  /**
+   * F7 — a search result's stable navigation target. When it names a message
+   * in the active transcript, that row is force-mounted (bypassing the lazy
+   * virtualizer), briefly highlighted and scrolled into view. When it names a
+   * saved revision, the history modal opens instead.
+   */
+  searchNavigationTarget?: {
+    messageId: string;
+    transcriptRevisionId?: string;
+    token?: string;
+  } | null;
+  /** F7 — called after the target has been force-mounted + highlighted. */
+  onSearchNavigationConsumed?: () => void;
 }
 
 export function MessageList({
@@ -92,10 +105,13 @@ export function MessageList({
   isActive,
   scrollContainerRef,
   approvals,
+  searchNavigationTarget,
+  onSearchNavigationConsumed,
 }: MessageListProps) {
   const messages = conversation.messages;
   const revisions = conversation.transcriptRevisions ?? [];
   const [viewingHistory, setViewingHistory] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const canMutateHistory = !isActive;
   const lastMessage = messages[messages.length - 1];
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
@@ -147,6 +163,57 @@ export function MessageList({
     },
     [],
   );
+
+  // F7 — a search target briefly highlights its message region, then clears
+  // itself. Keyed on the local id (not the prop) so consuming the navigation
+  // target cannot tear the highlight down early.
+  useEffect(() => {
+    if (!highlightedMessageId) return;
+    const timer = setTimeout(() => setHighlightedMessageId(null), 1600);
+    return () => clearTimeout(timer);
+  }, [highlightedMessageId]);
+
+  // F7 — navigate to a stable message/revision identity. A historical message
+  // in the active transcript is force-mounted (below), scrolled into view and
+  // briefly highlighted; a saved-revision target opens the history modal. The
+  // target is consumed once so a stale navigation never re-fires on stream.
+  const navMessageId = searchNavigationTarget?.messageId;
+  const navRevisionId = searchNavigationTarget?.transcriptRevisionId;
+  useEffect(() => {
+    if (!navMessageId) return;
+    const isRevisionTarget =
+      !!navRevisionId && revisions.some((r) => r.revisionId === navRevisionId);
+    if (isRevisionTarget) {
+      setViewingHistory(true);
+      onSearchNavigationConsumed?.();
+      return;
+    }
+    if (!messages.some((m) => m.id === navMessageId)) {
+      onSearchNavigationConsumed?.();
+      return;
+    }
+    setHighlightedMessageId(navMessageId);
+    const container = scrollContainerRef?.current;
+    const doScroll = () => {
+      const el = container?.querySelector<HTMLElement>(
+        `[data-message-id="${navMessageId}"]`,
+      );
+      if (el && typeof el.scrollIntoView === "function") {
+        el.scrollIntoView({ block: "center" });
+      }
+      if (el instanceof HTMLElement) {
+        el.setAttribute("tabindex", "-1");
+        el.focus({ preventScroll: true });
+      }
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(doScroll);
+    else doScroll();
+    // Consume synchronously: force-mount + highlight are the contract; the
+    // deferred scroll/focus is a visual nicety. A late consume would re-fire
+    // on every stream tick if the parent hadn't yet cleared the target.
+    onSearchNavigationConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navMessageId, navRevisionId, searchNavigationTarget?.token]);
 
   const tailStart = Math.max(0, messages.length - TAIL_FORCE_MOUNT);
 
@@ -206,11 +273,17 @@ export function MessageList({
         // A row holding a live approval joins them unconditionally: a blocking
         // prompt that a virtualized placeholder swallowed is an agent hung on a
         // question the user was never shown.
-        const forceMount = index >= tailStart || isLastAssistant || !!ownedApprovals;
+        const forceMount =
+          index >= tailStart ||
+          isLastAssistant ||
+          !!ownedApprovals ||
+          msg.id === navMessageId;
         return (
           <LazyMessageRow
             key={msg.id}
+            messageId={msg.id}
             forceMount={forceMount}
+            highlighted={highlightedMessageId === msg.id}
             register={register}
             scrollContainerRef={scrollContainerRef}
           >
@@ -318,12 +391,16 @@ export function MessageList({
 // until they scroll near the viewport, then mount once and stay mounted so no
 // card loses local state and scroll position never jumps from an unmount.
 function LazyMessageRow({
+  messageId,
   forceMount,
+  highlighted,
   register,
   scrollContainerRef,
   children,
 }: {
+  messageId: string;
   forceMount: boolean;
+  highlighted?: boolean;
   register: (el: Element, onVisible: () => void) => () => void;
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
   children: ReactNode;
@@ -372,7 +449,10 @@ function LazyMessageRow({
   return (
     <div
       ref={rowRef}
-      className="animate-[welcomeFadeIn_200ms_ease-out] motion-reduce:animate-none"
+      data-message-id={messageId}
+      className={`animate-[welcomeFadeIn_200ms_ease-out] motion-reduce:animate-none ${
+        highlighted ? "rounded-lg bg-accent-blue/10 ring-2 ring-accent-blue/40" : ""
+      }`}
       style={mounted ? undefined : { minHeight: PLACEHOLDER_MIN_HEIGHT }}
     >
       {mounted ? children : null}

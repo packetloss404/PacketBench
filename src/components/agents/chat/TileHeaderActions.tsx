@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  ArrowLeft,
   ChevronDown,
   MoreVertical,
   PanelRight,
@@ -23,6 +24,12 @@ interface TileHeaderActionsProps {
   onExport: () => void;
   /** Pending edits + permissions for this conversation (amber approval badge). */
   pendingApprovalCount: number;
+  /** F6: open the EXACT blocker (not just select). When supplied, the approval
+   * badge becomes an action that routes to the precise pending card. */
+  onOpenAttention?: () => void;
+  /** F6: show a compact "Return to review" affordance (present when a saved
+   * return anchor exists for this conversation). */
+  onReturnToReview?: () => void;
   /** Archive this conversation from the overflow menu. Absent → no Archive row
    * (the Agents view keeps lifecycle actions on the sidebar row). */
   onArchive?: () => void;
@@ -98,6 +105,8 @@ export function TileHeaderActions({
   onClose,
   onExport,
   pendingApprovalCount,
+  onOpenAttention,
+  onReturnToReview,
   onArchive,
   // Defaults describe the Agents-view mount (AgentChatPane's onClose there
   // deselects the conversation and shows the New agent screen). The workspace
@@ -145,14 +154,42 @@ export function TileHeaderActions({
       )}
       {pendingApprovalCount > 0 && (
         <Tooltip
-          content={`${pendingApprovalCount} pending approval${pendingApprovalCount === 1 ? "" : "s"}`}
+          content={`${pendingApprovalCount} pending approval${pendingApprovalCount === 1 ? "" : "s"}${
+            onOpenAttention ? " — open it" : ""
+          }`}
         >
-          <span
-            className="tile-approval-badge inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent-amber/20 px-1.5 py-0.5 font-mono text-meta font-semibold text-accent-amber"
-            aria-label={`${pendingApprovalCount} pending approvals`}
+          {onOpenAttention ? (
+            <button
+              type="button"
+              onClick={onOpenAttention}
+              className="tile-approval-badge inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent-amber/20 px-1.5 py-0.5 font-mono text-meta font-semibold text-accent-amber transition-colors hover:bg-accent-amber/30"
+              aria-label={`${pendingApprovalCount} pending approval${
+                pendingApprovalCount === 1 ? "" : "s"
+              } — open it`}
+            >
+              {pendingApprovalCount}
+            </button>
+          ) : (
+            <span
+              className="tile-approval-badge inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent-amber/20 px-1.5 py-0.5 font-mono text-meta font-semibold text-accent-amber"
+              aria-label={`${pendingApprovalCount} pending approvals`}
+            >
+              {pendingApprovalCount}
+            </span>
+          )}
+        </Tooltip>
+      )}
+      {onReturnToReview && (
+        <Tooltip content="Return to where you were reviewing before this request">
+          <button
+            type="button"
+            onClick={onReturnToReview}
+            aria-label="Return to review"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-meta font-medium text-accent-blue transition-colors hover:bg-bg-hover hover:text-text-primary"
           >
-            {pendingApprovalCount}
-          </span>
+            <ArrowLeft size={11} />
+            Return to review
+          </button>
         </Tooltip>
       )}
 

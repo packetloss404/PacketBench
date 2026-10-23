@@ -1,6 +1,7 @@
 import { useEffect, useState, type RefObject } from "react";
 import { ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/stores/appStore";
+import { useReviewStore } from "@/stores/reviewStore";
 import type { PendingPermission } from "@/types/agent-conversation";
 import type { useAgentApprovalStore } from "@/stores/agentApprovalStore";
 
@@ -63,6 +64,56 @@ export function PendingApprovalsSection({
   const topPermission = pendingPermissions[0];
 
   const commandPaletteOpen = useAppStore((s) => s.commandPaletteOpen);
+
+  // F6 — exact attention. `openAgentAttention` arms the specific card via
+  // reviewStore.attentionFocus; this section is the one that knows how to
+  // reveal it in the transcript and give it focus. The card revalidates
+  // against the still-pending queue first: if the request was already answered
+  // before the reveal, it stands down instead of targeting a different card.
+  const attentionFocus = useReviewStore((s) => s.attentionFocus);
+  const clearAttentionFocus = useReviewStore((s) => s.clearAttentionFocus);
+
+  useEffect(() => {
+    if (!attentionFocus || attentionFocus.conversationId !== conversationId) return;
+    if (attentionFocus.kind !== "permission") return;
+
+    const container = scrollContainerRef?.current;
+    if (!container) {
+      clearAttentionFocus(conversationId);
+      return;
+    }
+
+    // Revalidate against the authoritative queue before mounting the jump.
+    const stillPending = pendingPermissions.some((p) => p.id === attentionFocus.requestId);
+    if (!stillPending) {
+      clearAttentionFocus(conversationId);
+      return;
+    }
+
+    const card = container.querySelector<HTMLElement>(
+      `[data-approval-id="${attentionFocus.requestId}"]`,
+    );
+    if (!card) {
+      // The owning row has not mounted yet — leave the focus armed; the next
+      // approval mount re-runs this effect (pendingPermissions identity changes).
+      return;
+    }
+    if (typeof card.scrollIntoView === "function") {
+      card.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+    // Focus the descriptive heading region, NOT the Allow verb: the user must
+    // read the host/scope/command before acting. `tabindex` makes the card
+    // programmatically focusable without entering the ordinary tab order.
+    card.setAttribute("tabindex", "-1");
+    card.focus({ preventScroll: true });
+    clearAttentionFocus(conversationId);
+  }, [
+    attentionFocus,
+    conversationId,
+    pendingPermissions,
+    scrollContainerRef,
+    clearAttentionFocus,
+  ]);
 
   // P1-9: Y/N stays live wherever the card happens to be — the top prompt is
   // still the target, so a stacked queue can be drained from the keyboard

@@ -117,3 +117,37 @@ describe("MessageList — fork and rewind affordances", () => {
     expect(screen.getByText(/Files were not changed/)).toBeInTheDocument();
   });
 });
+
+describe("MessageList — search navigation (F7)", () => {
+  it("force-mounts and briefly highlights the exact historical match, then consumes the target", () => {
+    const onSearchNavigationConsumed = vi.fn();
+    const conv = conversation({
+      messages: [
+        message({ id: "msg-1", content: "first" }),
+        message({ id: "msg-2", role: "assistant", content: "the needle turn" }),
+        message({ id: "msg-3", content: "last" }),
+      ],
+    });
+    const { container } = renderList(conv, {
+      searchNavigationTarget: { messageId: "msg-2" },
+      onSearchNavigationConsumed,
+    });
+
+    const row = container.querySelector('[data-message-id="msg-2"]');
+    expect(row).not.toBeNull();
+    expect(row!.className).toContain("bg-accent-blue/10");
+    expect(onSearchNavigationConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a target whose message id does not exist", () => {
+    const onSearchNavigationConsumed = vi.fn();
+    const conv = conversation({ messages: [message({ id: "msg-1", content: "first" })] });
+    const { container } = renderList(conv, {
+      searchNavigationTarget: { messageId: "missing" },
+      onSearchNavigationConsumed,
+    });
+
+    expect(container.querySelector('[data-message-id="missing"]')).toBeNull();
+    expect(onSearchNavigationConsumed).toHaveBeenCalledTimes(1);
+  });
+});

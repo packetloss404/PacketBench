@@ -54,6 +54,35 @@ function loadViewed(): ViewedMap {
   return out;
 }
 
+/**
+ * F6/F7: a saved reader/review position to return to after an attention or
+ * search jump. Ephemeral (in-memory) — it describes where the user was, never
+ * what the conversation holds. `filePath` is null when the review panel was
+ * not open (a plain reader position instead).
+ */
+export interface ReviewReturnAnchor {
+  conversationId: string;
+  filePath: string | null;
+  offsetPx: number;
+}
+
+/** F6: the exact approval card an attention open must reveal + focus. */
+export interface AttentionFocus {
+  conversationId: string;
+  kind: "permission" | "edit" | "plan" | "failure";
+  requestId: string;
+  /** Ephemeral token — never a serialized HTMLElement reference. */
+  focusToken: string;
+}
+
+/** F7: a search result's navigation target (stable message/revision identity). */
+export interface SearchNavigationTarget {
+  conversationId: string;
+  messageId: string;
+  transcriptRevisionId?: string;
+  token: string;
+}
+
 interface ReviewStore {
   /** True while the expanded multibuffer panel is open in the chat pane. */
   open: boolean;
@@ -63,9 +92,31 @@ interface ReviewStore {
   focusPath: string | null;
   /** Persisted per-file Viewed acknowledgements. */
   viewed: ViewedMap;
+  /** F6: the review/reader position to restore after an attention jump. */
+  returnAnchor: ReviewReturnAnchor | null;
+  /** F6: the approval card to reveal + focus after `openAgentAttention`. */
+  attentionFocus: AttentionFocus | null;
+  /** F7: the turn a search result must navigate to (consumed by MessageList). */
+  searchNavigation: SearchNavigationTarget | null;
 
   openForConversation: (conversationId: string, path?: string) => void;
   close: () => void;
+
+  saveReturnAnchor: (
+    conversationId: string,
+    filePath: string | null,
+    offsetPx: number,
+  ) => void;
+  /** Peek (no clear) — the header reads this to show "Return to review". */
+  getReturnAnchor: (conversationId: string) => ReviewReturnAnchor | null;
+  /** Consume + clear — used by the actual return navigation. */
+  restoreReturnAnchor: (conversationId: string) => ReviewReturnAnchor | null;
+
+  setAttentionFocus: (focus: AttentionFocus | null) => void;
+  clearAttentionFocus: (conversationId: string) => void;
+
+  setSearchNavigation: (target: SearchNavigationTarget | null) => void;
+  clearSearchNavigation: (conversationId: string) => void;
 
   /** Mark / unmark a file's current edit signature as viewed. */
   setViewed: (
@@ -87,6 +138,9 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
   conversationId: null,
   focusPath: null,
   viewed: loadViewed(),
+  returnAnchor: null,
+  attentionFocus: null,
+  searchNavigation: null,
 
   openForConversation: (conversationId, path) =>
     set({
@@ -94,6 +148,43 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
       conversationId,
       focusPath: path ?? null,
     }),
+
+  saveReturnAnchor: (conversationId, filePath, offsetPx) =>
+    set({
+      returnAnchor: {
+        conversationId,
+        filePath,
+        offsetPx: Number.isFinite(offsetPx) ? offsetPx : 0,
+      },
+    }),
+
+  getReturnAnchor: (conversationId) => {
+    const anchor = get().returnAnchor;
+    return anchor && anchor.conversationId === conversationId ? anchor : null;
+  },
+
+  restoreReturnAnchor: (conversationId) => {
+    const anchor = get().returnAnchor;
+    if (!anchor || anchor.conversationId !== conversationId) return null;
+    set({ returnAnchor: null });
+    return anchor;
+  },
+
+  setAttentionFocus: (focus) => set({ attentionFocus: focus }),
+
+  clearAttentionFocus: (conversationId) => {
+    const focus = get().attentionFocus;
+    if (!focus || focus.conversationId !== conversationId) return;
+    set({ attentionFocus: null });
+  },
+
+  setSearchNavigation: (target) => set({ searchNavigation: target }),
+
+  clearSearchNavigation: (conversationId) => {
+    const target = get().searchNavigation;
+    if (!target || target.conversationId !== conversationId) return;
+    set({ searchNavigation: null });
+  },
 
   close: () =>
     set({

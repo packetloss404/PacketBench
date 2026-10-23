@@ -20,6 +20,8 @@
  * hydration so reconciliation and garbage collection see authoritative state.
  */
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
+import { useAgentApprovalStore } from "@/stores/agentApprovalStore";
+import { useReviewStore } from "@/stores/reviewStore";
 import { useWorkspaceStore, conversationWrapperId } from "@/stores/workspaceStore";
 import { useAppStore } from "@/stores/appStore";
 import { killPty, getGitStatus, removeConversationWorktree } from "@/lib/tauri";
@@ -127,6 +129,112 @@ export function openConversationInAgents(conversationId: string): boolean {
  */
 export function focusConversationDeepLink(conversationId: string): void {
   openConversationInAgents(conversationId);
+}
+
+// ─── F6 — exact attention routing ──────────────────────────────────────────
+
+/**
+ * The kind of blocker an attention open can target. `permission` and `edit`
+ * are revalidated against the authoritative approval queues; `plan` and
+ * `failure` carry no queue and simply reveal the conversation.
+ */
+export type AgentAttentionKind = "permission" | "edit" | "plan" | "failure";
+
+/**
+ * A stable identity for the exact blocker to open. `requestId` is a request /
+ * tool-use id, never an array position, so a queue that shifts under us cannot
+ * redirect the jump to the wrong card.
+ */
+export interface AgentAttentionTarget {
+  conversationId: string;
+  kind: AgentAttentionKind;
+  requestId: string;
+  messageId?: string;
+  filePath?: string;
+}
+
+export interface AgentAttentionResult {
+  opened: boolean;
+  reason?: "resolved" | "missing_conversation";
+}
+
+/**
+ * The ONE user-triggered attention open (header badge, banner, tray, Flight
+ * link). Saves the caller's review/reader position, revalidates the target
+ * against the live queue, selects + reveals the conversation, and arms the
+ * exact approval card (or canonical review) for focus. It never answers or
+ * accepts anything, and it never silently targets a *different* request when
+ * the named one was already resolved.
+ *
+ * Returns `resolved` when the exact request is no longer pending and
+ * `missing_conversation` when the id is stale — both leave the saved return
+ * anchor intact so a "Return to review" affordance can still restore the
+ * user's place.
+ */
+export function openAgentAttention(target: AgentAttentionTarget): AgentAttentionResult {
+  const store = useAgentTaskStore.getState();
+  const conversation = store.conversations.find((c) => c.id === target.conversationId);
+  if (!conversation) return { opened: false, reason: "missing_conversation" };
+
+  const approvals = useAgentApprovalStore.getState();
+  if (target.kind === "permission") {
+    const pending = approvals.permissions.get(target.conversationId) ?? [];
+    if (!pending.some((p) => p.id === target.requestId)) {
+      return { opened: false, reason: "resolved" };
+    }
+  } else if (target.kind === "edit") {
+    const pending = approvals.edits.get(target.conversationId) ?? [];
+    if (!pending.some((e) => e.id === target.requestId)) {
+      return { opened: false, reason: "resolved" };
+    }
+  }
+
+  const review = useReviewStore.getState();
+  // Save the return position for the conversation the user is leaving — the
+  // currently-open review surface's file when it is scoped to this same
+  // conversation, otherwise a plain reader anchor. The jump stays reversible.
+  const returnFilePath =
+    review.open && review.conversationId === target.conversationId
+      ? review.focusPath
+      : null;
+  review.saveReturnAnchor(target.conversationId, returnFilePath, 0);
+
+  // Arm the exact card. The ephemeral token is what lets a remount of the same
+  // conversation distinguish a fresh open from a stale one.
+  review.setAttentionFocus({
+    conversationId: target.conversationId,
+    kind: target.kind,
+    requestId: target.requestId,
+    focusToken: `att:${target.conversationId}:${target.requestId}:${Date.now()}`,
+  });
+
+  // Edit attention opens the canonical review at its exact pending edit.
+  if (target.kind === "edit") {
+    review.openForConversation(target.conversationId, target.filePath);
+  }
+
+  store.selectConversation(target.conversationId);
+  useAppStore.getState().setActiveView("agents");
+  recordConversationOpenedInAgents(target.conversationId);
+  return { opened: true };
+}
+
+/**
+ * The "Return to review" half of the attention round-trip: restores the saved
+ * review/reader position and reopens the canonical review at its exact file.
+ * Returns false when no anchor was saved for this conversation (or the
+ * conversation no longer exists).
+ */
+export function restoreReviewPosition(conversationId: string): boolean {
+  const review = useReviewStore.getState();
+  const anchor = review.restoreReturnAnchor(conversationId);
+  if (!anchor) return false;
+  const store = useAgentTaskStore.getState();
+  if (!store.conversations.some((c) => c.id === conversationId)) return false;
+  store.selectConversation(conversationId);
+  useAppStore.getState().setActiveView("agents");
+  review.openForConversation(conversationId, anchor.filePath ?? undefined);
+  return true;
 }
 
 /** Re-export so consumers/tests can assert the deterministic wrapper id without

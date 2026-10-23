@@ -1,4 +1,13 @@
-import { useCallback, useDeferredValue, useMemo, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -12,7 +21,19 @@ import {
 } from "lucide-react";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
 import { useAgentApprovalStore } from "@/stores/agentApprovalStore";
-import { useAgentSidebarPrefsStore } from "@/stores/agentSidebarPrefsStore";
+import {
+  useAgentSidebarPrefsStore,
+  clampSidebarWidth,
+  AGENT_SIDEBAR_DEFAULT_WIDTH,
+  AGENT_SIDEBAR_MIN_WIDTH,
+  AGENT_SIDEBAR_MAX_WIDTH,
+} from "@/stores/agentSidebarPrefsStore";
+import { useReviewStore } from "@/stores/reviewStore";
+import {
+  searchAgentConversations,
+  type AgentSearchConversationResult,
+  type AgentSearchHit,
+} from "@/lib/agentSearch";
 import { API_PROVIDERS } from "@/lib/api-models";
 import { capabilitiesFor } from "@/lib/agentCapabilities";
 import { ConfirmDeleteConversationModal } from "@/components/agents/ConfirmDeleteConversationModal";
@@ -20,7 +41,13 @@ import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { AgentConversation } from "@/types/agent-conversation";
 
-type StatusFilter = "all" | "active" | "done" | "archived";
+type StatusFilter =
+  | "all"
+  | "running"
+  | "needsYou"
+  | "failed"
+  | "finished"
+  | "archived";
 
 interface AgentSidebarProps {
   selectedId: string | null;
@@ -82,18 +109,6 @@ function projectLabel(conversation: AgentConversation, labels: Record<string, st
   return parts[parts.length - 1] ?? base;
 }
 
-function matchesSearch(conversation: AgentConversation, query: string): boolean {
-  const normalized = query.toLowerCase();
-  if (conversation.title?.toLowerCase().includes(normalized)) return true;
-  const base = normalizePath(baseProjectPath(conversation)).toLowerCase();
-  if (base.includes(normalized)) return true;
-  if (conversation.projectPath.toLowerCase().includes(normalized)) return true;
-  if (conversation.sshTarget?.remotePath.toLowerCase().includes(normalized)) return true;
-  return conversation.messages.some((message) =>
-    message.content?.toLowerCase().includes(normalized),
-  );
-}
-
 /**
  * The four states a session row's dot can report. This replaces the old
  * `statusIcon` + `getStatusColor` pair, which painted `idle` and `active` the
@@ -115,8 +130,6 @@ function dotStateFor(status: AgentConversation["status"], attention: boolean): D
 }
 
 function StatusDot({ state }: { state: DotState }) {
-  // The glow is `currentColor` so the dot never hard-codes a shadow colour —
-  // the accent token on the same element drives both fill and halo.
   const tone =
     state === "running"
       ? "bg-accent-blue text-accent-blue shadow-[0_0_6px_currentColor] animate-pulse motion-reduce:animate-none"
@@ -153,6 +166,38 @@ function sortConversations(
   });
 }
 
+/** Safe text highlighting — segments split on literal `matchRanges` offsets.
+ * No HTML interpolation: every match is a React text node in a `<mark>`. */
+function HighlightedExcerpt({
+  excerpt,
+  matchRanges,
+}: {
+  excerpt: string;
+  matchRanges: Array<{ start: number; end: number }>;
+}) {
+  if (matchRanges.length === 0) return <>{excerpt}</>;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  matchRanges.forEach((range, index) => {
+    if (range.start > cursor) {
+      parts.push(<span key={`plain-${index}`}>{excerpt.slice(cursor, range.start)}</span>);
+    }
+    parts.push(
+      <mark
+        key={`match-${index}`}
+        className="rounded-sm bg-accent-amber/25 text-text-primary"
+      >
+        {excerpt.slice(range.start, range.end)}
+      </mark>,
+    );
+    cursor = range.end;
+  });
+  if (cursor < excerpt.length) {
+    parts.push(<span key="tail">{excerpt.slice(cursor)}</span>);
+  }
+  return <>{parts}</>;
+}
+
 export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarProps) {
   const conversations = useAgentTaskStore((state) => state.conversations);
   const archiveConversation = useAgentTaskStore((state) => state.archiveConversation);
@@ -163,9 +208,12 @@ export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarP
   const prefs = useAgentSidebarPrefsStore((state) => state.prefs);
   const togglePinned = useAgentSidebarPrefsStore((state) => state.togglePinned);
   const projectLabels = useAgentSidebarPrefsStore((state) => state.projectLabels);
+  const width = useAgentSidebarPrefsStore((state) => state.width);
+  const setWidth = useAgentSidebarPrefsStore((state) => state.setWidth);
 
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<AgentConversation | null>(null);
   // Inline rename: the row being edited plus its draft text.
   const [editing, setEditing] = useState<{
@@ -186,41 +234,48 @@ export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarP
     return result;
   }, [conversations, pendingPermissions, pendingEdits]);
 
+  // F7 — distinct filter states. `running` no longer swallows `idle`, and
+  // `failed` is its own state rather than being laundered into `done`.
   const counts = useMemo(() => {
-    const result = { all: 0, active: 0, done: 0, archived: 0 };
+    const result = { all: 0, running: 0, needsYou: 0, failed: 0, finished: 0, archived: 0 };
     for (const conversation of conversations) {
       if (conversation.archived) {
         result.archived += 1;
-      } else {
-        result.all += 1;
-        if (conversation.status === "active" || conversation.status === "idle") {
-          result.active += 1;
-        } else {
-          result.done += 1;
-        }
+        continue;
       }
+      result.all += 1;
+      if (needsYouIds.has(conversation.id)) result.needsYou += 1;
+      if (conversation.status === "active") result.running += 1;
+      else if (conversation.status === "failed") result.failed += 1;
+      else if (conversation.status === "done") result.finished += 1;
     }
     return result;
-  }, [conversations]);
+  }, [conversations, needsYouIds]);
 
   const filtered = useMemo(() => {
     let result = conversations.filter((conversation) =>
       filter === "archived" ? conversation.archived : !conversation.archived,
     );
-    if (filter === "active") {
-      result = result.filter(
-        (conversation) => conversation.status === "active" || conversation.status === "idle",
-      );
-    } else if (filter === "done") {
-      result = result.filter(
-        (conversation) => conversation.status === "done" || conversation.status === "failed",
-      );
-    }
-    if (deferredQuery) {
-      result = result.filter((conversation) => matchesSearch(conversation, deferredQuery));
+    if (filter === "running") {
+      result = result.filter((conversation) => conversation.status === "active");
+    } else if (filter === "needsYou") {
+      result = result.filter((conversation) => needsYouIds.has(conversation.id));
+    } else if (filter === "failed") {
+      result = result.filter((conversation) => conversation.status === "failed");
+    } else if (filter === "finished") {
+      result = result.filter((conversation) => conversation.status === "done");
     }
     return sortConversations(result, prefs);
-  }, [conversations, deferredQuery, filter, prefs]);
+  }, [conversations, filter, prefs, needsYouIds]);
+
+  // F7 — search produces grouped matching-thread results (not a flat filter).
+  const searchResults = useMemo<AgentSearchConversationResult[]>(() => {
+    if (!deferredQuery) return [];
+    const scope = conversations.filter((c) =>
+      filter === "archived" ? c.archived : !c.archived || includeArchived,
+    );
+    return searchAgentConversations(scope, deferredQuery, { includeArchived });
+  }, [conversations, deferredQuery, filter, includeArchived]);
 
   const needsYou = useMemo(
     () =>
@@ -253,17 +308,89 @@ export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarP
     renameConversation(id, next);
   }, [conversations, editing, renameConversation]);
 
+  // F7 — navigating a search hit: select the conversation and, for a message
+  // hit, arm the stable message/revision target for MessageList to consume.
+  const navigateToHit = useCallback(
+    (result: AgentSearchConversationResult, hit?: AgentSearchHit) => {
+      onSelect(result.conversationId);
+      if (hit?.messageId) {
+        useReviewStore.getState().setSearchNavigation({
+          conversationId: result.conversationId,
+          messageId: hit.messageId,
+          transcriptRevisionId: hit.transcriptRevisionId,
+          token: `search:${result.conversationId}:${hit.messageId}:${Date.now()}`,
+        });
+      }
+    },
+    [onSelect],
+  );
+
+  // V7 — resizable sidebar. Drag updates one measured layout per frame and
+  // persists only on release; keyboard + double-click give the same control.
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const appliedWidth = dragWidth ?? width;
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const currentDragWidthRef = useRef(width);
+  const rafRef = useRef<number | null>(null);
+
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragRef.current = { startX: event.clientX, startWidth: width };
+    currentDragWidthRef.current = width;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    const next = clampSidebarWidth(
+      dragRef.current.startWidth + (event.clientX - dragRef.current.startX),
+    );
+    currentDragWidthRef.current = next;
+    if (rafRef.current == null) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        setDragWidth(currentDragWidthRef.current);
+      });
+    }
+  };
+  const endDrag = () => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    setWidth(currentDragWidthRef.current);
+    setDragWidth(null);
+  };
+  const onSeparatorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Home") {
+      event.preventDefault();
+      setWidth(AGENT_SIDEBAR_MIN_WIDTH);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setWidth(AGENT_SIDEBAR_MAX_WIDTH);
+      return;
+    }
+    const step = event.shiftKey ? 32 : 8;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setWidth(width - step);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setWidth(width + step);
+    }
+  };
+
   const renderConversation = (conversation: AgentConversation, attention: boolean) => {
     const selected = conversation.id === selectedId;
     const pinned = prefs[conversation.id]?.pinned === true;
     const dot = dotStateFor(conversation.status, attention);
-    // A live turn owns the title (the backend may still be summarising it), so
-    // renaming is offered only on a settled session — AND only where the
-    // session record is renamable at all.
-    // the method a rename is a control that undoes itself on the next listing.
     const busy = conversation.status === "active";
     const canRename = !busy && capabilitiesFor(conversation).canRename;
     const rowShell = `group relative rounded-lg ${selected ? "bg-bg-hover" : ""}`;
+    const fullTitle = conversation.title || "(untitled)";
 
     if (editing?.id === conversation.id) {
       return (
@@ -320,11 +447,12 @@ export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarP
               });
             }
           }}
-          // Provider identity lives in the tooltip and the composer's model
-          // picker — never as row chrome (the capability rule).
-          title={`${providerLabel(conversation.agent)} · ${statusWord(dot)}${
+          // The complete title + provider + status are disclosed on hover /
+          // focus, so a long title is never reduced to its truncated cell.
+          title={`${fullTitle} — ${providerLabel(conversation.agent)} · ${statusWord(dot)}${
             canRename ? " — double-click or F2 to rename" : ""
           }`}
+          aria-label={`${fullTitle}, ${providerLabel(conversation.agent)}, ${statusWord(dot)}`}
           className={`flex w-full items-center gap-2 rounded-lg py-[5px] pl-[26px] pr-2 text-left text-ui transition-colors ${
             selected
               ? "text-text-primary"
@@ -333,7 +461,7 @@ export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarP
           aria-current={selected ? "page" : undefined}
         >
           <StatusDot state={dot} />
-          <span className="min-w-0 flex-1 truncate">{conversation.title || "(untitled)"}</span>
+          <span className="min-w-0 flex-1 truncate">{fullTitle}</span>
           {/* The hover actions sit ON this cell, so it fades rather than
               reflowing the row when the pointer arrives. */}
           <span className="shrink-0 font-mono text-meta text-text-faint transition-opacity group-focus-within:opacity-0 group-hover:opacity-0">
@@ -375,132 +503,214 @@ export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarP
       </div>
     );
   };
-  return (
-    <aside className="flex w-[252px] shrink-0 flex-col overflow-hidden border-r border-bg-border bg-bg-secondary">
-      <div className="flex items-center gap-1.5 px-3 pb-1 pt-2.5">
-        <span className="text-ui font-semibold text-text-primary">Agents</span>
-        <Badge>{counts.all}</Badge>
-        {needsYouIds.size > 0 && <Badge tone="amber">{needsYouIds.size}</Badge>}
-        <span className="flex-1" />
-      </div>
 
-      <div className="px-2.5 pb-1 pt-1">
-        <label className="flex items-center gap-1.5 rounded-lg border border-bg-border bg-bg-primary px-2 py-1">
-          <Search size={11} className="shrink-0 text-text-muted" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search conversations…"
-            className="min-w-0 flex-1 bg-transparent text-ui text-text-primary placeholder:text-text-muted focus:outline-none"
-          />
-        </label>
-        <div className="mt-1.5 flex items-center gap-0.5">
-          {(["all", "active", "done", "archived"] as const).map((value) => (
+  const renderSearchResult = (result: AgentSearchConversationResult) => {
+    const titleHit = result.hits.find((h) => h.field === "title");
+    const messageHits = result.hits.filter((h) => h.field === "message");
+    const projectHit = result.hits.find((h) => h.field === "project");
+    return (
+      <section key={result.conversationId} className="mb-2">
+        <button
+          type="button"
+          onClick={() => navigateToHit(result, titleHit ?? projectHit)}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-ui font-semibold text-text-primary hover:bg-bg-elevated"
+        >
+          <span className="min-w-0 flex-1 truncate">{result.title || "(untitled)"}</span>
+          {result.archived && <Badge tone="neutral">Archived</Badge>}
+        </button>
+        <div className="mb-0.5 px-2 text-meta text-text-faint">
+          {result.totalMatches} match{result.totalMatches === 1 ? "" : "es"}
+          {result.hasMore && <span className="text-accent-blue"> · more matches</span>}
+        </div>
+        <div className="flex flex-col gap-1">
+          {messageHits.map((hit) => (
             <button
-              key={value}
+              key={`${hit.messageId ?? "proj"}-${hit.field}`}
               type="button"
-              onClick={() => setFilter(value)}
-              className={`flex-1 rounded-md py-0.5 text-meta transition-colors ${
-                filter === value
-                  ? "bg-bg-hover text-text-primary"
-                  : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-              }`}
+              onClick={() => navigateToHit(result, hit)}
+              className="rounded-md px-2 py-1 text-left text-meta text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
             >
-              {value === "all"
-                ? "All"
-                : value === "active"
-                  ? "Active"
-                  : value === "done"
-                    ? "Done"
-                    : "Archived"}
-              <span className="ml-0.5 opacity-60">({counts[value]})</span>
+              <HighlightedExcerpt excerpt={hit.excerpt} matchRanges={hit.matchRanges} />
             </button>
           ))}
         </div>
-      </div>
+      </section>
+    );
+  };
 
-      <div className="flex-1 overflow-y-auto px-2.5 py-3">
-        {filtered.length === 0 ? (
-          <EmptyState
-            className="py-16"
-            icon={deferredQuery ? <Search size={22} /> : <BellRing size={22} />}
-            title={deferredQuery ? "No matching conversations" : "No conversations yet"}
-            description={
-              deferredQuery
-                ? "Try a different title, project, or message."
-                : "Start your first one with New agent below."
-            }
-          />
-        ) : (
-          <>
-            {needsYou.length > 0 && (
-              <section>
-                <div className="flex items-center gap-1.5 px-2 pb-1 pt-1">
-                  <BellRing size={10} className="text-accent-amber" />
-                  <span className="text-meta uppercase tracking-[0.09em] text-accent-amber">
-                    Needs you
-                  </span>
-                  <span className="ml-auto font-mono text-meta text-accent-amber">
-                    {needsYou.length}
-                  </span>
-                </div>
-                {needsYou.map((conversation) => renderConversation(conversation, true))}
-              </section>
-            )}
-            {Array.from(groups.entries()).map(([key, conversationsInProject]) => {
-              const example = conversationsInProject[0];
-              if (!example) return null;
-              return (
-                <section key={key}>
-                  <div
-                    className="flex items-center gap-2 rounded-lg px-2 py-[4.5px] text-ui font-semibold text-text-primary"
-                    title={baseProjectPath(example)}
-                  >
-                    {example.sshTarget ? (
-                      <Server size={10} className="shrink-0 text-accent-green" />
-                    ) : (
-                      <FolderOpen size={10} className="shrink-0 text-text-muted" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">
-                      {projectLabel(example, projectLabels)}
+  return (
+    <>
+      <aside
+        className="flex shrink-0 flex-col overflow-hidden border-r border-bg-border bg-bg-secondary"
+        style={{ width: appliedWidth }}
+      >
+        <div className="flex items-center gap-1.5 px-3 pb-1 pt-2.5">
+          <span className="text-ui font-semibold text-text-primary">Agents</span>
+          <Badge>{counts.all}</Badge>
+          {needsYouIds.size > 0 && <Badge tone="amber">{needsYouIds.size}</Badge>}
+          <span className="flex-1" />
+        </div>
+
+        <div className="px-2.5 pb-1 pt-1">
+          <label className="flex items-center gap-1.5 rounded-lg border border-bg-border bg-bg-primary px-2 py-1">
+            <Search size={11} className="shrink-0 text-text-muted" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search conversations…"
+              className="min-w-0 flex-1 bg-transparent text-ui text-text-primary placeholder:text-text-muted focus:outline-none"
+            />
+          </label>
+          {deferredQuery && filter !== "archived" && (
+            <label className="mt-1 flex items-center gap-1.5 px-0.5 text-meta text-text-muted">
+              <input
+                type="checkbox"
+                checked={includeArchived}
+                onChange={(event) => setIncludeArchived(event.target.checked)}
+                className="h-3 w-3"
+              />
+              Include archived
+            </label>
+          )}
+          <div className="mt-1.5 flex flex-wrap items-center gap-0.5">
+            {(
+              [
+                ["all", "All"],
+                ["running", "Running"],
+                ["needsYou", "Needs you"],
+                ["failed", "Failed"],
+                ["finished", "Finished"],
+                ["archived", "Archived"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={`rounded-md px-1.5 py-0.5 text-meta transition-colors ${
+                  filter === value
+                    ? "bg-bg-hover text-text-primary"
+                    : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                }`}
+              >
+                {label}
+                <span className="ml-0.5 opacity-60">({counts[value]})</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2.5 py-3">
+          {deferredQuery ? (
+            searchResults.length === 0 ? (
+              <EmptyState
+                className="py-16"
+                icon={<Search size={22} />}
+                title="No matching conversations"
+                description="Try a different title, project, or message."
+              />
+            ) : (
+              searchResults.map(renderSearchResult)
+            )
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              className="py-16"
+              icon={<BellRing size={22} />}
+              title="No conversations yet"
+              description="Start your first one with New agent below."
+            />
+          ) : (
+            <>
+              {needsYou.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-1.5 px-2 pb-1 pt-1">
+                    <BellRing size={10} className="text-accent-amber" />
+                    <span className="text-meta uppercase tracking-[0.09em] text-accent-amber">
+                      Needs you
                     </span>
-                    <span className="shrink-0 font-mono text-meta text-text-faint">
-                      {conversationsInProject.length}
+                    <span className="ml-auto font-mono text-meta text-accent-amber">
+                      {needsYou.length}
                     </span>
                   </div>
-                  {conversationsInProject.map((conversation) =>
-                    renderConversation(conversation, false),
-                  )}
+                  {needsYou.map((conversation) => renderConversation(conversation, true))}
                 </section>
-              );
-            })}
-          </>
+              )}
+              {Array.from(groups.entries()).map(([key, conversationsInProject]) => {
+                const example = conversationsInProject[0];
+                if (!example) return null;
+                return (
+                  <section key={key}>
+                    <div
+                      className="flex items-center gap-2 rounded-lg px-2 py-[4.5px] text-ui font-semibold text-text-primary"
+                      title={baseProjectPath(example)}
+                    >
+                      {example.sshTarget ? (
+                        <Server size={10} className="shrink-0 text-accent-green" />
+                      ) : (
+                        <FolderOpen size={10} className="shrink-0 text-text-muted" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate">
+                        {projectLabel(example, projectLabels)}
+                      </span>
+                      <span className="shrink-0 font-mono text-meta text-text-faint">
+                        {conversationsInProject.length}
+                      </span>
+                    </div>
+                    {conversationsInProject.map((conversation) =>
+                      renderConversation(conversation, false),
+                    )}
+                  </section>
+                );
+              })}
+            </>
+          )}
+        </div>
+
+        {/* Footer CTA — the ONE create control in this sidebar (the header "+"
+            that called this identical handler is gone, mirroring FleetSidebar). */}
+        <div className="border-t border-line-soft p-2.5">
+          <button
+            type="button"
+            onClick={onNewAgent}
+            title="New agent — opens the launch composer"
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent-line bg-accent-green/15 px-2 py-1.5 text-ui font-medium text-accent-green transition-colors hover:bg-accent-green/25"
+          >
+            <Plus size={11} />
+            New agent
+          </button>
+        </div>
+
+        {/* Delete discards the conversation's worktree + branch; the shared
+            confirm names them (and any uncommitted changes) before the click. */}
+        {pendingDelete && (
+          <ConfirmDeleteConversationModal
+            conversationId={pendingDelete.id}
+            title={pendingDelete.title}
+            onClose={() => setPendingDelete(null)}
+          />
         )}
-      </div>
+      </aside>
 
-      {/* Footer CTA — the ONE create control in this sidebar (the header "+"
-          that called this identical handler is gone, mirroring FleetSidebar). */}
-      <div className="border-t border-line-soft p-2.5">
-        <button
-          type="button"
-          onClick={onNewAgent}
-          title="New agent — opens the launch composer"
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-accent-line bg-accent-green/15 px-2 py-1.5 text-ui font-medium text-accent-green transition-colors hover:bg-accent-green/25"
-        >
-          <Plus size={11} />
-          New agent
-        </button>
+      {/* V7 — the resize splitter. 8px hit area, 2px visible grip, drag +
+          keyboard (Home/End/arrows) + double-click reset. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize conversations sidebar"
+        aria-valuemin={AGENT_SIDEBAR_MIN_WIDTH}
+        aria-valuemax={AGENT_SIDEBAR_MAX_WIDTH}
+        aria-valuenow={appliedWidth}
+        tabIndex={0}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onDoubleClick={() => setWidth(AGENT_SIDEBAR_DEFAULT_WIDTH)}
+        onKeyDown={onSeparatorKeyDown}
+        className="group flex w-2 shrink-0 cursor-col-resize items-center justify-center border-r border-bg-border bg-bg-secondary transition-colors hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue"
+      >
+        <div className="h-8 w-0.5 rounded-full bg-bg-border transition-colors group-hover:bg-accent-blue group-focus-visible:bg-accent-blue" />
       </div>
-
-      {/* Delete discards the conversation's worktree + branch; the shared
-          confirm names them (and any uncommitted changes) before the click. */}
-      {pendingDelete && (
-        <ConfirmDeleteConversationModal
-          conversationId={pendingDelete.id}
-          title={pendingDelete.title}
-          onClose={() => setPendingDelete(null)}
-        />
-      )}
-    </aside>
+    </>
   );
 }

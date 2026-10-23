@@ -4,7 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSidebar } from "@/components/agents/AgentSidebar";
 import { ToastProvider } from "@/components/ui/Toast";
 import { useAgentApprovalStore } from "@/stores/agentApprovalStore";
-import { useAgentSidebarPrefsStore } from "@/stores/agentSidebarPrefsStore";
+import {
+  useAgentSidebarPrefsStore,
+  clampSidebarWidth,
+  AGENT_SIDEBAR_MIN_WIDTH,
+  AGENT_SIDEBAR_MAX_WIDTH,
+  AGENT_SIDEBAR_DEFAULT_WIDTH,
+} from "@/stores/agentSidebarPrefsStore";
+import { useReviewStore } from "@/stores/reviewStore";
 import type { AgentConversation } from "@/types/agent-conversation";
 
 const agentStore = vi.hoisted(() => ({
@@ -71,6 +78,12 @@ describe("AgentSidebar", () => {
     useAgentSidebarPrefsStore.setState({
       prefs: {},
       projectLabels: {},
+      width: AGENT_SIDEBAR_DEFAULT_WIDTH,
+    });
+    useReviewStore.setState({
+      searchNavigation: null,
+      attentionFocus: null,
+      returnAnchor: null,
     });
   });
 
@@ -110,7 +123,8 @@ describe("AgentSidebar", () => {
 
     render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
 
-    expect(screen.getByText("Needs you")).toBeInTheDocument();
+    // "Needs you" now appears twice: the filter chip and the section heading.
+    expect(screen.getAllByText("Needs you")).toHaveLength(2);
     expect(screen.getByText("Investigate agent pane")).toBeInTheDocument();
   });
 
@@ -210,5 +224,104 @@ describe("AgentSidebar", () => {
 
     expect(screen.getByText("repoA @ Box")).toBeInTheDocument();
     expect(screen.getByText("repoB @ Box")).toBeInTheDocument();
+  });
+
+  it("search results show a match excerpt and navigating selects the exact turn", () => {
+    agentStore.state.conversations = [
+      conversation({
+        id: "conv-1",
+        messages: [
+          { id: "msg-1", role: "user", content: "Check the Agents route", timestamp: 1 },
+          {
+            id: "msg-2",
+            role: "assistant",
+            content: "the rare phrase appears here",
+            timestamp: 2,
+          },
+        ],
+      }),
+    ];
+    const onSelect = vi.fn();
+    render(<AgentSidebar selectedId={null} onSelect={onSelect} onNewAgent={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search conversations…"), {
+      target: { value: "rare phrase" },
+    });
+
+    // One matching-turn excerpt; clicking it navigates to the stable message id.
+    fireEvent.click(screen.getByText("rare phrase"));
+
+    expect(onSelect).toHaveBeenCalledWith("conv-1");
+    expect(useReviewStore.getState().searchNavigation).toMatchObject({
+      conversationId: "conv-1",
+      messageId: "msg-2",
+    });
+  });
+
+  it("search shows an explicit match count and More matches when capped", () => {
+    agentStore.state.conversations = [
+      conversation({
+        id: "conv-1",
+        messages: [
+          { id: "m1", role: "user", content: "needle one", timestamp: 1 },
+          { id: "m2", role: "user", content: "needle two", timestamp: 2 },
+          { id: "m3", role: "user", content: "needle three", timestamp: 3 },
+          { id: "m4", role: "user", content: "needle four", timestamp: 4 },
+          { id: "m5", role: "user", content: "needle five", timestamp: 5 },
+        ],
+      }),
+    ];
+    render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search conversations…"), {
+      target: { value: "needle" },
+    });
+
+    expect(screen.getByText("5 matches")).toBeInTheDocument();
+    expect(screen.getByText(/more matches/)).toBeInTheDocument();
+  });
+
+  it("resizes the sidebar via the keyboard separator and clamps to bounds", () => {
+    render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
+    const separator = screen.getByRole("separator", {
+      name: "Resize conversations sidebar",
+    });
+    expect(separator).toHaveAttribute("aria-valuenow", "300");
+
+    fireEvent.keyDown(separator, { key: "ArrowRight" });
+    expect(useAgentSidebarPrefsStore.getState().width).toBe(308);
+
+    fireEvent.keyDown(separator, { key: "ArrowLeft" });
+    expect(useAgentSidebarPrefsStore.getState().width).toBe(300);
+
+    fireEvent.keyDown(separator, { key: "End" });
+    expect(useAgentSidebarPrefsStore.getState().width).toBe(AGENT_SIDEBAR_MAX_WIDTH);
+
+    fireEvent.keyDown(separator, { key: "Home" });
+    expect(useAgentSidebarPrefsStore.getState().width).toBe(AGENT_SIDEBAR_MIN_WIDTH);
+  });
+
+  it("double-click on the separator resets width to the default", () => {
+    useAgentSidebarPrefsStore.getState().setWidth(450);
+    render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
+    const separator = screen.getByRole("separator", {
+      name: "Resize conversations sidebar",
+    });
+
+    fireEvent.doubleClick(separator);
+
+    expect(useAgentSidebarPrefsStore.getState().width).toBe(AGENT_SIDEBAR_DEFAULT_WIDTH);
+  });
+});
+
+describe("clampSidebarWidth", () => {
+  it("rounds, clamps and rejects non-finite values", () => {
+    expect(clampSidebarWidth(999)).toBe(AGENT_SIDEBAR_MAX_WIDTH);
+    expect(clampSidebarWidth(10)).toBe(AGENT_SIDEBAR_MIN_WIDTH);
+    expect(clampSidebarWidth(301.6)).toBe(302);
+    expect(clampSidebarWidth(Number.NaN)).toBe(AGENT_SIDEBAR_DEFAULT_WIDTH);
+    expect(clampSidebarWidth(Number.POSITIVE_INFINITY)).toBe(AGENT_SIDEBAR_DEFAULT_WIDTH);
+    expect(clampSidebarWidth("300" as unknown as number)).toBe(AGENT_SIDEBAR_DEFAULT_WIDTH);
+    expect(clampSidebarWidth(undefined)).toBe(AGENT_SIDEBAR_DEFAULT_WIDTH);
   });
 });

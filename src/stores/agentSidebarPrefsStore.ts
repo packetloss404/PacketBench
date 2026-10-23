@@ -35,9 +35,27 @@ export interface ConversationPrefs {
   expanded?: boolean;
 }
 
+/** V7 — sidebar geometry bounds. A geometry preference, not a font size. */
+export const AGENT_SIDEBAR_DEFAULT_WIDTH = 300;
+export const AGENT_SIDEBAR_MIN_WIDTH = 240;
+export const AGENT_SIDEBAR_MAX_WIDTH = 480;
+
+/** Clamp/validate a persisted or runtime width to the documented range. */
+export function clampSidebarWidth(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return AGENT_SIDEBAR_DEFAULT_WIDTH;
+  }
+  return Math.min(
+    AGENT_SIDEBAR_MAX_WIDTH,
+    Math.max(AGENT_SIDEBAR_MIN_WIDTH, Math.round(value)),
+  );
+}
+
 interface PersistedState {
   /** rowId (conversationId or workspaceId) -> { pinned? } */
   prefs: Record<string, ConversationPrefs>;
+  /** Sidebar width in CSS pixels (240..480). */
+  width: number;
 }
 
 interface AgentSidebarPrefsStore extends PersistedState {
@@ -47,6 +65,8 @@ interface AgentSidebarPrefsStore extends PersistedState {
   /** Fleet sidebar: expand/collapse a workspace row's children + FILES tree. */
   toggleExpanded: (rowId: string) => void;
   setProjectLabel: (projectPath: string, label: string) => void;
+  /** V7: set + persist the sidebar width (clamped to 240..480). */
+  setWidth: (width: number) => void;
 }
 
 function load(): PersistedState {
@@ -65,11 +85,11 @@ function load(): PersistedState {
     // indistinguishable from absent and would grow the blob forever.
     if (next.pinned || next.expanded) prefs[id] = next;
   }
-  return { prefs };
+  return { prefs, width: clampSidebarWidth(raw?.width) };
 }
 
 function persist(state: PersistedState) {
-  saveToStorage(STORAGE_KEY, { prefs: state.prefs });
+  saveToStorage(STORAGE_KEY, { prefs: state.prefs, width: state.width });
 }
 
 /**
@@ -102,6 +122,7 @@ function loadProjectLabels(): Record<string, string> {
  */
 function setFlag(
   current: Record<string, ConversationPrefs>,
+  width: number,
   rowId: string,
   flag: keyof ConversationPrefs,
   value: boolean,
@@ -112,24 +133,34 @@ function setFlag(
   else delete next[flag];
   if (next.pinned || next.expanded) prefs[rowId] = next;
   else delete prefs[rowId];
-  persist({ prefs });
-  return { prefs };
+  persist({ prefs, width });
+  return { prefs, width };
 }
 
 const initial = load();
 
 export const useAgentSidebarPrefsStore = create<AgentSidebarPrefsStore>((set) => ({
   prefs: initial.prefs,
+  width: initial.width,
   projectLabels: loadProjectLabels(),
 
   togglePinned: (rowId) => {
     if (!rowId) return;
-    set((s) => setFlag(s.prefs, rowId, "pinned", !s.prefs[rowId]?.pinned));
+    set((s) => setFlag(s.prefs, s.width, rowId, "pinned", !s.prefs[rowId]?.pinned));
   },
 
   toggleExpanded: (rowId) => {
     if (!rowId) return;
-    set((s) => setFlag(s.prefs, rowId, "expanded", !s.prefs[rowId]?.expanded));
+    set((s) => setFlag(s.prefs, s.width, rowId, "expanded", !s.prefs[rowId]?.expanded));
+  },
+
+  setWidth: (width) => {
+    set((s) => {
+      const next = clampSidebarWidth(width);
+      if (next === s.width) return s;
+      persist({ prefs: s.prefs, width: next });
+      return { width: next };
+    });
   },
 
   setProjectLabel: (projectPath, label) => {

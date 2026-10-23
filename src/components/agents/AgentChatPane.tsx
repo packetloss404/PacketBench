@@ -26,6 +26,11 @@ import { Composer } from "./composer/Composer";
 import { ReviewBar } from "./review/ReviewBar";
 import { ReviewSurface } from "./review/ReviewSurface";
 import { useReviewStore } from "@/stores/reviewStore";
+import {
+  openAgentAttention,
+  restoreReviewPosition,
+  type AgentAttentionTarget,
+} from "@/stores/sessionGlue";
 import { useScrollState } from "./hooks/useScrollState";
 import { useLatestPlanPreview } from "./hooks/useLatestPlanPreview";
 import { useDiffTotals } from "./hooks/useDiffTotals";
@@ -156,6 +161,34 @@ export function AgentChatPane({
   // transcript chips / MultiFileEditCard / the header chip can deep-link.
   const reviewOpen = useReviewStore((s) => s.open && s.conversationId === conversationId);
   const closeReview = useReviewStore((s) => s.close);
+  // F6: the exact blocker this header's attention badge opens, and whether a
+  // saved "return to review" position exists for this conversation.
+  const returnAnchor = useReviewStore((s) => s.returnAnchor);
+  const hasReturnAnchor = returnAnchor?.conversationId === conversationId;
+  const attentionTarget = useMemo<AgentAttentionTarget | null>(() => {
+    const perm = pendingPermissions[0];
+    if (perm) {
+      return { conversationId, kind: "permission", requestId: perm.id };
+    }
+    const edit = pendingEdits[0];
+    if (edit) {
+      return {
+        conversationId,
+        kind: "edit",
+        requestId: edit.id,
+        filePath: edit.path,
+      };
+    }
+    return null;
+  }, [conversationId, pendingPermissions, pendingEdits]);
+  // F7: a search result targeting a turn in THIS conversation (consumed once
+  // by MessageList, then cleared).
+  const searchNavigationTarget = useReviewStore((s) =>
+    s.searchNavigation && s.searchNavigation.conversationId === conversationId
+      ? s.searchNavigation
+      : null,
+  );
+  const clearSearchNavigation = useReviewStore((s) => s.clearSearchNavigation);
 
   // P0-3: preview visibility is the dock's, the target is conversation-scoped,
   // and Hide/Show are one verb each (see lib/previewDock).
@@ -202,7 +235,7 @@ export function AgentChatPane({
     messagesEndRef,
     isAtBottom,
     unreadCount,
-    jumpToBottom,
+    jumpToLatest,
   } = useScrollState(conversationId, conversation?.messages);
 
   useLatestPlanPreview(conversation, conversationId);
@@ -368,6 +401,12 @@ export function AgentChatPane({
           onArchive={onArchive}
           onExport={() => void handleExport(conversation)}
           pendingApprovalCount={pendingApprovalCount}
+          onOpenAttention={
+            attentionTarget ? () => void openAgentAttention(attentionTarget) : undefined
+          }
+          onReturnToReview={
+            hasReturnAnchor ? () => void restoreReviewPosition(conversationId) : undefined
+          }
           dockOpen={dockExpanded}
           onToggleDock={dockSurface ? toggleDock : undefined}
         />
@@ -427,6 +466,10 @@ export function AgentChatPane({
                 isActive={isActive}
                 scrollContainerRef={messagesContainerRef}
                 approvals={approvalsBinding}
+                searchNavigationTarget={searchNavigationTarget}
+                onSearchNavigationConsumed={() =>
+                  clearSearchNavigation(conversationId)
+                }
               />
 
               <div ref={messagesEndRef} />
@@ -452,7 +495,7 @@ export function AgentChatPane({
             <Tooltip content="Jump to latest">
               <button
                 type="button"
-                onClick={jumpToBottom}
+                onClick={jumpToLatest}
                 className="absolute bottom-3 left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-bg-border bg-bg-primary px-3 py-1 text-ui text-text-secondary shadow-md transition-colors hover:border-accent-green/60 hover:text-text-primary"
               >
                 <ArrowDown size={12} />
