@@ -103,6 +103,16 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       execution-context disclosure (V8) are implemented with focused tests.
       Remaining: migrate raw `text-[Npx]` consumers, composited
       accent-alpha/disabled state checks, Monitor window, and native evidence.
+- [x] **P1 — Runtime journal substrate (R1a).** One local SQLite journal
+      (`core/runtime_journal.rs`) with rollback journal + `synchronous=FULL` +
+      foreign keys owns launch operations, conversation owners, runs and
+      append-only events. Idempotent `prepare` (same operation+digest → same
+      IDs; changed digest → conflict), cancel tombstone that never revives,
+      `user_version` migrations that fail closed on a newer/corrupt file, and
+      epoch-checked cancellation. Exposed through five `*_runtime_*` commands
+      that are **inert unless `PACKETBENCH_RUNTIME_JOURNAL=1`**; nothing in the
+      live agent loop calls them yet. Rust unit tests + a TS client/digest test
+      pass. R2 (same-runner extraction) and H2/H4 integration remain.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

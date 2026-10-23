@@ -585,6 +585,12 @@ pub fn run() {
             commands::conversations::load_conversations,
             commands::conversations::delete_conversation_file,
             commands::conversations::export_conversation_markdown,
+            // R1a runtime journal (inert unless PACKETBENCH_RUNTIME_JOURNAL=1)
+            commands::agent_runtime::prepare_runtime_run,
+            commands::agent_runtime::get_runtime_launch,
+            commands::agent_runtime::get_runtime_run,
+            commands::agent_runtime::list_runtime_events,
+            commands::agent_runtime::cancel_runtime_run,
             // Draft attachment assets (F2B)
             commands::draft_assets::stage_agent_draft_asset,
             commands::draft_assets::read_agent_draft_asset,

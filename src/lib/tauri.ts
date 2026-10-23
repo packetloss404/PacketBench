@@ -3,7 +3,12 @@ import type {
   AgentConfigDto,
   PersistedStateDto,
   PersistedUiStateDto,
+  PrepareRuntimeRunInput,
+  PrepareRuntimeRunResult,
   ReadDraftAssetDto,
+  RuntimeEventView,
+  RuntimeLaunchView,
+  RuntimeRunSummary,
   StageDraftAssetInput,
   StagedDraftAssetDto,
   WorkspaceDto,
@@ -4132,6 +4137,36 @@ export async function releaseAgentDraftAsset(attachmentId: string): Promise<void
 
 export async function gcAgentDraftAssets(keep: string[]): Promise<number> {
   return invoke<number>("gc_agent_draft_assets", { keep });
+}
+
+// R1a runtime journal (inert unless PACKETBENCH_RUNTIME_JOURNAL=1)
+export async function prepareRuntimeRun(
+  input: PrepareRuntimeRunInput,
+): Promise<PrepareRuntimeRunResult> {
+  return invoke<PrepareRuntimeRunResult>("prepare_runtime_run", { input });
+}
+
+export async function getRuntimeLaunch(operationId: string): Promise<RuntimeLaunchView> {
+  return invoke<RuntimeLaunchView>("get_runtime_launch", { operationId });
+}
+
+export async function getRuntimeRun(runId: string): Promise<RuntimeRunSummary> {
+  return invoke<RuntimeRunSummary>("get_runtime_run", { runId });
+}
+
+export async function listRuntimeEvents(
+  runId: string,
+  afterSeq: number,
+  limit: number,
+): Promise<RuntimeEventView[]> {
+  return invoke<RuntimeEventView[]>("list_runtime_events", { runId, afterSeq, limit });
+}
+
+export async function cancelRuntimeRun(
+  operationId: string,
+  expectedEpoch: number,
+): Promise<RuntimeLaunchView> {
+  return invoke<RuntimeLaunchView>("cancel_runtime_run", { operationId, expectedEpoch });
 }
 
 export async function loadConversations(): Promise<string[]> {

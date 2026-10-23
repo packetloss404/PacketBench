@@ -16,6 +16,34 @@ export type ReadDraftAssetDto = { mediaType: string, dataBase64: string, };
 
 export type DraftAssetMeta = { attachmentId: string, name: string, mimeType: string, byteLength: number, sha256: string, createdAtMs: bigint, };
 
+export type FrozenRuntimeLaunch = {
+/**
+ * Provider route id (e.g. "anthropic", "openai").
+ */
+route: string, model: string,
+/**
+ * Only "checkout" is accepted by R1a.
+ */
+requestedIsolation: string, draftId: string, draftRevision: string, projectKey: string, basePath: string, };
+
+export type PrepareRuntimeRunInput = { operationId: string, conversationId: string,
+/**
+ * "initial" or "existing".
+ */
+kind: string, retryOfOperationId?: string, requestDigest: string, launch: FrozenRuntimeLaunch, };
+
+export type PrepareRuntimeRunResult = { operationId: string, conversationId: string, runId: string, epoch: number, phase: string,
+/**
+ * false when an identical operation+digest was already prepared.
+ */
+created: boolean, };
+
+export type RuntimeRunSummary = { version: number, runtimeRunId: string, conversationId: string, operationId: string, epoch: number, state: string, resumeMode: string, latestDurableSeq: number, };
+
+export type RuntimeLaunchView = { operationId: string, conversationId: string, runId: string, phase: string, requestDigest: string, createdAt: number, cancelledAt?: number, };
+
+export type RuntimeEventView = { runId: string, seq: number, epoch: number, kind: string, payloadHash: string, createdAt: number, };
+
 export type TerminalShellSelectionDto = { profile: string, executable?: string, args?: Array<string>, wslDistro?: string, };
 
 export type WorkspacePaneDto = { id: string, agentId: WorkspaceAgentSlotDto, sessionId: string | null, gridPosition: GridPositionDto, accentColor?: string, pinnedCommands?: Array<string>, taskId?: string, flightId?: string, agentConfigId?: string, initialPrompt?: string, overrideCommand?: string, overrideArgs?: Array<string>,

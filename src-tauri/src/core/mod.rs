@@ -53,6 +53,9 @@ pub mod pty;
 pub(crate) mod pty_output;
 // One-time reprice of historical cost figures written with the pre-CE2 rates.
 pub mod reprice;
+// R1a: backend runtime journal substrate (launch identity/idempotency).
+pub mod runtime_journal;
+pub mod runtime_types;
 pub mod shared;
 pub mod shell_path;
 pub mod ssh_askpass;

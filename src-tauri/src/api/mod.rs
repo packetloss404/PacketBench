@@ -10,6 +10,10 @@ use crate::core::{
 use crate::commands::draft_assets::{
     DraftAssetMeta, ReadDraftAssetDto, StageDraftAssetInput, StagedDraftAssetDto,
 };
+use crate::core::runtime_types::{
+    FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView,
+    RuntimeLaunchView, RuntimeRunSummary,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub enum WorkspaceAgentSlotDto {
@@ -3137,7 +3141,13 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(StageDraftAssetInput);
     push_decl!(StagedDraftAssetDto);
     push_decl!(ReadDraftAssetDto);
-    push_decl!(DraftAssetMeta);    push_decl!(TerminalShellSelectionDto);
+    push_decl!(DraftAssetMeta);
+    push_decl!(FrozenRuntimeLaunch);
+    push_decl!(PrepareRuntimeRunInput);
+    push_decl!(PrepareRuntimeRunResult);
+    push_decl!(RuntimeRunSummary);
+    push_decl!(RuntimeLaunchView);
+    push_decl!(RuntimeEventView);    push_decl!(TerminalShellSelectionDto);
     push_decl!(WorkspacePaneDto);
     push_decl!(GithubRepoDto);
     push_decl!(ExecutionTargetRefDto);

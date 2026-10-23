@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_runtime;
 pub mod agent_sidecar;
 pub mod agents_md;
 pub mod analytics;
