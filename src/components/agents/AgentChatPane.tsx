@@ -26,6 +26,8 @@ import { Composer } from "./composer/Composer";
 import { ReviewBar } from "./review/ReviewBar";
 import { ReviewSurface } from "./review/ReviewSurface";
 import { useReviewStore } from "@/stores/reviewStore";
+import { useFlightStore } from "@/stores/flightStore";
+import { isFlightOwnedConversation } from "@/lib/flightOwnership";
 import {
   openAgentAttention,
   restoreReviewPosition,
@@ -189,6 +191,7 @@ export function AgentChatPane({
       : null,
   );
   const clearSearchNavigation = useReviewStore((s) => s.clearSearchNavigation);
+  const flights = useFlightStore((s) => s.flights);
 
   // P0-3: preview visibility is the dock's, the target is conversation-scoped,
   // and Hide/Show are one verb each (see lib/previewDock).
@@ -296,6 +299,7 @@ export function AgentChatPane({
 
   // isActive = actively streaming / waiting for the agent ("running" in the UI sense).
   const isActive = conversation.status === "active";
+  const flightOwned = isFlightOwnedConversation(conversationId, flights);
   const messages = conversation.messages;
 
   // Claude-Code-style mode set/cycle. Applies flagsForMode(next) to the
@@ -464,12 +468,11 @@ export function AgentChatPane({
                 }
                 onRetryLastTurn={() => void actions.retryLastTurn(conversationId)}
                 isActive={isActive}
+                flightOwned={flightOwned}
                 scrollContainerRef={messagesContainerRef}
                 approvals={approvalsBinding}
                 searchNavigationTarget={searchNavigationTarget}
-                onSearchNavigationConsumed={() =>
-                  clearSearchNavigation(conversationId)
-                }
+                onSearchNavigationConsumed={() => clearSearchNavigation(conversationId)}
               />
 
               <div ref={messagesEndRef} />

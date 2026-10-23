@@ -55,11 +55,13 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       ownership refs, a global (cross-draft) capacity cap, H2 typed-image replay
       validation, and native WebView paste/drop/restart evidence. (Type sniffing,
       per-draft 20 MiB cap, startup GC and missing-asset handling are done.)
-- [ ] **P1 — F3 residuals.** Prevent transcript mutation/fork on Flight-owned
-      builder/reviewer conversations; resolve old message links to saved
-      revisions; native local/SSH restart evidence for lineage and revisions.
-      (Lineage now records the source and rewind parent/active revisions, and
-      rewind refuses while an approval or running tool is unresolved.)
+- [x] **P1 — Flight-owned transcript gating (F3).** Conversations that are the
+      runtime-owned builder or reviewer for a Flight attempt now disable
+      transcript fork/rewind with a visible note; a Flight's planning
+      conversation is correctly excluded. Gating is applied in the chat pane;
+      a programmatic store guard is still open. Focused tests pass.
+- [ ] **P1 — F3 remaining.** Resolve old message links to saved revisions;
+      native local/SSH restart evidence for lineage and revisions.
 - [x] **P1 — Comfortable reading defaults (V1).** Shared tokens raised to
       comfortable sizes (UI 13/20, meta 12/16, transcript 15/24, composer 15/22,
       code 13/20, chip 12/18) with new composer/code/heading roles; the composer

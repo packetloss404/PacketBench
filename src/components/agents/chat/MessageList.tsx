@@ -64,6 +64,8 @@ interface MessageListProps {
   onRewindFrom: (msgId: string) => void;
   onRetryLastTurn: () => void;
   isActive: boolean;
+  /** F3: Flight builder/reviewer conversation — fork/rewind are disabled. */
+  flightOwned?: boolean;
   // Scroll container that owns the message viewport (from AgentChatPane).
   // Used as the IntersectionObserver root for lazy row mounting.
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
@@ -103,6 +105,7 @@ export function MessageList({
   onRewindFrom,
   onRetryLastTurn,
   isActive,
+  flightOwned,
   scrollContainerRef,
   approvals,
   searchNavigationTarget,
@@ -112,7 +115,7 @@ export function MessageList({
   const revisions = conversation.transcriptRevisions ?? [];
   const [viewingHistory, setViewingHistory] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
-  const canMutateHistory = !isActive;
+  const canMutateHistory = !isActive && !flightOwned;
   const lastMessage = messages[messages.length - 1];
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
   const showThinking =
@@ -195,9 +198,7 @@ export function MessageList({
     setHighlightedMessageId(navMessageId);
     const container = scrollContainerRef?.current;
     const doScroll = () => {
-      const el = container?.querySelector<HTMLElement>(
-        `[data-message-id="${navMessageId}"]`,
-      );
+      const el = container?.querySelector<HTMLElement>(`[data-message-id="${navMessageId}"]`);
       if (el && typeof el.scrollIntoView === "function") {
         el.scrollIntoView({ block: "center" });
       }
@@ -252,6 +253,11 @@ export function MessageList({
 
   return (
     <>
+      {flightOwned && (
+        <p className="mb-2 text-center text-meta text-text-muted">
+          Flight-owned conversation — transcript fork/rewind is disabled here.
+        </p>
+      )}
       {revisions.length > 0 && (
         <div className="mb-2 flex justify-center">
           <button
@@ -274,10 +280,7 @@ export function MessageList({
         // prompt that a virtualized placeholder swallowed is an agent hung on a
         // question the user was never shown.
         const forceMount =
-          index >= tailStart ||
-          isLastAssistant ||
-          !!ownedApprovals ||
-          msg.id === navMessageId;
+          index >= tailStart || isLastAssistant || !!ownedApprovals || msg.id === navMessageId;
         return (
           <LazyMessageRow
             key={msg.id}

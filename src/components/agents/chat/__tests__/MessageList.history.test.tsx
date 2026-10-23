@@ -90,6 +90,18 @@ describe("MessageList — fork and rewind affordances", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("disables fork and rewind on a Flight-owned conversation", () => {
+    renderList(conversation(), { flightOwned: true });
+
+    expect(
+      screen.queryByRole("button", { name: "Edit & fork from this turn" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Rewind conversation from this turn" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/Flight-owned conversation/)).toBeInTheDocument();
+  });
+
   it("shows saved history revisions read-only", () => {
     const conv = conversation({
       transcriptRevisions: [
