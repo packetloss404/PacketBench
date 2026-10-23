@@ -64,7 +64,11 @@ revisions. Rewind also refuses while an approval or running tool is
 unresolved. R1a then landed: a default-off SQLite runtime journal substrate
 (launch identity/idempotency, cancel tombstone, fail-closed migrations) exposed
 through inert `*_runtime_*` commands; nothing in the live loop calls it yet, and
-R2 (same-runner extraction) plus H2/H4 integration remain. V1/V2 followed: shared type tokens raised to comfortable sizes
+R2 (same-runner extraction) plus H2/H4 integration remain. R2a added the
+`core/agent_runtime/` host-boundary seam (EventSink + recording double,
+RunRequest/RunOutcome); the full loop extraction (R2b) is deferred because the
+runner is coupled to keyring, MCP, Flight status, hooks and shared session state.
+V1/V2 followed: shared type tokens raised to comfortable sizes
 (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
 muted/faint text now clears 4.5:1 on every surface in both themes, gated by a
 token contrast test. The V3–V8 appearance and F6/F7 continuity tranche then

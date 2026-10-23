@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_config;
+pub mod agent_runtime;
 pub mod agents_md;
 // LM4 (3C-3) — bounded, root-confined Rust-side context assembly for the
 // auxiliary seam. Replaces the Claude CLI file tools for the memory scan.

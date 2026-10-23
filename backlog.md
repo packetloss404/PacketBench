@@ -113,6 +113,13 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       that are **inert unless `PACKETBENCH_RUNTIME_JOURNAL=1`**; nothing in the
       live agent loop calls them yet. Rust unit tests + a TS client/digest test
       pass. R2 (same-runner extraction) and H2/H4 integration remain.
+- [x] **P1 — Runtime runner seam (R2a).** New `core/agent_runtime/` module
+      defines the host boundary the plan names: an object-safe `EventSink`
+      trait, a `RecordingEventSink` test/eval double, `RunRequest` and
+      `RunOutcome`. Nothing in the live loop uses it yet. The full extraction
+      (R2b) is deferred: `run_agent_loop` is coupled to keyring, MCP, Flight
+      status, hooks and shared session state, and moving it needs one
+      coordinated `api_agent.rs` window plus the still-open design decisions.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript
