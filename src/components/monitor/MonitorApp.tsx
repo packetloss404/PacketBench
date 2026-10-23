@@ -75,7 +75,7 @@ export function MonitorApp() {
     <div className="flex h-screen flex-col overflow-hidden bg-bg-primary text-text-primary">
       <MonitorTitleBar label={label} />
       <header className="flex items-center gap-3 border-b border-bg-border bg-bg-secondary px-4 py-2">
-        <span className="bg-accent-green/10 rounded px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-green">
+        <span className="rounded bg-accent-green/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-green">
           Read-only Monitor
         </span>
         <span className="flex-1 text-[10px] text-text-muted">
@@ -136,7 +136,7 @@ function MonitorTitleBar({ label }: { label: string }) {
       <button
         aria-label="Close Monitor"
         onClick={() => void closeMonitorWindow(label)}
-        className="hover:bg-accent-red/80 flex h-full w-11 items-center justify-center"
+        className="flex h-full w-11 items-center justify-center hover:bg-accent-red/80"
       >
         <X size={13} />
       </button>
@@ -212,7 +212,7 @@ function FlightMonitor({ flightId }: { flightId: string }) {
       <div className="rounded border border-bg-border bg-bg-secondary p-4">
         <div className="flex items-center gap-2">
           <h1 className="text-base font-semibold">{flight.title}</h1>
-          <span className="bg-accent-green/10 rounded px-1.5 py-0.5 text-[9px] uppercase text-accent-green">
+          <span className="rounded bg-accent-green/10 px-1.5 py-0.5 text-[9px] uppercase text-accent-green">
             {flight.status}
           </span>
           <span className="text-[9px] uppercase text-text-muted">{flight.priority}</span>
