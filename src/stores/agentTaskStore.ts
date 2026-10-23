@@ -1747,6 +1747,17 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     const idx = conv.messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return false;
 
+    // F3: rewind is unavailable while the user still owes a decision (pending
+    // permission/edit) or a tool is genuinely still running. Truncating under
+    // either would orphan the prompt the user is about to answer.
+    const approvals = useAgentApprovalStore.getState();
+    const pendingApprovals =
+      (approvals.permissions.get(id)?.length ?? 0) + (approvals.edits.get(id)?.length ?? 0);
+    const hasActiveTool = conv.messages.some((m) =>
+      (m.toolCalls ?? []).some((tc) => tc.status === "running" && !tc.interrupted),
+    );
+    if (pendingApprovals > 0 || hasActiveTool) return false;
+
     // Rewind is only available from a settled transcript. If Stop fails or
     // the turn still streams, do not truncate under a live writer.
     if (conv.status === "active" || conv.messages.some((m) => m.isStreaming)) {

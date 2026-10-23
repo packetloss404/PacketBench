@@ -304,15 +304,9 @@ describe("agentTaskStore.rewindConversation", () => {
 
   it("saves a revision and truncates through the selected turn without sending", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const { useAgentApprovalStore } = await import("@/stores/agentApprovalStore");
     const { useAgentStreamingStore } = await import("@/stores/agentStreamingStore");
     const { useAgentPlanStore } = await import("@/stores/agentPlanStore");
     seedConversation(useAgentTaskStore, conversation());
-    useAgentApprovalStore.getState().addPendingPermission("conv-A", {
-      id: "perm-1",
-      name: "bash",
-      arguments: "{}",
-    });
     useAgentStreamingStore.getState().appendThinking("conv-A", "midstream...");
     useAgentPlanStore
       .getState()
@@ -344,7 +338,6 @@ describe("agentTaskStore.rewindConversation", () => {
     expect(startApiAgentSessionMock).not.toHaveBeenCalled();
     expect(sendApiAgentMessageMock).not.toHaveBeenCalled();
     expect(closeApiAgentSessionMock).toHaveBeenCalledWith("conv-A");
-    expect(useAgentApprovalStore.getState().permissions.has("conv-A")).toBe(false);
     expect(useAgentStreamingStore.getState().thinkingStream.has("conv-A")).toBe(false);
     expect(useAgentPlanStore.getState().plan.has("conv-A")).toBe(false);
   });
@@ -376,6 +369,24 @@ describe("agentTaskStore.rewindConversation", () => {
     const tauri = await import("@/lib/tauri");
     vi.mocked(tauri.saveConversation).mockRejectedValueOnce(new Error("disk full"));
     seedConversation(useAgentTaskStore, conversation());
+
+    const rewound = await useAgentTaskStore.getState().rewindConversation("conv-A", "msg-3");
+
+    expect(rewound).toBe(false);
+    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
+    expect(updated!.messages.map((m) => m.id)).toEqual(["msg-1", "msg-2", "msg-3", "msg-4"]);
+    expect(updated!.transcriptRevisions).toBeUndefined();
+  });
+
+  it("refuses to rewind while a permission decision is pending", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const { useAgentApprovalStore } = await import("@/stores/agentApprovalStore");
+    seedConversation(useAgentTaskStore, conversation());
+    useAgentApprovalStore.getState().addPendingPermission("conv-A", {
+      id: "perm-1",
+      name: "bash",
+      arguments: "{}",
+    });
 
     const rewound = await useAgentTaskStore.getState().rewindConversation("conv-A", "msg-3");
 
