@@ -180,16 +180,16 @@ export function ToolsView() {
                   }}
                   className="rounded-lg px-3 py-2 text-left transition-colors hover:bg-bg-hover"
                 >
-                  <span className="block text-[9px] font-medium uppercase tracking-wide text-text-muted">
+                  <span className="block text-meta font-medium text-text-muted">
                     {group.label}
                   </span>
-                  <span className="mt-0.5 block text-[11px] text-text-primary">
+                  <span className="mt-0.5 block text-ui text-text-primary">
                     {section.label}
                   </span>
                 </button>
               ))
             ) : (
-              <div className="px-3 py-4 text-center text-[10px] text-text-muted">
+              <div className="px-3 py-4 text-center text-meta text-text-muted">
                 No matching settings
               </div>
             )
@@ -201,7 +201,7 @@ export function ToolsView() {
                 <button
                   key={group.key}
                   onClick={() => selectSection(group.sections[0].key)}
-                  className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-[11px] transition-colors ${
+                  className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-ui transition-colors ${
                     active
                       ? "bg-bg-elevated text-accent-green"
                       : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -221,7 +221,7 @@ export function ToolsView() {
         <div className="mx-auto w-full max-w-5xl p-5">
           <header className="mb-4 border-b border-bg-border pb-4">
             <h1 className="text-sm font-semibold text-text-primary">{activeGroup.label}</h1>
-            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
+            <p className="mt-1 text-meta leading-relaxed text-text-muted">
               {activeGroup.description}
             </p>
             <nav
@@ -233,7 +233,7 @@ export function ToolsView() {
                   key={section.key}
                   onClick={() => selectSection(section.key)}
                   aria-current={activeSection === section.key ? "page" : undefined}
-                  className={`rounded border px-2.5 py-1.5 text-[10px] transition-colors ${
+                  className={`rounded border px-2.5 py-1.5 text-ui transition-colors ${
                     activeSection === section.key
                       ? "border-accent-green/40 bg-accent-green/10 text-accent-green"
                       : "border-bg-border text-text-secondary hover:bg-bg-hover hover:text-text-primary"
@@ -248,7 +248,7 @@ export function ToolsView() {
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-xs font-semibold text-text-primary">{activeDefinition.label}</h2>
-              <p className="mt-1 text-[10px] leading-relaxed text-text-muted">
+              <p className="mt-1 text-meta leading-relaxed text-text-muted">
                 {activeDefinition.description}
               </p>
             </div>
@@ -256,7 +256,7 @@ export function ToolsView() {
               {activeDefinition.scopes.map((scope) => (
                 <span
                   key={scope}
-                  className="rounded-full border border-bg-border bg-bg-secondary px-2 py-0.5 text-[9px] font-medium text-text-muted"
+                  className="rounded-full border border-bg-border bg-bg-secondary px-2 py-0.5 text-meta font-medium text-text-muted"
                 >
                   {scope}
                 </span>

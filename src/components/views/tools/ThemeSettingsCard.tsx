@@ -12,7 +12,7 @@ export function ThemeSettingsCard() {
         Theme
       </h3>
 
-      <p className="mb-3 text-[10px] text-text-muted leading-snug">
+      <p className="mb-3 text-meta text-text-muted leading-snug">
         Choose between dark and light visual themes.
       </p>
 
@@ -50,7 +50,7 @@ function ThemeButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] rounded border transition-colors ${
+      className={`flex items-center gap-1.5 px-3 py-1.5 text-ui rounded border transition-colors ${
         active
           ? "bg-accent-green/15 text-accent-green border-accent-green/30"
           : "bg-bg-secondary text-text-secondary border-bg-border hover:text-text-primary"
