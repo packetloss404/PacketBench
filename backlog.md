@@ -60,11 +60,19 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       revisions; native local/SSH restart evidence for lineage and revisions.
       (Lineage now records the source and rewind parent/active revisions, and
       rewind refuses while an approval or running tool is unresolved.)
-- [ ] **P1 — Comfortable, adjustable reading defaults (V1–V3).** Raise shared
-      typography, repair informative-text contrast in both themes, and add
-      persisted reading base/App scale plus a separately owned terminal size
-      control. Keep Inter initially; verify native
-      Windows/Mac and enlarged text before claiming experience parity.
+- [x] **P1 — Comfortable reading defaults (V1).** Shared tokens raised to
+      comfortable sizes (UI 13/20, meta 12/16, transcript 15/24, composer 15/22,
+      code 13/20, chip 12/18) with new composer/code/heading roles; the composer
+      and markdown code consumers moved onto them. Raw `text-[Npx]` consumers
+      remain a recorded residual.
+- [x] **P1 — Informative-text contrast (V2).** Dark/light muted and faint now
+      clear 4.5:1 on all five surfaces; `text-faint` aliases muted; added
+      `decorative`, `control-border`, `focus-ring` and `on-accent` tokens. A
+      token-level contrast test gates the palette; composited accent-alpha and
+      disabled states still need their own checks.
+- [ ] **P1 — App scale and terminal text size (V3).** Persisted App scale +
+      transcript base behind one resolver, plus the separately owned terminal
+      size control; native enlarged-text evidence. Keep Inter initially.
 - [x] **P1 — Safe IME and history input (F8).** The composer now ignores
       Enter/Escape/arrows and shortcuts while an IME composition is active
       (`isComposing` and legacy keyCode 229). Leaving history restores the

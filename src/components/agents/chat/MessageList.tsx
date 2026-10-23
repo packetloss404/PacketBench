@@ -41,12 +41,10 @@ const TAIL_FORCE_MOUNT = 10;
 // mounts above the viewport (see the layout effect there).
 //
 // Tracks the BODY TYPE SCALE, not a magic number: it is a two-line assistant
-// turn at the current metrics — 2 × --leading-body (21px) of de-bubbled prose,
-// + the ~15px footer action row, + the 6px space-y-1.5 between them ≈ 63 → 64.
-// The old 72 was the same two-line estimate under the pre-restyle bubble
-// metrics (16px of px-3/py-2 padding + 2 × 19.5px leading-relaxed text-xs).
+// turn at the current metrics - 2 x --leading-body (24px) of de-bubbled prose,
+// + the ~15px footer action row, + the 6px space-y-1.5 between them ≈ 69.
 // Re-derive this whenever --text-body / --leading-body or the turn padding move.
-const PLACEHOLDER_MIN_HEIGHT = 64;
+const PLACEHOLDER_MIN_HEIGHT = 69;
 
 /** Stable empty queue — keeps the placement memo from re-running every render
  * on a fresh `[]`. */

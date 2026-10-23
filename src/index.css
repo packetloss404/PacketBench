@@ -34,8 +34,14 @@
     --color-line-strong: #353539;
     --color-text-primary: #ededee;
     --color-text-secondary: #b9b9bd;
-    --color-text-muted: #8a8a91;
-    --color-text-faint: #5e5e66;
+    --color-text-muted: #a0a0aa;
+    /* V2: legacy `faint` aliases the readable muted token; decoration uses
+       `--color-decorative` instead of dimming real content. */
+    --color-text-faint: #a0a0aa;
+    --color-decorative: #5e5e66;
+    --color-control-border: #8a8a91;
+    --color-focus-ring: #8db7ed;
+    --color-on-accent: #0f0f10;
     --color-accent-green: #6fb89a;
     --color-accent-amber: #d4b25c;
     --color-accent-blue: #6b9ed9;
@@ -44,17 +50,28 @@
     --color-accent-soft: rgba(111, 184, 154, 0.14);
     --color-accent-line: rgba(111, 184, 154, 0.32);
 
-    /* Type + layout metrics. These are metrics, not colors, so they are
-       deliberately NOT mirrored in the light theme below. */
-    --text-ui: 11px;
-    --leading-ui: 16px;
-    --text-meta: 10px;
-    --leading-meta: 14px;
-    --text-body: 13px;      /* transcript prose */
-    --leading-body: 21px;
-    --text-chip: 11.5px;    /* composer chips & pickers */
-    --leading-chip: 16px;
+    /* Type + layout metrics (V1 comfortable defaults). These are metrics, not
+       colors, so they are deliberately NOT mirrored in the light theme below. */
+    --text-ui: 13px;
+    --leading-ui: 20px;
+    --text-meta: 12px;
+    --leading-meta: 16px;
+    --text-body: 15px;      /* transcript prose */
+    --leading-body: 24px;
+    --text-composer: 15px;  /* composer input */
+    --leading-composer: 22px;
+    --text-code: 13px;      /* inline/fenced code */
+    --leading-code: 20px;
+    --text-heading-1: 18px;
+    --leading-heading-1: 26px;
+    --text-heading-2: 16px;
+    --leading-heading-2: 24px;
+    --text-heading-3: 15px;
+    --leading-heading-3: 22px;
+    --text-chip: 12px;      /* composer chips & pickers */
+    --leading-chip: 18px;
     --space-turn: 24px;
+    --space-control-gap: 8px;
     --measure-chat: 680px;      /* transcript reading column */
     --measure-composer: 680px;  /* composer matches the reading column */
   }
@@ -70,9 +87,13 @@
     --color-line-soft: #ededf5;
     --color-line-strong: #c9c9d6;
     --color-text-primary: #1e1e2e;
-    --color-text-secondary: #5c5c7a;
-    --color-text-muted: #9d9db5;
-    --color-text-faint: #b9b9c8;
+    --color-text-secondary: #454557;
+    --color-text-muted: #545467;
+    --color-text-faint: #545467;
+    --color-decorative: #b9b9c8;
+    --color-control-border: #66667a;
+    --color-focus-ring: #084e9b;
+    --color-on-accent: #ffffff;
     --color-accent-green: #16825d;
     --color-accent-amber: #8b7e00;
     --color-accent-blue: #0060c0;
@@ -119,7 +140,7 @@
 }
 
 .markdown-content code {
-  @apply bg-bg-elevated px-1.5 py-0.5 rounded text-accent-amber text-xs font-mono;
+  @apply bg-bg-elevated px-1.5 py-0.5 rounded text-accent-amber text-code font-mono;
 }
 
 .markdown-content pre {
@@ -189,7 +210,7 @@
 .markdown-doc li             { @apply mb-1; }
 .markdown-doc pre            { @apply mb-3 rounded-lg border border-bg-border bg-bg-primary p-3; }
 .markdown-doc code           { @apply rounded-md border border-bg-border bg-bg-elevated
-                                      px-1 py-px font-mono text-[11.5px] text-accent-amber; }
+                                      px-1 py-px font-mono text-code text-accent-amber; }
 .markdown-doc pre code       { @apply border-none bg-transparent p-0 text-text-primary; }
 .markdown-doc blockquote     { @apply mb-2.5 border-l-2 border-bg-border pl-3
                                       italic text-text-secondary; }

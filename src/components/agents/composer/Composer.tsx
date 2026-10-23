@@ -729,8 +729,8 @@ export function Composer(props: ComposerProps) {
       rows={isChat ? 1 : 4}
       className={
         isChat
-          ? "w-full resize-none bg-transparent text-body text-text-primary placeholder:text-text-muted focus:outline-none"
-          : "w-full resize-none bg-transparent px-4 py-3 text-body text-text-primary placeholder:text-text-muted focus:outline-none"
+          ? "w-full resize-none bg-transparent text-composer text-text-primary placeholder:text-text-muted focus:outline-none"
+          : "w-full resize-none bg-transparent px-4 py-3 text-composer text-text-primary placeholder:text-text-muted focus:outline-none"
       }
     />
   );
