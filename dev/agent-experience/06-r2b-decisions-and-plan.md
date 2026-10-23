@@ -58,8 +58,8 @@ string.
 
 **Recommended.** For R2b, **do not move policy to the backend.** The seam
 receives already-resolved values in `RunRequest` (model, allowedTools, posture,
-trust snapshot, budget policy reference) and the backend validates *shape and
-consistency* only. Making the backend authoritative is a separate, later
+trust snapshot, budget policy reference) and the backend validates _shape and
+consistency_ only. Making the backend authoritative is a separate, later
 decision (it touches three stores and their persistence) and must not be
 smuggled into a behavior-preserving extraction.
 
@@ -73,8 +73,8 @@ last assistant message from history and re-runs it — i.e. **regenerate** — a
 forwards `retry` to the sidecar when it owns the session.
 
 **Recommended.** Keep regenerate as-is. The journal's `retryOfOperationId` /
-`previousRunId` semantics (runtime §2.2: a new linked operation after a *proven
-pre-dispatch* failure) are a distinct concept. R2b must not change retry
+`previousRunId` semantics (runtime §2.2: a new linked operation after a _proven
+pre-dispatch_ failure) are a distinct concept. R2b must not change retry
 behavior; the mapping between "user pressed Retry (regenerate)" and a new linked
 runtime run is decided in R3.
 
@@ -121,6 +121,7 @@ a fake both call it. No behavior change.
 window, `lib.rs`, `api/mod.rs`, generated schema, `tauri.ts`.
 
 **Test gates.**
+
 - `cargo test --lib` (all existing loop-adjacent tests unchanged).
 - Existing `api_agent` unit tests (history build, permission, cancel) pass
   unmodified.
@@ -135,14 +136,14 @@ tooling).
 
 ## R3–R8 sequence (one implementer + one independent reviewer each)
 
-| Packet | Depends on | Decisions still needed | Reviewer focus |
-| --- | --- | --- | --- |
-| **R3** H2 checkpoints/restart | R2b | ADR-3 retry mapping; checkpoint retention/redaction | crash-after-mutation, no blind replay |
-| **R4** H5 capabilities + H6 manifest | R2b | capability provenance source | no silent image/tool drop |
-| **R5** H4 budget + ledger bridge | R3–R4 | ADR-2 authority; journal↔usage.jsonl reconciliation | no shared-allowance duplication |
-| **R6** H3 context projection | R3–R5 | context source (backend vs frontend memory) | overflow blocks before spend |
-| **R7** H7 role resolver + SDK parity | R3–R6 | aux routing change window | no ignored model field |
-| **R8** H1 eval suite + rollout proof | R2b (det. lane) / R3–R7 (live) | live provider/account/spend policy | same-executor parity, retained failures |
+| Packet                               | Depends on                     | Decisions still needed                              | Reviewer focus                          |
+| ------------------------------------ | ------------------------------ | --------------------------------------------------- | --------------------------------------- |
+| **R3** H2 checkpoints/restart        | R2b                            | ADR-3 retry mapping; checkpoint retention/redaction | crash-after-mutation, no blind replay   |
+| **R4** H5 capabilities + H6 manifest | R2b                            | capability provenance source                        | no silent image/tool drop               |
+| **R5** H4 budget + ledger bridge     | R3–R4                          | ADR-2 authority; journal↔usage.jsonl reconciliation | no shared-allowance duplication         |
+| **R6** H3 context projection         | R3–R5                          | context source (backend vs frontend memory)         | overflow blocks before spend            |
+| **R7** H7 role resolver + SDK parity | R3–R6                          | aux routing change window                           | no ignored model field                  |
+| **R8** H1 eval suite + rollout proof | R2b (det. lane) / R3–R7 (live) | live provider/account/spend policy                  | same-executor parity, retained failures |
 
 Each packet: implementer works only in its leased files → coordinator runs
 packet tests + affected gates → independent reviewer checks the diff against the
