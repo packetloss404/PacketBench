@@ -58,7 +58,8 @@ excluded from that team. H1 evaluation applies to the existing production runtim
 - [ ] **P1 — F3 residuals.** Prevent transcript mutation/fork on Flight-owned
       builder/reviewer conversations; resolve old message links to saved
       revisions; native local/SSH restart evidence for lineage and revisions.
-      (Lineage now records the source and rewind parent/active revisions.)
+      (Lineage now records the source and rewind parent/active revisions, and
+      rewind refuses while an approval or running tool is unresolved.)
 - [ ] **P1 — Comfortable, adjustable reading defaults (V1–V3).** Raise shared
       typography, repair informative-text contrast in both themes, and add
       persisted reading base/App scale plus a separately owned terminal size

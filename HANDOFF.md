@@ -60,7 +60,8 @@ then closed: image type is sniffed from content, forks keep the parent's frozen
 MCP authority, a newer draft envelope is never downgraded, orphan draft assets
 are reclaimed at startup, per-draft staging is capped at 20 MiB, missing images
 block sending with a visible reason, and lineage records source/rewind
-revisions. Flight-owned mutation
+revisions. Rewind also refuses while an approval or running tool is
+unresolved. Flight-owned mutation
 gating, old message-link resolution, submission/checkpoint pins,
 scheduled GC/capacity, H2 typed-image replay, native restart evidence and the
 F4 phase surface remain open. Focused Vitest, Rust unit tests, TypeScript and
