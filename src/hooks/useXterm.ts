@@ -5,6 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { writePty, resizePty } from "@/lib/tauri";
+import { useTerminalSettingsStore } from "@/stores/terminalSettingsStore";
 
 interface UseXtermOptions {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -216,6 +217,23 @@ export function useXterm({ containerRef, sessionIdRef, onUserInput }: UseXtermOp
       fitAddonRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Terminal text size is terminal-owned and separate from App scale: update
+  // xterm's own option and refit without recreating the Terminal or the PTY.
+  const terminalFontSizePx = useTerminalSettingsStore((s) => s.terminalFontSizePx);
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term || !term.options) return;
+    term.options.fontSize = terminalFontSizePx;
+    const fit = fitAddonRef.current;
+    if (fit) {
+      try {
+        fit.fit();
+      } catch {
+        // Container may not be sized yet; the ResizeObserver will refit.
+      }
+    }
+  }, [terminalFontSizePx]);
 
   return { xtermRef, fitAddonRef };
 }

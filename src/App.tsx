@@ -17,6 +17,7 @@ import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { ToastProvider } from "@/components/ui/Toast";
 import { FleetSidebar } from "@/components/workspace/FleetSidebar";
 import { useAgentTabHoists } from "@/hooks/useAgentTabHoists";
+import { useApplyAppearance } from "@/hooks/useApplyAppearance";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
 import { useCloseConfirm } from "@/hooks/useCloseConfirm";
 import { initSessionGlue } from "@/stores/sessionGlue";
@@ -114,6 +115,8 @@ export default function App() {
   // App-level agent shortcuts and auto-archive maintenance remain active even
   // when the first-class Agents view is not mounted.
   useAgentTabHoists();
+  // One root appearance writer: applies App scale/density metrics + shortcuts.
+  useApplyAppearance();
 
   // Bootstrap: load backend state and hydrate all stores on first mount.
   // `initializeApp` does not publish `initialized` until conversation-file

@@ -36,3 +36,8 @@ function platformHint(): string {
 export function isWindows(): boolean {
   return /win/i.test(platformHint());
 }
+
+/** Whether the app is running on macOS. */
+export function isMac(): boolean {
+  return /mac/i.test(platformHint());
+}

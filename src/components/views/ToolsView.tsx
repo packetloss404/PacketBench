@@ -37,6 +37,7 @@ import { ProviderRoutingCard } from "./tools/ProviderRoutingCard";
 import { ModulesCard } from "./tools/ModulesCard";
 import { NotificationSettingsCard } from "./tools/NotificationSettingsCard";
 import { ThemeSettingsCard } from "./tools/ThemeSettingsCard";
+import { AppearanceSettingsCard } from "./tools/AppearanceSettingsCard";
 import { TimeSettingsCard } from "./tools/TimeSettingsCard";
 import { CrashViewerCard } from "./tools/CrashViewerCard";
 import { McpHubCard } from "./tools/McpHubCard";
@@ -266,6 +267,7 @@ export function ToolsView() {
           {activeSection === "general" && (
             <div className="grid max-w-3xl grid-cols-1 gap-4 xl:grid-cols-2">
               <ThemeSettingsCard />
+              <AppearanceSettingsCard />
               <NotificationSettingsCard />
               <KeyboardShortcutsCard />
             </div>

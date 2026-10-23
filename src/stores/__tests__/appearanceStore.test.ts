@@ -1,0 +1,54 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_APPEARANCE_PREFERENCES } from "@/lib/appearance";
+import { useAppearanceStore } from "@/stores/appearanceStore";
+
+const KEY = "packetbench:appearance";
+
+describe("appearanceStore", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useAppearanceStore.setState({ preferences: DEFAULT_APPEARANCE_PREFERENCES, saveFailed: false });
+  });
+
+  it("defaults to comfortable preferences", () => {
+    expect(useAppearanceStore.getState().preferences).toEqual(DEFAULT_APPEARANCE_PREFERENCES);
+  });
+
+  it("persists under the branded appearance key", () => {
+    useAppearanceStore.getState().setUiScalePercent(150);
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    expect(saved.uiScalePercent).toBe(150);
+    expect(saved.schemaVersion).toBe(1);
+  });
+
+  it("clamps setters through the normalizer", () => {
+    useAppearanceStore.getState().setTranscriptFontSizePx(99);
+    expect(useAppearanceStore.getState().preferences.transcriptFontSizePx).toBe(22);
+    useAppearanceStore.getState().setAgentSidebarWidthPx(1);
+    expect(useAppearanceStore.getState().preferences.agentSidebarWidthPx).toBe(240);
+  });
+
+  it("resetAppScale keeps the reading base and sidebar width", () => {
+    useAppearanceStore.getState().setTranscriptFontSizePx(18);
+    useAppearanceStore.getState().setAgentSidebarWidthPx(400);
+    useAppearanceStore.getState().setUiScalePercent(200);
+
+    useAppearanceStore.getState().resetAppScale();
+
+    const prefs = useAppearanceStore.getState().preferences;
+    expect(prefs.uiScalePercent).toBe(100);
+    expect(prefs.transcriptFontSizePx).toBe(18);
+    expect(prefs.agentSidebarWidthPx).toBe(400);
+  });
+
+  it("resetTextAndLayout restores all four defaults", () => {
+    useAppearanceStore.getState().setUiScalePercent(175);
+    useAppearanceStore.getState().setTranscriptFontSizePx(20);
+    useAppearanceStore.getState().setDensity("compact");
+    useAppearanceStore.getState().setAgentSidebarWidthPx(460);
+
+    useAppearanceStore.getState().resetTextAndLayout();
+
+    expect(useAppearanceStore.getState().preferences).toEqual(DEFAULT_APPEARANCE_PREFERENCES);
+  });
+});
