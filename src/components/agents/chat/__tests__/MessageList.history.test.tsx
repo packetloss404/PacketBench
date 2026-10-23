@@ -102,6 +102,31 @@ describe("MessageList — fork and rewind affordances", () => {
     expect(screen.getByText(/Flight-owned conversation/)).toBeInTheDocument();
   });
 
+  it("resolves a message link that a rewind moved into a saved revision", () => {
+    const conv = conversation({
+      transcriptRevisions: [
+        {
+          revisionId: "rev-1",
+          conversationId: "conv-1",
+          operation: "transcript_rewind",
+          throughMessageId: "msg-1",
+          messageCount: 2,
+          messages: [message({ id: "old-1", content: "old user turn" })],
+          createdAt: 1,
+        },
+      ],
+    });
+    const onSearchNavigationConsumed = vi.fn();
+    renderList(conv, {
+      searchNavigationTarget: { messageId: "old-1", token: "t1" },
+      onSearchNavigationConsumed,
+    });
+
+    expect(screen.getByText("Previous history")).toBeInTheDocument();
+    expect(screen.getByText("old user turn")).toBeInTheDocument();
+    expect(onSearchNavigationConsumed).toHaveBeenCalled();
+  });
+
   it("shows saved history revisions read-only", () => {
     const conv = conversation({
       transcriptRevisions: [

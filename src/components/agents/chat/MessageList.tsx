@@ -114,6 +114,7 @@ export function MessageList({
   const messages = conversation.messages;
   const revisions = conversation.transcriptRevisions ?? [];
   const [viewingHistory, setViewingHistory] = useState(false);
+  const [historyTargetMessageId, setHistoryTargetMessageId] = useState<string | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const canMutateHistory = !isActive && !flightOwned;
   const lastMessage = messages[messages.length - 1];
@@ -187,11 +188,19 @@ export function MessageList({
     const isRevisionTarget =
       !!navRevisionId && revisions.some((r) => r.revisionId === navRevisionId);
     if (isRevisionTarget) {
+      setHistoryTargetMessageId(navMessageId);
       setViewingHistory(true);
       onSearchNavigationConsumed?.();
       return;
     }
     if (!messages.some((m) => m.id === navMessageId)) {
+      // F3: an old link may point at a message that a rewind moved into a saved
+      // revision. Resolve it there instead of dropping the navigation.
+      const revision = revisions.find((r) => r.messages.some((m) => m.id === navMessageId));
+      if (revision) {
+        setHistoryTargetMessageId(navMessageId);
+        setViewingHistory(true);
+      }
       onSearchNavigationConsumed?.();
       return;
     }
@@ -215,6 +224,18 @@ export function MessageList({
     onSearchNavigationConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navMessageId, navRevisionId, searchNavigationTarget?.token]);
+
+  // Reveal + focus the resolved message inside the history modal.
+  useEffect(() => {
+    if (!viewingHistory || !historyTargetMessageId) return;
+    const el = document.querySelector<HTMLElement>(
+      `[data-history-message-id="${historyTargetMessageId}"]`,
+    );
+    if (!el) return;
+    if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center" });
+    el.setAttribute("tabindex", "-1");
+    el.focus?.({ preventScroll: true });
+  }, [viewingHistory, historyTargetMessageId]);
 
   const tailStart = Math.max(0, messages.length - TAIL_FORCE_MOUNT);
 
@@ -351,7 +372,14 @@ export function MessageList({
       )}
 
       {viewingHistory && (
-        <Modal title="Previous history" onClose={() => setViewingHistory(false)} width="w-[640px]">
+        <Modal
+          title="Previous history"
+          onClose={() => {
+            setViewingHistory(false);
+            setHistoryTargetMessageId(null);
+          }}
+          width="w-[640px]"
+        >
           <p className="mb-3 text-meta text-text-muted">
             Rewind saves later messages here. Files were not changed.
           </p>
@@ -367,7 +395,15 @@ export function MessageList({
                 </header>
                 <div className="flex flex-col gap-1.5">
                   {revision.messages.map((message) => (
-                    <div key={message.id} className="text-meta text-text-secondary">
+                    <div
+                      key={message.id}
+                      data-history-message-id={message.id}
+                      className={`rounded text-meta text-text-secondary ${
+                        message.id === historyTargetMessageId
+                          ? "bg-accent-amber/15 px-1 ring-1 ring-accent-amber/40"
+                          : ""
+                      }`}
+                    >
                       <span className="mr-1 font-semibold text-text-primary">
                         {message.role === "user"
                           ? "You"

@@ -60,8 +60,12 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       transcript fork/rewind with a visible note; a Flight's planning
       conversation is correctly excluded. Gating is applied in the chat pane;
       a programmatic store guard is still open. Focused tests pass.
-- [ ] **P1 — F3 remaining.** Resolve old message links to saved revisions;
-      native local/SSH restart evidence for lineage and revisions.
+- [x] **P1 — Old message links resolve to saved revisions (F3).** A navigation
+      target whose message a rewind moved into a saved revision now opens the
+      history modal with that message revealed and focused, instead of dropping
+      the link. Focused test added.
+- [ ] **P1 — F3 remaining.** Native local/SSH restart evidence for lineage and
+      revisions.
 - [x] **P1 — Comfortable reading defaults (V1).** Shared tokens raised to
       comfortable sizes (UI 13/20, meta 12/16, transcript 15/24, composer 15/22,
       code 13/20, chip 12/18) with new composer/code/heading roles; the composer
