@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Search, FileText, LayoutGrid } from "lucide-react";
+import { Search, FileText, LayoutGrid, ZoomIn, ZoomOut, RotateCcw, Palette } from "lucide-react";
 import { useAppStore, moduleViewId } from "@/stores/appStore";
+import { useAppearanceStore } from "@/stores/appearanceStore";
 import { useModuleStore } from "@/stores/moduleStore";
 import { getModulesSorted } from "@/modules/registry";
 import { usePromptStore } from "@/stores/promptStore";
@@ -29,6 +30,10 @@ export function CommandPalette() {
 
   const setActiveView = useAppStore((s) => s.setActiveView);
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
+  const openSettings = useAppStore((s) => s.openSettings);
+  const increaseAppScale = useAppearanceStore((s) => s.increaseAppScale);
+  const decreaseAppScale = useAppearanceStore((s) => s.decreaseAppScale);
+  const resetAppScale = useAppearanceStore((s) => s.resetAppScale);
   const moduleStates = useModuleStore((s) => s.states);
   const promptTemplates = usePromptStore((s) => s.templates);
   const sendPromptToAgent = usePromptStore((s) => s.sendToAgentChat);
@@ -54,6 +59,38 @@ export function CommandPalette() {
         icon: <LayoutGrid size={14} className="text-text-secondary" />,
         action: () => void createInstantWorkspace(),
         keywords: ["new", "create", "workspace", "empty", "blank", "quick"],
+      },
+      {
+        id: "appearance.appScale.increase",
+        label: "Increase App scale",
+        description: "Enlarge all nonterminal text one step",
+        icon: <ZoomIn size={14} className="text-text-secondary" />,
+        action: increaseAppScale,
+        keywords: ["scale", "appearance", "zoom", "text", "bigger", "increase"],
+      },
+      {
+        id: "appearance.appScale.decrease",
+        label: "Decrease App scale",
+        description: "Shrink all nonterminal text one step",
+        icon: <ZoomOut size={14} className="text-text-secondary" />,
+        action: decreaseAppScale,
+        keywords: ["scale", "appearance", "zoom", "text", "smaller", "decrease"],
+      },
+      {
+        id: "appearance.appScale.reset",
+        label: "Reset App scale",
+        description: "Return App scale to 100%",
+        icon: <RotateCcw size={14} className="text-text-secondary" />,
+        action: resetAppScale,
+        keywords: ["scale", "appearance", "zoom", "text", "reset", "default"],
+      },
+      {
+        id: "appearance.open",
+        label: "Open Appearance settings",
+        description: "Adjust App scale, reading size, density and terminal text",
+        icon: <Palette size={14} className="text-accent-green" />,
+        action: () => openSettings(),
+        keywords: ["appearance", "settings", "font", "size", "scale", "zoom", "readability", "density", "terminal"],
       },
     ];
 
@@ -108,7 +145,7 @@ export function CommandPalette() {
     }
 
     return items;
-  }, [setActiveView, moduleStates, promptTemplates, sendPromptToAgent]);
+  }, [setActiveView, moduleStates, promptTemplates, sendPromptToAgent, increaseAppScale, decreaseAppScale, resetAppScale, openSettings]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return actions;
