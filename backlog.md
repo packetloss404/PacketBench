@@ -52,11 +52,13 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       on a blocking worker thread, never the Tauri main thread. The legacy v1
       text map still migrates. Rust unit tests and focused Vitest pass.
 - [ ] **P1 — Draft asset residuals and runtime pins.** Submission/checkpoint
-      ownership refs, scheduled GC cadence and capacity limits, H2 typed-image
-      replay validation, and native WebView paste/drop/restart evidence.
+      ownership refs, a global (cross-draft) capacity cap, H2 typed-image replay
+      validation, and native WebView paste/drop/restart evidence. (Type sniffing,
+      per-draft 20 MiB cap, startup GC and missing-asset handling are done.)
 - [ ] **P1 — F3 residuals.** Prevent transcript mutation/fork on Flight-owned
       builder/reviewer conversations; resolve old message links to saved
       revisions; native local/SSH restart evidence for lineage and revisions.
+      (Lineage now records the source and rewind parent/active revisions.)
 - [ ] **P1 — Comfortable, adjustable reading defaults (V1–V3).** Raise shared
       typography, repair informative-text contrast in both themes, and add
       persisted reading base/App scale plus a separately owned terminal size
