@@ -11,13 +11,23 @@
   container-name: tilehdr;
 }
 
-/* Comfortable width and up: everything visible. Below it, drop the secondary
-   read-only chips from the title row (status label + SSH indicator) so the
-   conversation title and the three always-visible action chips keep priority.
-   The genuinely heavy controls (model picker, context ring, overflow) are
-   already unmounted in JS until the overflow toggle opens or the tile zooms. */
+/* The composer context strip is its own query container (V8). It wraps its
+   chips onto a second row (flex-wrap) instead of clipping host/project/branch
+   when the tile narrows. */
+[data-frame="tile"] .context-strip {
+  container-type: inline-size;
+  container-name: ctxstrip;
+}
+
+/* Comfortable width and up: everything visible. Below it, keep the TEXTUAL
+   status label (`.tile-hide-narrow` on the status <span> in AgentChatPane)
+   so the running/idle/failed state stays identifiable; only the dock-toggle
+   BUTTON (the wide-window right-pane affordance) still collapses, since a
+   ~200px tile has no room to host a dock anyway. The genuinely heavy controls
+   (model picker, context ring, overflow) are already unmounted in JS until the
+   overflow toggle opens or the tile zooms. */
 @container tilehdr (max-width: 340px) {
-  [data-frame="tile"] .tile-hide-narrow {
+  [data-frame="tile"] .tile-hide-narrow:is(button) {
     display: none;
   }
 }

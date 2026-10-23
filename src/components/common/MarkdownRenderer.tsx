@@ -1,8 +1,8 @@
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
 import tsx from "react-syntax-highlighter/dist/esm/languages/prism/tsx";
 import javascript from "react-syntax-highlighter/dist/esm/languages/prism/javascript";
@@ -35,6 +35,71 @@ SyntaxHighlighter.registerLanguage("sql", sql);
 SyntaxHighlighter.registerLanguage("css", css);
 SyntaxHighlighter.registerLanguage("markdown", markdown);
 
+// Shared code stack (V4) — prefers the host monospace family over an optional
+// JetBrains/Cascadia/Fira install. Geometry is identical in both themes.
+const CODE_FONT_STACK =
+  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+
+/**
+ * Theme-aware syntax palette (V4). Replaces the fixed `oneDark` import with
+ * semantic tokens so both themes resolve automatically and inline/fenced/diff
+ * code share one scale. Sizes track `--text-code` / `--leading-code`; colors
+ * track the role mapping: comments → muted, strings → success, keywords →
+ * reasoning/accent, numbers/constants → warning, functions/links → info,
+ * errors/deletions → error. Text shadows and decorative italics are disabled.
+ */
+const SYNTAX_THEME: Record<string, CSSProperties> = {
+  'code[class*="language-"]': {
+    color: "var(--color-text-primary)",
+    background: "transparent",
+    fontFamily: CODE_FONT_STACK,
+    fontSize: "var(--text-code)",
+    lineHeight: "var(--leading-code)",
+    textShadow: "none",
+  },
+  'pre[class*="language-"]': {
+    color: "var(--color-text-primary)",
+    background: "var(--color-bg-primary)",
+    border: "1px solid var(--color-bg-border)",
+    borderRadius: "6px",
+    fontFamily: CODE_FONT_STACK,
+    fontSize: "var(--text-code)",
+    lineHeight: "var(--leading-code)",
+    textShadow: "none",
+    margin: 0,
+    padding: "1em",
+    overflow: "auto",
+  },
+  comment: { color: "var(--color-text-muted)" },
+  prolog: { color: "var(--color-text-muted)" },
+  doctype: { color: "var(--color-text-muted)" },
+  cdata: { color: "var(--color-text-muted)" },
+  punctuation: { color: "var(--color-text-secondary)" },
+  operator: { color: "var(--color-text-secondary)" },
+  string: { color: "var(--color-accent-green)" },
+  char: { color: "var(--color-accent-green)" },
+  "attr-value": { color: "var(--color-accent-green)" },
+  inserted: { color: "var(--color-accent-green)" },
+  keyword: { color: "var(--color-accent-purple)" },
+  builtin: { color: "var(--color-accent-purple)" },
+  tag: { color: "var(--color-accent-purple)" },
+  selector: { color: "var(--color-accent-purple)" },
+  "attr-name": { color: "var(--color-accent-purple)" },
+  function: { color: "var(--color-accent-blue)" },
+  "class-name": { color: "var(--color-accent-blue)" },
+  property: { color: "var(--color-accent-blue)" },
+  url: { color: "var(--color-accent-blue)" },
+  boolean: { color: "var(--color-accent-amber)" },
+  number: { color: "var(--color-accent-amber)" },
+  constant: { color: "var(--color-accent-amber)" },
+  symbol: { color: "var(--color-accent-amber)" },
+  regex: { color: "var(--color-accent-amber)" },
+  deleted: { color: "var(--color-accent-red)" },
+  entity: { color: "var(--color-accent-red)" },
+  important: { color: "var(--color-accent-red)", fontWeight: 600 },
+  variable: { color: "var(--color-text-primary)" },
+};
+
 interface MarkdownRendererProps {
   content: string;
   className?: string;
@@ -63,19 +128,14 @@ function CodeBlock({ language, value }: CodeBlockProps) {
       <button
         type="button"
         onClick={handleCopy}
-        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity bg-bg-secondary border border-bg-border rounded px-1.5 py-1 text-text-secondary hover:text-text-primary"
+        className="absolute top-2 right-2 z-10 flex min-h-target-icon min-w-target-icon items-center justify-center rounded border border-bg-border bg-bg-secondary text-text-secondary opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         aria-label="Copy code"
       >
         {copied ? <Check size={12} /> : <Copy size={12} />}
       </button>
       <SyntaxHighlighter
         language={language}
-        style={oneDark}
-        customStyle={{
-          margin: 0,
-          fontSize: "11px",
-          borderRadius: "4px",
-        }}
+        style={SYNTAX_THEME}
         PreTag="div"
       >
         {value.replace(/\n$/, "")}
@@ -104,7 +164,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
               return (
                 <code
                   {...rest}
-                  className="bg-bg-secondary px-1 rounded font-mono text-[11px]"
+                  className="bg-bg-secondary px-1 rounded font-mono text-code"
                 >
                   {children}
                 </code>

@@ -72,6 +72,8 @@
     --leading-chip: 18px;
     --space-turn: 24px;
     --space-control-gap: 8px;
+    --target-icon: 32px;        /* routine interactive target (V5) */
+    --target-primary: 36px;     /* primary action target (V5) */
     --measure-chat: 680px;      /* transcript reading column */
     --measure-composer: 680px;  /* composer matches the reading column */
   }

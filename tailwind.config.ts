@@ -78,6 +78,8 @@ export default {
       spacing: {
         turn: "var(--space-turn, 24px)",
         "control-gap": "var(--space-control-gap, 8px)",
+        "target-icon": "var(--target-icon, 32px)",
+        "target-primary": "var(--target-primary, 36px)",
       },
       maxWidth: {
         chat: "var(--measure-chat, 680px)",

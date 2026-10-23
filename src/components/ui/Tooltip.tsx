@@ -99,8 +99,19 @@ export function Tooltip({ content, children, side = "top", delay = 400 }: Toolti
     hide();
   };
 
+  // Preserve any `aria-describedby` the trigger already carries so the tooltip
+  // supplements its description instead of clobbering it. The tip id is added
+  // while the tooltip is mounted (focus/hover reveal), so a screen reader
+  // always resolves it against the live portal content.
+  const existingDescribedBy = (children.props as { "aria-describedby"?: string })[
+    "aria-describedby"
+  ];
+  const describedBy = coords
+    ? [existingDescribedBy, tipId].filter(Boolean).join(" ") || undefined
+    : existingDescribedBy;
+
   const child = cloneElement(children as ReactElement<{ "aria-describedby"?: string }>, {
-    "aria-describedby": coords ? tipId : undefined,
+    "aria-describedby": describedBy,
   });
 
   return (
