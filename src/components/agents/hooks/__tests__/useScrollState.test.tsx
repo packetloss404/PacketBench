@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentMessage } from "@/types/agent-conversation";
 import { useScrollState, getReadingAnchor, resetReadingAnchors } from "../useScrollState";
@@ -109,5 +109,58 @@ describe("useScrollState — reader continuity (F7)", () => {
     resetReadingAnchors();
 
     expect(getReadingAnchor("A")).toBeUndefined();
+  });
+
+  it("persists a scrolled-away anchor and drops it after jumpToLatest", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <Harness conversationId="A" messages={[message("m0"), message("m1"), message("m2")]} />,
+      );
+      const container = screen.getByTestId("container");
+      Object.defineProperty(container, "scrollHeight", { configurable: true, value: 1000 });
+      Object.defineProperty(container, "clientHeight", { configurable: true, value: 100 });
+      Object.defineProperty(container, "scrollTop", {
+        configurable: true,
+        writable: true,
+        value: 0,
+      });
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        const id = this.getAttribute("data-message-id");
+        const top = id === "m0" ? -200 : id === "m1" ? -100 : 0;
+        return {
+          top,
+          bottom: top + 100,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 100,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      });
+
+      fireEvent.scroll(container);
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+
+      const persisted = JSON.parse(
+        localStorage.getItem("packetbench:agent-reading-anchors") ?? "{}",
+      );
+      expect(persisted.A).toMatchObject({ messageId: "m2", followingLatest: false });
+
+      fireEvent.click(screen.getByText("Jump"));
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      const after = JSON.parse(localStorage.getItem("packetbench:agent-reading-anchors") ?? "{}");
+      expect(after.A).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { storageKey } from "@/lib/brand";
+import { loadFromStorage, removeFromStorage, saveToStorage } from "@/lib/storage";
 import type { AgentMessage } from "@/types/agent-conversation";
 
 /**
@@ -27,11 +29,57 @@ export interface ReadingAnchor {
   followingLatest: boolean;
 }
 
-const readingAnchors = new Map<string, ReadingAnchor>();
+const ANCHORS_KEY = storageKey("agent-reading-anchors");
 
-/** Test/teardown helper — clears every in-memory reader anchor. */
+function loadAnchors(): Map<string, ReadingAnchor> {
+  const raw = loadFromStorage<Record<string, unknown>>(ANCHORS_KEY, {});
+  const anchors = new Map<string, ReadingAnchor>();
+  for (const [id, value] of Object.entries(raw ?? {})) {
+    const anchor = value as Partial<ReadingAnchor> | null;
+    if (
+      anchor &&
+      anchor.followingLatest === false &&
+      typeof anchor.messageId === "string" &&
+      anchor.messageId.length > 0 &&
+      Number.isFinite(anchor.offsetWithinMessagePx)
+    ) {
+      anchors.set(id, {
+        messageId: anchor.messageId,
+        offsetWithinMessagePx: Number(anchor.offsetWithinMessagePx),
+        followingLatest: false,
+      });
+    }
+  }
+  return anchors;
+}
+
+const readingAnchors = loadAnchors();
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Persist only scrolled-away anchors (following-latest is the default and
+ * need not be stored), debounced because scroll fires continuously. */
+function schedulePersist(): void {
+  if (typeof window === "undefined") return;
+  if (persistTimer) window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    persistTimer = null;
+    const persisted: Record<string, ReadingAnchor> = {};
+    for (const [id, anchor] of readingAnchors) {
+      if (!anchor.followingLatest && anchor.messageId) persisted[id] = anchor;
+    }
+    saveToStorage(ANCHORS_KEY, persisted);
+  }, 500);
+}
+
+/** Test/teardown helper — clears every reader anchor (memory + storage). */
 export function resetReadingAnchors(): void {
   readingAnchors.clear();
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  removeFromStorage(ANCHORS_KEY);
 }
 
 /** Read-only peek at a saved reader anchor (tests + diagnostics). */
@@ -57,10 +105,7 @@ function firstVisibleMessageId(container: HTMLElement): {
   return { messageId: null, offsetWithinMessagePx: 0 };
 }
 
-export function useScrollState(
-  conversationId: string,
-  messages: AgentMessage[] | undefined,
-) {
+export function useScrollState(conversationId: string, messages: AgentMessage[] | undefined) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -85,6 +130,7 @@ export function useScrollState(
         offsetWithinMessagePx: 0,
         followingLatest: true,
       });
+      schedulePersist();
       return;
     }
     const { messageId, offsetWithinMessagePx } = firstVisibleMessageId(el);
@@ -93,6 +139,7 @@ export function useScrollState(
       offsetWithinMessagePx,
       followingLatest: false,
     });
+    schedulePersist();
   }, []);
 
   const restoreAnchor = useCallback(() => {
@@ -107,9 +154,7 @@ export function useScrollState(
     isAtBottomRef.current = false;
     const doRestore = () => {
       const el = messagesContainerRef.current;
-      const row = el?.querySelector<HTMLElement>(
-        `[data-message-id="${anchor.messageId}"]`,
-      );
+      const row = el?.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`);
       if (!el || !row) return;
       const containerTop = el.getBoundingClientRect().top;
       const targetTop = row.getBoundingClientRect().top - anchor.offsetWithinMessagePx;
@@ -185,6 +230,7 @@ export function useScrollState(
       offsetWithinMessagePx: 0,
       followingLatest: true,
     });
+    schedulePersist();
   }, []);
 
   return {

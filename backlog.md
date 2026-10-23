@@ -102,7 +102,8 @@ excluded from that team. H1 evaluation applies to the existing production runtim
 - [ ] **P2 — Preparation phase surface and cancel tombstones (F4 residual).**
       Expose Preparing → Starting → Running and reconcile cancelled/unknown
       preparations at the backend. (Exact attention F6 and search/reader
-      continuity F7 are done.)
+      continuity F7 are done; reader anchors are now persisted per conversation
+      under `packetbench:agent-reading-anchors`.)
 - [x] **P2 — Shared GUI accessibility and layout (V4–V8).** Theme-aware code
       (V4), 32/36px targets (V5), accessible names + opaque focus ring (V6),
       resizable 240–480px sidebar with full-title disclosure (V7) and narrow
