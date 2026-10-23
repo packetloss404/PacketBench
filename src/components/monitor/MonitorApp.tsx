@@ -14,6 +14,7 @@ import { loadPersistedState } from "@/lib/tauri";
 import { refreshConversationProjection } from "@/stores/agentConversationPersistence";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
 import { useFlightStore } from "@/stores/flightStore";
+import { useApplyAppearanceProjection } from "@/hooks/useApplyAppearance";
 import type { MonitorLease } from "@/types/monitor";
 
 export function MonitorApp() {
@@ -21,6 +22,9 @@ export function MonitorApp() {
   const [lease, setLease] = useState<MonitorLease | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState(Date.now());
+
+  // Read-only projection of the main window's appearance + theme.
+  useApplyAppearanceProjection();
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -52,6 +56,11 @@ export function MonitorApp() {
         const state = await loadPersistedState();
         await useFlightStore.getState().hydrateFromBackend(state);
         await refreshConversationProjection();
+        // Project the theme owner (appStore/backend) read-only so light-theme
+        // users get a matching Monitor window.
+        if (state.ui?.theme) {
+          document.documentElement.dataset.theme = state.ui.theme;
+        }
         setLastUpdated(Date.now());
       } catch {
         // Keep the last safe projection while the main process is busy.

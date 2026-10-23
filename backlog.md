@@ -100,9 +100,10 @@ excluded from that team. H1 evaluation applies to the existing production runtim
 - [x] **P2 — Shared GUI accessibility and layout (V4–V8).** Theme-aware code
       (V4), 32/36px targets (V5), accessible names + opaque focus ring (V6),
       resizable 240–480px sidebar with full-title disclosure (V7) and narrow
-      execution-context disclosure (V8) are implemented with focused tests.
-      Remaining: migrate raw `text-[Npx]` consumers, composited
-      accent-alpha/disabled state checks, Monitor window, and native evidence.
+      execution-context disclosure (V8) are implemented with focused tests, and
+      the Monitor window now projects appearance + theme read-only. Remaining:
+      migrate raw `text-[Npx]` consumers, composited accent-alpha/disabled state
+      checks, and native evidence.
 - [x] **P1 — Runtime journal substrate (R1a).** One local SQLite journal
       (`core/runtime_journal.rs`) with rollback journal + `synchronous=FULL` +
       foreign keys owns launch operations, conversation owners, runs and
