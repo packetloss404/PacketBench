@@ -142,6 +142,22 @@ describe("launchConversation — worktree stamping", () => {
     });
   });
 
+  it("reports launch phases through onPhase on success", async () => {
+    const phases: string[] = [];
+    getGitBranchMock.mockResolvedValue("main");
+    createConversationWorktreeMock.mockResolvedValue(`${SELECTED_REPO}/.pkt-worktrees/ok`);
+
+    const { launchConversation } = await import("@/lib/launchConversation");
+
+    await launchConversation(
+      baseParams({ composerMode: "worktree", onPhase: (phase) => phases.push(phase) }),
+    );
+
+    expect(phases[0]).toBe("preparing");
+    expect(phases).toContain("starting");
+    expect(phases[phases.length - 1]).toBe("running");
+  });
+
   it("falls back to HEAD as baseBranch when the current branch can't be read", async () => {
     const wtPath = `${SELECTED_REPO}/.pkt-worktrees/generated`;
     getGitBranchMock.mockRejectedValue(new Error("detached"));
@@ -175,9 +191,13 @@ describe("launchConversation — fail-closed worktree provisioning (F1)", () => 
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    const launched = await launchConversation(baseParams({ composerMode: "worktree" }));
+    const phases: string[] = [];
+    const launched = await launchConversation(
+      baseParams({ composerMode: "worktree", onPhase: (phase) => phases.push(phase) }),
+    );
 
     expect(launched).toBe(false);
+    expect(phases[phases.length - 1]).toBe("failed");
     expect(createConversationWorktreeMock).toHaveBeenCalledTimes(1);
     expect(useAgentTaskStore.getState().conversations).toHaveLength(0);
     expect(startApiAgentSessionMock).not.toHaveBeenCalled();

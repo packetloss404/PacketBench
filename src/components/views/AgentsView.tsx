@@ -3,7 +3,7 @@ import { Bot, X } from "lucide-react";
 import { authProbeProvider, useAgentTaskStore, type AgentCli } from "@/stores/agentTaskStore";
 import { useAgentSettingsStore } from "@/stores/agentSettingsStore";
 import { useProfileStore } from "@/stores/profileStore";
-import { launchConversation } from "@/lib/launchConversation";
+import { launchConversation, type LaunchPhase } from "@/lib/launchConversation";
 import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import { getProviderAuthStatus, type ImageAttachment } from "@/lib/tauri";
 import { AgentSidebar } from "@/components/agents/AgentSidebar";
@@ -67,6 +67,7 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
   const [selectedModel, setSelectedModel] = useState(pinnedModel ?? DEFAULT_MODEL);
   const [agentMode, setAgentMode] = useState<AgentMode>("agent");
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [launchPhase, setLaunchPhase] = useState<LaunchPhase | null>(null);
   const defaultProfileId = useProfileStore((state) => state.defaultProfileId);
   const getProfile = useProfileStore((state) => state.getProfile);
   const [selectedProfileId, setSelectedProfileId] = useState(defaultProfileId);
@@ -158,6 +159,7 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
         composerMode,
         profile: getProfile(selectedProfileId),
         setLaunchError,
+        onPhase: setLaunchPhase,
         onCreated: () => recordWorkspaceAgentsEvent("agent_started_agents"),
       }),
     [
@@ -226,6 +228,13 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
             composerMode={composerMode}
             onComposerModeChange={setComposerMode}
           />
+          {launchPhase && launchPhase !== "failed" && (
+            <div role="status" aria-live="polite" className="px-4 pb-3 text-meta text-text-muted">
+              {launchPhase === "preparing" && "Preparing…"}
+              {launchPhase === "starting" && "Starting agent…"}
+              {launchPhase === "running" && "Running…"}
+            </div>
+          )}
         </div>
       )}
 

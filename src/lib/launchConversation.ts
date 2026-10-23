@@ -58,7 +58,14 @@ export interface LaunchConversationParams {
    * retire the draft. Omitted by the AgentsView launcher.
    */
   onLaunched?: (conversationId: string) => void;
+  /** F4: report launch progress so the UI can show Preparing → Starting →
+   * Running instead of a single opaque Launch click. */
+  onPhase?: (phase: LaunchPhase) => void;
 }
+
+/** Coarse, honest launch progress. `running` fires once the conversation is
+ * materialized and its backend turn dispatched. */
+export type LaunchPhase = "preparing" | "starting" | "running" | "failed";
 
 /**
  * Launch an API conversation from the Agents launcher. Returns `false` for the
@@ -86,6 +93,7 @@ export function launchConversation({
   postureOverride,
   onCreated,
   onLaunched,
+  onPhase,
 }: LaunchConversationParams): boolean | Promise<boolean> {
   const text = rawText.trim();
   if (!text) return false;
@@ -177,6 +185,7 @@ export function launchConversation({
   setLaunchError(null);
   return (async () => {
     try {
+      onPhase?.("preparing");
       if (sshTarget && sshProjectPath) {
         // Stamp lastConnectedAt so the recents ordering reflects use.
         useServerStore.getState().updateServer(sshTarget.serverId, {
@@ -201,6 +210,7 @@ export function launchConversation({
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
+        onPhase?.("running");
         // F4: only take the selection if the user didn't navigate to another
         // conversation while this launch was preparing.
         if (useAgentTaskStore.getState().selectedConversationId === null) {
@@ -250,6 +260,7 @@ export function launchConversation({
               `Worktree provisioning failed — nothing was launched. ` +
                 `Retry, or switch execution mode to Local to run in the project checkout. ${reason}`,
             );
+            onPhase?.("failed");
             return false;
           }
         }
@@ -286,9 +297,11 @@ export function launchConversation({
           requestConversationSave(convId);
         }
         useProjectHistoryStore.getState().recordOpen(selectedRepo);
+        onPhase?.("starting");
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
+        onPhase?.("running");
         // F4: only take the selection if the user didn't navigate to another
         // conversation while this launch was preparing.
         if (useAgentTaskStore.getState().selectedConversationId === null) {
@@ -301,6 +314,7 @@ export function launchConversation({
       return true;
     } catch (e) {
       setLaunchError(e instanceof Error ? e.message : "Failed to launch agent.");
+      onPhase?.("failed");
       return false;
     }
   })();
