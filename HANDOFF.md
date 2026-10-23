@@ -64,8 +64,12 @@ revisions. Rewind also refuses while an approval or running tool is
 unresolved. V1/V2 followed: shared type tokens raised to comfortable sizes
 (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
 muted/faint text now clears 4.5:1 on every surface in both themes, gated by a
-token contrast test. V3 App scale/terminal size and all native evidence remain
-open. Flight-owned mutation
+token contrast test. The V3–V8 appearance and F6/F7 continuity tranche then
+landed: App scale/reading/terminal size with one resolver and one root writer,
+theme-aware code, 32/36px targets, accessible names/focus, a resizable sidebar,
+narrow execution-context disclosure, exact attention routing, and matching-turn
+search with reader-position restoration. V3 App scale/terminal size and all
+native evidence remain open. Flight-owned mutation
 gating, old message-link resolution, submission/checkpoint pins,
 scheduled GC/capacity, H2 typed-image replay, native restart evidence and the
 F4 phase surface remain open. Focused Vitest, Rust unit tests, TypeScript and

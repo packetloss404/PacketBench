@@ -70,9 +70,13 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       `decorative`, `control-border`, `focus-ring` and `on-accent` tokens. A
       token-level contrast test gates the palette; composited accent-alpha and
       disabled states still need their own checks.
-- [ ] **P1 — App scale and terminal text size (V3).** Persisted App scale +
-      transcript base behind one resolver, plus the separately owned terminal
-      size control; native enlarged-text evidence. Keep Inter initially.
+- [x] **P1 — App scale and terminal text size (V3).** `appearanceStore`
+      (storageKey `appearance`) with App scale 100–200%, reading base 13–22,
+      density and sidebar width; one `resolveAppearanceMetrics` resolver and one
+      root `useApplyAppearance` writer + Ctrl/Cmd `+`/`-`/`0` shortcuts; an
+      Appearance card (with save-failure warning) and a separately owned
+      terminal text size (10–32, storageKey `terminal-font-size`) applied live
+      via xterm. Native enlarged-text evidence remains open.
 - [x] **P1 — Safe IME and history input (F8).** The composer now ignores
       Enter/Escape/arrows and shortcuts while an IME composition is active
       (`isComposing` and legacy keyCode 229). Leaving history restores the
@@ -89,14 +93,16 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       repositories on one SSH host are labelled `repo @ server`, and New opens
       against the selected conversation's base project. Focused sidebar/Agents
       tests, TypeScript and ESLint pass.
-- [ ] **P2 — Preparation phase surface, cancel tombstones and remaining
-      continuity (F4 residual, F6–F7).** Expose Preparing → Starting → Running
-      and reconcile cancelled/unknown preparations at the backend; resolve exact
-      attention blockers over review and retain search/reading position.
-- [ ] **P2 — Shared GUI accessibility and layout (V4–V8).** Unify scalable
-      theme-aware code, name icon actions, reveal keyboard focus, enlarge targets,
-      resize/read sidebar titles and adapt narrow execution context. Use source
-      references and native acceptance in the review; do not infer Mac parity.
+- [ ] **P2 — Preparation phase surface and cancel tombstones (F4 residual).**
+      Expose Preparing → Starting → Running and reconcile cancelled/unknown
+      preparations at the backend. (Exact attention F6 and search/reader
+      continuity F7 are done.)
+- [x] **P2 — Shared GUI accessibility and layout (V4–V8).** Theme-aware code
+      (V4), 32/36px targets (V5), accessible names + opaque focus ring (V6),
+      resizable 240–480px sidebar with full-title disclosure (V7) and narrow
+      execution-context disclosure (V8) are implemented with focused tests.
+      Remaining: migrate raw `text-[Npx]` consumers, composited
+      accent-alpha/disabled state checks, Monitor window, and native evidence.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript
