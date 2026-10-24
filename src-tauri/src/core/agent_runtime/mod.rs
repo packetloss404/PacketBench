@@ -317,6 +317,14 @@ pub trait RuntimeServices:
     /// Required (no default) so a new host cannot silently disable the guard by
     /// forgetting to answer.
     async fn has_pending_attachments(&self, session_id: &str) -> bool;
+    /// Non-draining COUNT of queued attachments. The R6 context projection needs
+    /// only the number of images (each charged a flat `IMAGE_TOKEN_ESTIMATE`),
+    /// so a refusal must never consume them: this reads the queue without
+    /// draining it, keeping R4b's "nothing silently dropped" guarantee. Defaults
+    /// to 0 for a host that never queues attachments.
+    async fn pending_attachment_count(&self, _session_id: &str) -> usize {
+        0
+    }
     /// Whether the runtime authority (the journal) is enabled, which gates the
     /// R4b pre-dispatch capability guard. Defaults to `false`: when the feature
     /// is off the guard does not run and the disabled path is byte-identical to
@@ -324,6 +332,26 @@ pub trait RuntimeServices:
     /// is enabled").
     fn capability_guard_enabled(&self) -> bool {
         false
+    }
+    /// The provider/model context window in tokens, or `None` when unknown. The
+    /// default resolves it from the capability table; a host may override. The
+    /// R6 context projection uses it to decide whether a request fits.
+    fn context_window_tokens(&self, provider: &str, model: &str) -> Option<u64> {
+        crate::core::runtime_capabilities::resolve_capabilities(provider, model, None)
+            .context_window
+            .value()
+            .copied()
+    }
+    /// Record one context projection snapshot. The default is a no-op: a host
+    /// that does not persist context accounting (or has the journal disabled)
+    /// needs no override. The Tauri host writes to the `context_snapshots`
+    /// table when the runtime journal is enabled.
+    async fn record_context_snapshot(
+        &self,
+        _session_id: &str,
+        _snapshot: &crate::core::runtime_context::ContextSnapshot,
+    ) -> Result<(), String> {
+        Ok(())
     }
     fn load_hooks(&self, execution: &ExecutionTarget) -> Vec<HookConfig>;
     async fn execute_tool(

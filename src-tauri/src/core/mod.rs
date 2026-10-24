@@ -64,6 +64,8 @@ pub mod runtime_checkpoint;
 pub mod runtime_capabilities;
 // R4a: versioned, content-addressed run manifests (H6).
 pub mod runtime_manifest;
+// R6: backend-native context accounting/projection (H3).
+pub mod runtime_context;
 pub mod runtime_types;
 pub mod shared;
 pub mod shell_path;

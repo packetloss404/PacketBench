@@ -237,6 +237,23 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       the per-session cap is enforced at request granularity (daily/monthly/
       provider/flight stay frontend once-per-turn); (c) flight-launched API
       sessions pass no budget, so R5b does not cover them.
+- [x] **P1 — Context projection + overflow blocking (R6).** Journal v5 (additive)
+      adds `context_snapshots`; `core/runtime_context.rs` provides a conservative
+      estimator (`countKind: "estimate"`, bytes/3 + a per-block framing charge +
+      `IMAGE_TOKEN_ESTIMATE` per image, no tokenizer, no strict guaranteed-fit
+      mode), a content-addressed `ContextSnapshot` (counts include system text,
+      tool schemas, per-message overhead, images and opaque reasoning envelopes),
+      `check_fit`, and hash-verified store helpers. The native runner projects
+      before `admit_request`/the `PreRequest` intent/any spend and enters
+      `blocked_context` (recording the snapshot) on overflow; attachments are
+      counted non-destructively (a refusal consumes nothing). Gated on the journal
+      so the disabled path is byte-identical. 1244/0; full gates green; independent
+      review findings (disabled-path drain order, per-block framing, single
+      overflow predicate, hash fields, FK) all fixed. **Deferred:** live-catalog
+      context windows (the static table only knows `anthropic`, so OpenAI/named
+      rows never block on overflow yet), optional-material omission/retrieval
+      (v1 blocks instead of trimming; `omitted` is empty), the
+      `get_runtime_context_summary(runId)` read command, and semantic compaction.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

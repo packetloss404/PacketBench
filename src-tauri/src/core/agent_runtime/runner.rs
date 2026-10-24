@@ -24,6 +24,7 @@ use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::{self, HookConfig, HookEvent};
 use crate::core::llm_types::*;
 use crate::core::runtime_capabilities;
+use crate::core::runtime_context;
 use crate::core::tool_runtime;
 
 /// Maximum number of tool-use loop iterations per turn. Set high so a real
@@ -31,6 +32,11 @@ use crate::core::tool_runtime;
 /// hitting the cap mid-task and forcing the user to hit "Continue". Still
 /// bounded to backstop a genuinely runaway agent.
 const MAX_TOOL_ITERATIONS: usize = 150;
+
+/// Output token budget requested from the provider. Shared by the R6 context
+/// projection's `reservedOutputTokens`, the R5b admission `maxTokens` and the
+/// `LlmRequest` itself so they cannot drift.
+pub(crate) const MAX_OUTPUT_TOKENS: u64 = 16384;
 
 /// Tools that require user permission in `AskForRisky` mode and are refused
 /// outright in `DenyAll`. `create_pull_request` pushes the branch and opens a
@@ -530,6 +536,41 @@ pub async fn run_turn<R: RuntimeServices>(
                 .map_err(|error| error.to_string())?;
         }
 
+        // R6 (H3) context accounting/projection. Gated on the runtime authority
+        // being enabled so the disabled path stays byte-identical. The
+        // projection is a NON-DRAINING count of the queued attachments, so a
+        // refusal (overflow or budget) never consumes them — R4b's "nothing
+        // silently dropped" guarantee holds. It runs BEFORE admission and the
+        // dispatch-intent checkpoint, so an overflow blocks before any spend.
+        if services.capability_guard_enabled() {
+            let attachment_count = services.pending_attachment_count(session_id).await;
+            let window_tokens = services.context_window_tokens(&provider_name, &model);
+            let snapshot = runtime_context::project_context(
+                &format!("{provider_name}:{model}"),
+                &system_prompt,
+                &messages,
+                &tools,
+                attachment_count,
+                window_tokens,
+                MAX_OUTPUT_TOKENS,
+                0,
+                services.now_ms(),
+            );
+            // The snapshot is committed BEFORE the model call (runtime §4.1
+            // step 2). On overflow the store failure is deliberately ignored so
+            // the overflow itself surfaces; on success a store failure fails
+            // closed (`?`), like the dispatch-intent checkpoint.
+            if let Err(error) = runtime_context::check_fit(&snapshot) {
+                let _ = services
+                    .record_context_snapshot(session_id, &snapshot)
+                    .await;
+                return Err(error.to_string());
+            }
+            services
+                .record_context_snapshot(session_id, &snapshot)
+                .await?;
+        }
+
         // Build the provider BEFORE admission so a provider-construction
         // failure cannot strand a reservation. Behavior is otherwise identical.
         let provider_ref = services.provider(&provider_name)?;
@@ -548,7 +589,7 @@ pub async fn run_turn<R: RuntimeServices>(
                     &provider_name,
                     &model,
                     &messages,
-                    16384,
+                    MAX_OUTPUT_TOKENS,
                 )
                 .await?,
             BudgetAdmission::Reserved
@@ -587,7 +628,7 @@ pub async fn run_turn<R: RuntimeServices>(
             messages,
             tools: tools.clone(),
             system_prompt: Some(system_prompt.clone()),
-            max_tokens: 16384,
+            max_tokens: MAX_OUTPUT_TOKENS as u32,
             temperature: None,
             attachments: pending_attachments,
             thinking_enabled,

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, Notify};
 
-use crate::core::agent_runtime::runner::run_turn;
+use crate::core::agent_runtime::runner::{run_turn, MAX_OUTPUT_TOKENS};
 use crate::core::agent_runtime::{
     BudgetAdmission, CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, EventSink,
     FlightStatusSink, HistoryStore, PermissionBroker, PermissionDecision, PermissionMode,
@@ -26,6 +26,8 @@ use crate::core::llm_types::{
     ChatMessage, ImageAttachment, LlmRequest, StreamChunk, ToolCall, ToolResult,
 };
 use crate::core::mcp_session::NativeMcpSession;
+use crate::core::runtime_context::{estimate_text_tokens, ContextSnapshot, IMAGE_TOKEN_ESTIMATE};
+use crate::core::tool_runtime;
 use crate::core::tool_tasks::SessionTasks;
 
 /// One scripted provider response.
@@ -45,6 +47,7 @@ pub struct ScriptedProvider {
     queue: Arc<Mutex<VecDeque<ScriptStep>>>,
     stream_calls: Arc<Mutex<usize>>,
     started: Arc<Notify>,
+    last_request: Arc<Mutex<Option<LlmRequest>>>,
 }
 
 #[async_trait::async_trait]
@@ -52,10 +55,11 @@ impl LlmProvider for ScriptedProvider {
     async fn stream_chat(
         &self,
         _api_key: &str,
-        _request: LlmRequest,
+        request: LlmRequest,
         tx: mpsc::Sender<StreamChunk>,
     ) -> Result<(), String> {
         *self.stream_calls.lock().expect("stream call count") += 1;
+        *self.last_request.lock().expect("last request") = Some(request);
         self.started.notify_one();
         let step = self.queue.lock().expect("script queue").pop_front();
         match step {
@@ -183,6 +187,12 @@ pub struct FakeServices {
     admit_calls: Mutex<Vec<(String, String, String, String, u64)>>,
     settle_calls: Mutex<Vec<(String, String, i64)>>,
     release_calls: Mutex<Vec<(String, String)>>,
+    context_window: Mutex<Option<u64>>,
+    recorded_snapshots: Mutex<Vec<ContextSnapshot>>,
+    pending_attachment_count_calls: Mutex<usize>,
+    context_window_calls: Mutex<usize>,
+    attachments: Mutex<Vec<ImageAttachment>>,
+    last_request: Arc<Mutex<Option<LlmRequest>>>,
 }
 
 impl FakeServices {
@@ -232,6 +242,12 @@ impl FakeServices {
             admit_calls: Mutex::new(Vec::new()),
             settle_calls: Mutex::new(Vec::new()),
             release_calls: Mutex::new(Vec::new()),
+            context_window: Mutex::new(None),
+            recorded_snapshots: Mutex::new(Vec::new()),
+            pending_attachment_count_calls: Mutex::new(0),
+            context_window_calls: Mutex::new(0),
+            attachments: Mutex::new(Vec::new()),
+            last_request: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -302,11 +318,55 @@ impl FakeServices {
         *self.attachment_drains.lock().expect("drain count")
     }
 
+    /// Script the context window the runner projects against. `None` falls back
+    /// to the real capability resolution for the session's route.
+    pub fn set_context_window(&self, window: Option<u64>) {
+        *self.context_window.lock().expect("context window script") = window;
+    }
+
+    /// The context snapshots recorded through `record_context_snapshot`.
+    pub fn recorded_context_snapshots(&self) -> Vec<ContextSnapshot> {
+        self.recorded_snapshots
+            .lock()
+            .expect("recorded snapshots")
+            .clone()
+    }
+
+    /// Queue attachments that `take_pending_attachments` will drain into the
+    /// next `LlmRequest`, and that `pending_attachment_count` counts.
+    pub fn set_pending_attachments(&self, attachments: Vec<ImageAttachment>) {
+        *self.attachments.lock().expect("pending attachments") = attachments;
+    }
+
+    /// The most recent `LlmRequest` handed to the provider, if any.
+    pub fn last_request(&self) -> Option<LlmRequest> {
+        self.last_request.lock().expect("last request").clone()
+    }
+
+    /// How many times the runner consulted the non-draining attachment count.
+    pub fn pending_attachment_count_calls(&self) -> usize {
+        *self
+            .pending_attachment_count_calls
+            .lock()
+            .expect("count calls")
+    }
+
+    /// How many times the runner consulted the context window.
+    pub fn context_window_calls(&self) -> usize {
+        *self.context_window_calls.lock().expect("window calls")
+    }
+
     /// Override the session's provider/model so a test can pick a route with a
     /// known (or unknown) vision capability.
     pub fn set_session_route(&mut self, provider: &str, model: &str) {
         self.session.provider = provider.to_string();
         self.session.model = model.to_string();
+    }
+
+    /// Override the session's tool allowlist. `Some(vec![])` removes every tool
+    /// (useful for isolating non-tool token contributions).
+    pub fn set_allowed_tools(&mut self, tools: Option<Vec<String>>) {
+        self.session.allowed_tools = tools;
     }
 
     /// Install a durable checkpoint sink, enabling the journal path for this
@@ -448,6 +508,7 @@ impl RuntimeServices for FakeServices {
             queue: Arc::clone(&self.scripts),
             stream_calls: Arc::clone(&self.stream_calls),
             started: Arc::clone(&self.started),
+            last_request: Arc::clone(&self.last_request),
         }))
     }
 
@@ -465,7 +526,7 @@ impl RuntimeServices for FakeServices {
 
     async fn take_pending_attachments(&self, _session_id: &str) -> Vec<ImageAttachment> {
         *self.attachment_drains.lock().expect("drain count") += 1;
-        Vec::new()
+        std::mem::take(&mut *self.attachments.lock().expect("pending attachments"))
     }
 
     async fn has_pending_attachments(&self, _session_id: &str) -> bool {
@@ -475,8 +536,39 @@ impl RuntimeServices for FakeServices {
             .expect("attachments flag")
     }
 
+    async fn pending_attachment_count(&self, _session_id: &str) -> usize {
+        *self
+            .pending_attachment_count_calls
+            .lock()
+            .expect("count calls") += 1;
+        self.attachments.lock().expect("pending attachments").len()
+    }
+
     fn capability_guard_enabled(&self) -> bool {
         *self.capability_guard_enabled.lock().expect("guard flag")
+    }
+
+    fn context_window_tokens(&self, provider: &str, model: &str) -> Option<u64> {
+        *self.context_window_calls.lock().expect("window calls") += 1;
+        match *self.context_window.lock().expect("context window script") {
+            Some(window) => Some(window),
+            None => crate::core::runtime_capabilities::resolve_capabilities(provider, model, None)
+                .context_window
+                .value()
+                .copied(),
+        }
+    }
+
+    async fn record_context_snapshot(
+        &self,
+        _session_id: &str,
+        snapshot: &ContextSnapshot,
+    ) -> Result<(), String> {
+        self.recorded_snapshots
+            .lock()
+            .expect("recorded snapshots")
+            .push(snapshot.clone());
+        Ok(())
     }
 
     fn load_hooks(&self, _execution: &ExecutionTarget) -> Vec<HookConfig> {
@@ -616,6 +708,13 @@ fn text_script(text: &str) -> ScriptStep {
         },
         done(2, 1),
     ])
+}
+
+fn attachment() -> ImageAttachment {
+    ImageAttachment {
+        media_type: "image/png".to_string(),
+        data_base64: "AAAA".to_string(),
+    }
 }
 
 fn run_request(session_id: &str) -> RunRequest {
@@ -1352,4 +1451,203 @@ async fn a_settle_error_leaves_the_reservation_reserved_and_fails_the_turn() {
         services.release_calls().is_empty(),
         "a settle error must not release the reservation"
     );
+}
+
+// --- R6: context accounting/projection wired into the runner loop. -----------
+
+#[tokio::test]
+async fn context_projection_records_a_snapshot_when_the_window_fits() {
+    let mut services = FakeServices::new("s-ctx-fit");
+    let store = Arc::new(FaultCheckpointStore::new());
+    services.install_checkpoints(Arc::clone(&store));
+    services.set_capability_guard_enabled(true);
+    services.set_context_window(Some(1_000_000));
+    services.push_script(text_script("ok"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-ctx-fit"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Completed {
+            input_tokens: 2,
+            output_tokens: 1
+        }
+    );
+    assert_eq!(*services.stream_calls.lock().unwrap(), 1);
+    let snapshots = services.recorded_context_snapshots();
+    assert_eq!(snapshots.len(), 1, "one snapshot per provider iteration");
+    assert_eq!(snapshots[0].window_tokens, Some(1_000_000));
+    assert!(snapshots[0].blockers.is_empty());
+    assert_eq!(snapshots[0].count_kind, "estimate");
+}
+
+#[tokio::test]
+async fn context_projection_blocks_over_the_window_before_dispatch() {
+    let mut services = FakeServices::new("s-ctx-block");
+    let store = Arc::new(FaultCheckpointStore::new());
+    services.install_checkpoints(Arc::clone(&store));
+    services.set_capability_guard_enabled(true);
+    services.set_context_window(Some(1));
+    services.push_script(text_script("should never run"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-ctx-block"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("blocked_context"), "got: {error}");
+    // The overflow blocks before any provider dispatch or admission.
+    assert_eq!(*services.stream_calls.lock().unwrap(), 0);
+    assert!(services.recorded_events().is_empty());
+    assert!(services.admit_calls().is_empty());
+    let snapshots = services.recorded_context_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].blockers, vec!["context_overflow".to_string()]);
+}
+
+#[tokio::test]
+async fn context_projection_is_inert_when_the_journal_is_disabled() {
+    let services = FakeServices::new("s-ctx-off");
+    services.push_script(text_script("hi"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-ctx-off"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Completed {
+            input_tokens: 2,
+            output_tokens: 1
+        }
+    );
+    assert!(services.recorded_context_snapshots().is_empty());
+    // The disabled path is byte-identical: no projection, unchanged events.
+    let events = services.recorded_events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0],
+        ("api-agent:chunk:s-ctx-off".to_string(), json!("hi"))
+    );
+    assert_eq!(events[1].0, "api-agent:done:s-ctx-off");
+}
+
+#[tokio::test]
+async fn context_projection_blocks_image_only_overflow_before_dispatch() {
+    let mut services = FakeServices::new("s-ctx-image");
+    services.set_capability_guard_enabled(true);
+    // No tools, so the only variable is the images: 5 * 2000 = 10000 tokens,
+    // which with the reserved output exceeds a 20000 window, while the same
+    // request with no images (7 + 16384) fits.
+    services.set_allowed_tools(Some(Vec::new()));
+    services.set_context_window(Some(20_000));
+    services.set_pending_attachments(vec![attachment(); 5]);
+    services.push_script(text_script("should never run"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-ctx-image"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("blocked_context"), "got: {error}");
+    assert_eq!(*services.stream_calls.lock().unwrap(), 0);
+    // The images were counted, never consumed.
+    assert_eq!(services.attachment_drains(), 0);
+    assert!(services.recorded_events().is_empty());
+    let snapshots = services.recorded_context_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(
+        snapshots[0].counts.attachments_tokens,
+        5 * IMAGE_TOKEN_ESTIMATE
+    );
+}
+
+#[tokio::test]
+async fn context_projection_blocks_tool_schema_only_overflow() {
+    let mut services = FakeServices::new("s-ctx-tools");
+    services.set_capability_guard_enabled(true);
+    let tools = tool_runtime::tool_definitions_for_session(None, None, &[]).await;
+    let tools_tokens: u64 = tools
+        .iter()
+        .map(|tool| estimate_text_tokens(&serde_json::to_string(tool).unwrap()))
+        .sum();
+    let system_tokens = estimate_text_tokens("You are a test agent.");
+    // One token below the tool-bearing total: without the tool schemas this
+    // request fits, with them it overflows.
+    let window = system_tokens + MAX_OUTPUT_TOKENS + tools_tokens - 1;
+    services.set_context_window(Some(window));
+    services.push_script(text_script("should never run"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-ctx-tools"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("blocked_context"), "got: {error}");
+    assert_eq!(*services.stream_calls.lock().unwrap(), 0);
+    let snapshots = services.recorded_context_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].counts.tools_tokens, tools_tokens);
+}
+
+#[tokio::test]
+async fn context_projection_projects_once_per_iteration() {
+    let mut services = FakeServices::new("s-ctx-multi");
+    services.set_capability_guard_enabled(true);
+    services.set_context_window(Some(1_000_000));
+    services.allow_tool("bash");
+    services.push_script(bash_call_script());
+    services.push_script(text_script("done"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-ctx-multi"), cancel_rx)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, RunOutcome::Completed { .. }));
+
+    let snapshots = services.recorded_context_snapshots();
+    assert_eq!(snapshots.len(), 2, "one snapshot per provider iteration");
+    assert_ne!(
+        snapshots[0].content_hash, snapshots[1].content_hash,
+        "the histories differ, so the hashes must differ"
+    );
+}
+
+#[tokio::test]
+async fn context_projection_is_not_probed_when_the_journal_is_disabled() {
+    let services = FakeServices::new("s-ctx-off-probe");
+    services.push_script(text_script("hi"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-ctx-off-probe"), cancel_rx)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, RunOutcome::Completed { .. }));
+    // The disabled path never consults the projection seams.
+    assert_eq!(services.pending_attachment_count_calls(), 0);
+    assert_eq!(services.context_window_calls(), 0);
+    assert!(services.recorded_context_snapshots().is_empty());
+}
+
+#[tokio::test]
+async fn drained_attachments_land_in_the_llm_request() {
+    let mut services = FakeServices::new("s-ctx-attach");
+    services.set_capability_guard_enabled(true);
+    services.set_context_window(Some(1_000_000));
+    services.set_pending_attachments(vec![attachment()]);
+    services.push_script(text_script("ok"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-ctx-attach"), cancel_rx)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, RunOutcome::Completed { .. }));
+
+    let request = services.last_request().expect("a dispatched request");
+    assert_eq!(request.attachments.len(), 1);
+    assert_eq!(services.attachment_drains(), 1);
 }

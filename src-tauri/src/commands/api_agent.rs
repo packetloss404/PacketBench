@@ -261,6 +261,17 @@ impl ApiAgentState {
             .is_some_and(|cfg| !cfg.pending_attachments.is_empty())
     }
 
+    /// Non-draining count of queued attachments. Used by the R6 context
+    /// projection so an overflow/refusal never consumes the images (mirrors
+    /// `runtime_has_attachments`).
+    pub(crate) async fn runtime_pending_attachment_count(&self, session_id: &str) -> usize {
+        let configs = self.configs.lock().await;
+        configs
+            .get(session_id)
+            .map(|cfg| cfg.pending_attachments.len())
+            .unwrap_or(0)
+    }
+
     /// R5b: the session's configured budget as `(scope_key, limit_usd_micros)`,
     /// or `None` when the session has no budget. Read by the runner's admission
     /// path; absence means admission is a no-op.

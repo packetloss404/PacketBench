@@ -29,11 +29,12 @@ use super::runtime_types::{
 /// table. R4a (H5/H6 capabilities + manifest identity) bumps it from 2 to 3 to
 /// add the `manifests` and `capability_snapshots` tables. R5a (H4 budget
 /// admission) bumps it from 3 to 4 to add the `requests` and
-/// `budget_reservations` tables. This is the JOURNAL migration target; it is
-/// deliberately separate from `runtime_types::RUNTIME_SCHEMA_VERSION`, which is
-/// the `RuntimeRunSummary` wire version (still 1). A file written by a newer
-/// build is refused, never downgraded.
-pub const JOURNAL_SCHEMA_VERSION: i64 = 4;
+/// `budget_reservations` tables. R6a (H3 context accounting) bumps it from 4 to
+/// 5 to add the `context_snapshots` table. This is the JOURNAL migration target;
+/// it is deliberately separate from `runtime_types::RUNTIME_SCHEMA_VERSION`,
+/// which is the `RuntimeRunSummary` wire version (still 1). A file written by a
+/// newer build is refused, never downgraded.
+pub const JOURNAL_SCHEMA_VERSION: i64 = 5;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -260,6 +261,26 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|e| format!("Failed to migrate runtime journal to v4: {e}"))?;
+    }
+    if version < 5 {
+        connection
+            .execute_batch(
+                "BEGIN;\n\
+                 CREATE TABLE context_snapshots (\n\
+                   snapshot_id TEXT PRIMARY KEY,\n\
+                   content_hash TEXT NOT NULL,\n\
+                   run_id TEXT,\n\
+                   epoch INTEGER,\n\
+                   model_route TEXT NOT NULL,\n\
+                   payload TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL\n\
+                 );\n\
+                 CREATE INDEX idx_context_snapshots_hash ON context_snapshots(content_hash);\n\
+                 CREATE INDEX idx_context_snapshots_run ON context_snapshots(run_id, epoch);\n\
+                 PRAGMA user_version = 5;\n\
+                 COMMIT;",
+            )
+            .map_err(|e| format!("Failed to migrate runtime journal to v5: {e}"))?;
     }
     Ok(())
 }
@@ -1017,6 +1038,17 @@ mod tests {
             == 1
     }
 
+    fn index_exists(connection: &Connection, name: &str) -> bool {
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                params![name],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            == 1
+    }
+
     fn column_names(connection: &Connection, table: &str) -> Vec<String> {
         let mut statement = connection
             .prepare(&format!("PRAGMA table_info({table})"))
@@ -1078,7 +1110,7 @@ mod tests {
     #[test]
     fn fresh_journal_is_at_current_version_with_all_tables() {
         let connection = open_at(&temp_db()).unwrap();
-        assert_eq!(JOURNAL_SCHEMA_VERSION, 4);
+        assert_eq!(JOURNAL_SCHEMA_VERSION, 5);
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
@@ -1089,8 +1121,25 @@ mod tests {
             "capability_snapshots",
             "requests",
             "budget_reservations",
+            "context_snapshots",
         ] {
             assert!(table_exists(&connection, table), "{table} must exist");
+        }
+        assert_columns(
+            &connection,
+            "context_snapshots",
+            &[
+                "snapshot_id",
+                "content_hash",
+                "run_id",
+                "epoch",
+                "model_route",
+                "payload",
+                "created_at",
+            ],
+        );
+        for index in ["idx_context_snapshots_hash", "idx_context_snapshots_run"] {
+            assert!(index_exists(&connection, index), "{index} must exist");
         }
     }
 
@@ -1118,7 +1167,8 @@ mod tests {
         connection
             .execute_batch(
                 "DROP TABLE checkpoints; DROP TABLE manifests; DROP TABLE capability_snapshots; \
-                 DROP TABLE budget_reservations; DROP TABLE requests; PRAGMA user_version = 1;",
+                 DROP TABLE budget_reservations; DROP TABLE requests; DROP TABLE context_snapshots; \
+                 PRAGMA user_version = 1;",
             )
             .unwrap();
         migrate(&connection).unwrap();
@@ -1166,7 +1216,8 @@ mod tests {
         connection
             .execute_batch(
                 "DROP TABLE manifests; DROP TABLE capability_snapshots; \
-                 DROP TABLE budget_reservations; DROP TABLE requests; PRAGMA user_version = 2;",
+                 DROP TABLE budget_reservations; DROP TABLE requests; DROP TABLE context_snapshots; \
+                 PRAGMA user_version = 2;",
             )
             .unwrap();
         migrate(&connection).unwrap();
@@ -1189,7 +1240,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_journal_migrates_to_v4_additively() {
+    fn v3_journal_migrates_to_current_additively() {
         let connection = open_at(&temp_db()).unwrap();
         // Seed v3 rows so the additive migration's "no data touched" claim is
         // asserted for the tables that already existed at v3.
@@ -1207,21 +1258,23 @@ mod tests {
                 params![digest(6)],
             )
             .unwrap();
-        // Simulate a file written by the v3 build: the v4 tables do not exist.
+        // Simulate a file written by the v3 build: the v4/v5 tables do not exist.
         connection
             .execute_batch(
-                "DROP TABLE budget_reservations; DROP TABLE requests; PRAGMA user_version = 3;",
+                "DROP TABLE budget_reservations; DROP TABLE requests; DROP TABLE context_snapshots; \
+                 PRAGMA user_version = 3;",
             )
             .unwrap();
         migrate(&connection).unwrap();
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, JOURNAL_SCHEMA_VERSION);
         assert!(table_exists(&connection, "requests"));
         assert!(table_exists(&connection, "budget_reservations"));
+        assert!(table_exists(&connection, "context_snapshots"));
         // The new tables start empty.
-        for table in ["requests", "budget_reservations"] {
+        for table in ["requests", "budget_reservations", "context_snapshots"] {
             let count: i64 = connection
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                     row.get(0)
@@ -1238,6 +1291,55 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM manifests", [], |row| row.get(0))
             .unwrap();
         assert_eq!(manifests, 1);
+        assert_core_columns_unchanged(&connection);
+    }
+
+    #[test]
+    fn v4_journal_migrates_to_v5_additively() {
+        let connection = open_at(&temp_db()).unwrap();
+        // Seed v4 rows so the additive migration's "no data touched" claim is
+        // asserted for the tables that already existed at v4.
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, conversation_id, operation_id, root_run_id, epoch, state, latest_seq) \
+                 VALUES ('run-1', 'conv-1', 'op-1', 'run-1', 0, 'prepared', 0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO requests (request_id, run_id, epoch, scope_key, provider, model, \
+                 estimated_usd_micros, reserved_usd_micros, settled_usd_micros, state, created_at, settled_at) \
+                 VALUES ('req-1', 'run-1', 0, 'local:conv-1', 'anthropic', 'claude', 100, 110, NULL, 'reserved', 1, NULL)",
+                [],
+            )
+            .unwrap();
+        // Simulate a file written by the v4 build: the v5 table does not exist.
+        connection
+            .execute_batch("DROP TABLE context_snapshots; PRAGMA user_version = 4;")
+            .unwrap();
+        migrate(&connection).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+        assert!(table_exists(&connection, "context_snapshots"));
+        // The new table starts empty.
+        let snapshots: i64 = connection
+            .query_row("SELECT COUNT(*) FROM context_snapshots", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(snapshots, 0, "context_snapshots must start empty");
+        // The seeded v4 rows survive the additive migration.
+        let requests: i64 = connection
+            .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(requests, 1);
+        let runs: i64 = connection
+            .query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(runs, 1);
         assert_core_columns_unchanged(&connection);
     }
 

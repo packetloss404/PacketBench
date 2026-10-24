@@ -235,3 +235,12 @@ Native in-process path only; sidecar/SDK soft-turn excluded (no per-request clai
 2. **Admission gating: only when a budget is passed.** No `budget_scope_key`/`budget_limit_usd` from the frontend => no reservation => byte-identical path. v1 scope is per-session (`local:<conversationId>`); daily/monthly/provider/flight caps stay frontend once-per-turn. Cross-session global enforcement is out of scope for the single-scope slice.
 3. **Ledger bridge: correlate via `request_id`.** Add an additive optional `request_id` to `UsageEntry` (serde default, so historical rows parse). The runner generates one `request_id` per dispatch, reserves it, and after the provider `Done` the accounting path writes the raw row (carrying `request_id`) and the runner settles the journal reservation with the same actual. If the ledger append fails, the reservation stays reserved (accounting already blocks further admission). Locks are never nested: journal writes and the ledger write are separate calls.
 4. Settle uses the exact actual (`nearest_settle`); an overage is a labelled residual. Error/cancel releases the reservation.
+
+## R6 addendum (autonomous, 2026-10-23)
+
+Native path only, gated on the runtime journal.
+
+1. **Estimator:** conservative heuristic, `countKind: "estimate"` — `bytes/3` per text payload, `+4` per content block for framing, `IMAGE_TOKEN_ESTIMATE = 2000` per image, `PROVIDER_OVERHEAD_TOKENS = 16` per message. No tokenizer and no strict guaranteed-fit mode (spec step 2's fallback).
+2. **Counts include** system text, tool schemas, images, opaque provider-reasoning envelopes and per-message serialization overhead. Overflow blocks before spend at the same seam as the R4b guard and records the snapshot (`blocked_context`).
+3. **Deferred:** optional-material omission/retrieval (v1 blocks rather than trims; `omitted` stays empty), live-catalog context windows (static table only knows `anthropic`, so other rows resolve the window as unknown and never block), the `get_runtime_context_summary(runId)` read command, and versioned semantic compaction.
+4. **Attachment counting is non-destructive** (`pending_attachment_count`), so a refusal never consumes a queued image.

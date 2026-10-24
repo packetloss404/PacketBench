@@ -80,8 +80,9 @@ image guard on both transports, gated on the journal being enabled so the
 journal-off path is byte-identical (1196/0, full gates green). R5a added the
 budget admission substrate (journal v4 + `core/runtime_budget.rs`, 1214/0) and
 R5b wired per-request admission into the native runner plus the `usage.jsonl`
-request_id bridge, gated on a configured budget (1228/0, full gates green). R6+
-remain.
+request_id bridge, gated on a configured budget (1228/0, full gates green). R6
+added context projection + `blocked_context` overflow blocking (journal v5 +
+`core/runtime_context.rs`, 1244/0). R7+ remain.
 V1/V2 followed: shared type tokens raised to comfortable sizes
 (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
 muted/faint text now clears 4.5:1 on every surface in both themes, gated by a

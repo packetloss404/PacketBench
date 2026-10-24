@@ -329,6 +329,7 @@ use crate::core::runtime_checkpoint::{
     self, Checkpoint, CheckpointClassification, CheckpointLimits, CompatibilityContext,
     CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_TRANSPORT_VERSION,
 };
+use crate::core::runtime_context;
 use crate::core::tool_runtime;
 use crate::core::tool_runtime_ssh::SSH_TOOL_OWNER;
 use crate::core::tool_subagent::{ParentLlm, PARENT_LLM};
@@ -478,8 +479,45 @@ impl RuntimeServices for TauriRuntimeServices {
         self.state.runtime_has_attachments(session_id).await
     }
 
+    async fn pending_attachment_count(&self, session_id: &str) -> usize {
+        self.state
+            .runtime_pending_attachment_count(session_id)
+            .await
+    }
+
     fn capability_guard_enabled(&self) -> bool {
         journal::is_enabled()
+    }
+
+    /// R6 context accounting. No-op unless the journal is enabled. The snapshot
+    /// is nullable-by-run: a session with no run binding stores `(None, None)`
+    /// rather than refusing, so context accounting still records when the run
+    /// identity is unavailable.
+    async fn record_context_snapshot(
+        &self,
+        session_id: &str,
+        snapshot: &crate::core::runtime_context::ContextSnapshot,
+    ) -> Result<(), String> {
+        if !journal::is_enabled() {
+            return Ok(());
+        }
+        let (run_id, epoch) = match self.state.runtime_run_binding(session_id).await {
+            Some(binding) => (Some(binding.run_id), Some(binding.epoch)),
+            None => (None, None),
+        };
+        let snapshot = snapshot.clone();
+        on_blocking(move || {
+            journal::with_journal(|connection| {
+                runtime_context::insert_context_snapshot(
+                    connection,
+                    run_id.as_deref(),
+                    epoch,
+                    &snapshot,
+                )
+                .map_err(String::from)
+            })
+        })
+        .await
     }
 
     fn load_hooks(&self, execution: &ExecutionTarget) -> Vec<HookConfig> {
