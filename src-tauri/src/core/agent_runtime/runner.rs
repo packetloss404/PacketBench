@@ -21,6 +21,7 @@ use crate::core::agent_runtime::{
 use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::{self, HookConfig, HookEvent};
 use crate::core::llm_types::*;
+use crate::core::runtime_capabilities;
 use crate::core::tool_runtime;
 
 /// Maximum number of tool-use loop iterations per turn. Set high so a real
@@ -488,6 +489,21 @@ pub async fn run_turn<R: RuntimeServices>(
 
         // Get current message history
         let messages = services.history(session_id).await;
+
+        // R4b pre-dispatch capability guard (runtime §6/H5). Only the first
+        // iteration can carry fresh user attachments, and the check runs BEFORE
+        // the dispatch-intent checkpoint below and BEFORE the drain, so a
+        // refused image neither records a dispatch intent nor gets consumed.
+        // Fail-closed: `unsupported` and `unknown` both refuse; nothing is
+        // silently dropped. Gated on the runtime authority being enabled, so the
+        // disabled path stays byte-identical to pre-R4b.
+        if iteration == 0
+            && services.capability_guard_enabled()
+            && services.has_pending_attachments(session_id).await
+        {
+            runtime_capabilities::require_route_supports_images(&provider_name, &model)
+                .map_err(|error| error.to_string())?;
+        }
 
         // Boundary 2 (runtime §4.1 step 2): dispatch intent for the model
         // request is durable before the request goes out.

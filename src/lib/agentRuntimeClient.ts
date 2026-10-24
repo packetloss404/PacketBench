@@ -1,5 +1,6 @@
 import {
   cancelRuntimeRun,
+  getRuntimeCapabilities,
   getRuntimeLaunch,
   getRuntimeRun,
   listRuntimeEvents,
@@ -9,6 +10,7 @@ import type {
   FrozenRuntimeLaunch,
   PrepareRuntimeRunInput,
   PrepareRuntimeRunResult,
+  RuntimeCapabilityView,
   RuntimeEventView,
   RuntimeLaunchView,
   RuntimeRunSummary,
@@ -81,4 +83,6 @@ export const agentRuntimeClient = {
     listRuntimeEvents(runId, afterSeq, limit),
   cancel: (operationId: string, expectedEpoch: number): Promise<RuntimeLaunchView> =>
     cancelRuntimeRun(operationId, expectedEpoch),
+  getCapabilities: (provider: string, model: string): Promise<RuntimeCapabilityView> =>
+    getRuntimeCapabilities(provider, model),
 };

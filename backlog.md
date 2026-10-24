@@ -184,8 +184,25 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       content-addressed, immutable run manifest with a stable hash). Journal
       v2→v3 adds `manifests` + `capability_snapshots` (additive, fail-closed on
       newer/corrupt; loads refuse newer versions). `cargo test --lib` 1190/0;
-      independent review: safe, no blockers. **R4b remains:** commands + DTOs +
-      generated schema + `tauri.ts` + pre-dispatch capability wiring.
+      independent review: safe, no blockers.
+- [x] **P1 — Capability wiring + readout (R4b).** `get_runtime_capabilities`
+      (compute-only; works with the journal off) + a concrete, ts-rs-friendly
+      `RuntimeCapabilityView` DTO, generated schema, and `tauri.ts` /
+      `agentRuntimeClient.ts` wrappers. One shared
+      `runtime_capabilities::require_route_supports_images` helper guards BOTH
+      transports (in-process runner before the PreRequest dispatch-intent
+      checkpoint and before the attachment drain; sidecar start and follow-up
+      before any side-effecting admission/`begin_builder_turn`), refusing
+      `unsupported` **and** `unknown` so an image is never silently dropped.
+      Gated on `runtime_journal::is_enabled()` (spec §3.1: guards apply "when the
+      feature is enabled"), so the journal-off path is byte-identical to
+      pre-R4b. `cargo test --lib` 1196/0; gates full-tier green. **Follow-up
+      (UX):** when the runtime is enabled, the composer still advertises image
+      attachments universally (`agentCapabilities.imageAttachments`), so wire
+      that to `get_runtime_capabilities` before enabling the journal by default.
+      Named providers (sugar/cline-pass/opencode-go/ollama-cloud/google/xai) and
+      `api-openrouter`/`api-minimax`/`api-custom` resolve vision `unknown` →
+      refused while enabled; widen the static table only with evidence.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

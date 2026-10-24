@@ -242,6 +242,15 @@ impl ApiAgentState {
         }
     }
 
+    /// Non-draining check: whether the session has queued attachments. Used by
+    /// the R4b pre-dispatch image guard so a refusal does not consume the image.
+    pub(crate) async fn runtime_has_attachments(&self, session_id: &str) -> bool {
+        let configs = self.configs.lock().await;
+        configs
+            .get(session_id)
+            .is_some_and(|cfg| !cfg.pending_attachments.is_empty())
+    }
+
     pub(crate) async fn runtime_history(&self, session_id: &str) -> Vec<ChatMessage> {
         let histories = self.histories.lock().await;
         histories.get(session_id).cloned().unwrap_or_default()
@@ -1247,6 +1256,30 @@ async fn start_api_agent_session_inner(
     command_path: Option<String>,
     workspace: Option<ApiAgentWorkspaceInput>,
 ) -> Result<(), String> {
+    // R4b pre-dispatch image guard for the sidecar transport. Placed before any
+    // side-effecting admission/counter work so a refusal changes nothing. The
+    // in-process runner guards its own path; only the sidecar branch returns
+    // early. Gated on the runtime authority being enabled, so the disabled path
+    // stays byte-identical to pre-R4b.
+    if is_sidecar_provider(&provider)
+        && crate::core::runtime_journal::is_enabled()
+        && attachments.as_ref().is_some_and(|a| !a.is_empty())
+    {
+        if let Err(error) =
+            crate::core::runtime_capabilities::require_route_supports_images(&provider, &model)
+        {
+            let message = error.to_string();
+            warn!(session_id = %session_id, error = %message, "Refusing image attachment before sidecar dispatch");
+            let _ = app_handle.emit(
+                &error_event(&session_id),
+                ErrorPayload {
+                    message: message.clone(),
+                },
+            );
+            return Err(message);
+        }
+    }
+
     // v2 Tier 4 slice B: bump the local-only per-provider launch counter
     let admission = super::flight_runtime::session_admission(&session_id)?;
     super::flight_runtime::begin_builder_turn(&session_id).await?;
@@ -1598,6 +1631,38 @@ pub async fn send_api_agent_message(
     let admission = super::flight_runtime::session_admission(&session_id)?;
     // Phase 3 slice C: forward to sidecar if it owns this session.
     if sidecar.owns_session(&session_id).await {
+        // R4b pre-dispatch image guard for a sidecar follow-up. Runs before
+        // `begin_builder_turn` (which flips the attempt to Running) so a refusal
+        // leaves no state change. The provider is not in this request; the
+        // supervisor recorded it at start. Gated on the runtime authority being
+        // enabled. A missing route refuses with a named message (fail-closed).
+        if crate::core::runtime_journal::is_enabled()
+            && attachments.as_ref().is_some_and(|a| !a.is_empty())
+        {
+            let route = sidecar.session_route(&session_id).await;
+            let result = match &route {
+                Some((provider, model)) => {
+                    crate::core::runtime_capabilities::require_route_supports_images(provider, model)
+                }
+                None => Err(crate::core::runtime_capabilities::CapabilityError::AttachmentUnsupported {
+                    attachment: "image".to_string(),
+                    capability: "vision".to_string(),
+                    state: crate::core::runtime_capabilities::CapabilityState::Unknown,
+                    reason: "the session's provider route is unknown".to_string(),
+                }),
+            };
+            if let Err(error) = result {
+                let message = error.to_string();
+                warn!(session_id = %session_id, error = %message, "Refusing image attachment before sidecar follow-up");
+                let _ = app_handle.emit(
+                    &error_event(&session_id),
+                    ErrorPayload {
+                        message: message.clone(),
+                    },
+                );
+                return Err(message);
+            }
+        }
         tokio::select! { biased; _ = admission.cancel.cancelled() => return Err("The Flight follow-up was stopped.".into()), result = super::flight_runtime::wait_sidecar_idle(&session_id) => result? };
         super::flight_runtime::begin_builder_turn(&session_id).await?;
         let attachments_json = match &attachments {

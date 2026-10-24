@@ -6,6 +6,7 @@ import type {
   PrepareRuntimeRunInput,
   PrepareRuntimeRunResult,
   ReadDraftAssetDto,
+  RuntimeCapabilityView,
   RuntimeEventView,
   RuntimeLaunchView,
   RuntimeRunSummary,
@@ -4167,6 +4168,15 @@ export async function cancelRuntimeRun(
   expectedEpoch: number,
 ): Promise<RuntimeLaunchView> {
   return invoke<RuntimeLaunchView>("cancel_runtime_run", { operationId, expectedEpoch });
+}
+
+// R4b capability readout. Compute-only: it works with the runtime journal
+// disabled and grants no execution authority.
+export async function getRuntimeCapabilities(
+  provider: string,
+  model: string,
+): Promise<RuntimeCapabilityView> {
+  return invoke<RuntimeCapabilityView>("get_runtime_capabilities", { provider, model });
 }
 
 export async function loadConversations(): Promise<string[]> {

@@ -6,6 +6,10 @@ use ts_rs::TS;
 use crate::commands::draft_assets::{
     DraftAssetMeta, ReadDraftAssetDto, StageDraftAssetInput, StagedDraftAssetDto,
 };
+use crate::core::runtime_capabilities::{
+    BoolCapabilityView, ContextWindowCapabilityView, ReasoningCapabilityView,
+    ResumabilityCapabilityView, RuntimeCapabilityView, ToolsCapabilityView,
+};
 use crate::core::runtime_types::{
     FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView,
     RuntimeLaunchView, RuntimeRunSummary,
@@ -3148,6 +3152,12 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(RuntimeRunSummary);
     push_decl!(RuntimeLaunchView);
     push_decl!(RuntimeEventView);
+    push_decl!(RuntimeCapabilityView);
+    push_decl!(BoolCapabilityView);
+    push_decl!(ToolsCapabilityView);
+    push_decl!(ContextWindowCapabilityView);
+    push_decl!(ReasoningCapabilityView);
+    push_decl!(ResumabilityCapabilityView);
     push_decl!(TerminalShellSelectionDto);
     push_decl!(WorkspacePaneDto);
     push_decl!(GithubRepoDto);

@@ -209,6 +209,7 @@ Grounded in a source review.
 5. Reasoning capability is NOT enforced in v1 (only the image guard), to avoid breaking thinking-enabled runs.
 6. One shared image-guard helper in `runtime_capabilities`, called by BOTH the native runner (before `ensure_usage_healthy`/provider) and the sidecar branch in `api_agent.rs`; refusal happens before any spend.
 7. `get_runtime_capabilities` is compute-only and works with the journal off; `get_runtime_context_summary` is deferred to R6 (do not freeze its DTO now).
+8. The image guard is gated on `runtime_journal::is_enabled()` (spec §3.1: guards apply "when the feature is enabled"), so the journal-off path is byte-identical to pre-R4b and the composer mismatch (it still advertises attachments universally) is not a live regression. Wiring the composer to `get_runtime_capabilities` is a prerequisite before the journal is enabled by default. The guard runs before the `PreRequest` dispatch-intent checkpoint and before the attachment drain, and before any side-effecting admission on the sidecar paths.
 
 **R5 decisions:**
 

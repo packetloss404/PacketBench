@@ -268,6 +268,17 @@ impl SidecarManager {
         self.owned_sessions.lock().await.contains(session_id)
     }
 
+    /// The `(provider, model)` this supervisor recorded for a session, if any.
+    /// Used by the R4b pre-dispatch image guard on the sidecar send path, which
+    /// has no provider in the request.
+    pub async fn session_route(&self, session_id: &str) -> Option<(String, String)> {
+        self.session_usage_meta
+            .lock()
+            .await
+            .get(session_id)
+            .map(|meta| (meta.provider.clone(), meta.model.clone()))
+    }
+
     /// Stop local and SSH-backed sidecars synchronously while Tauri's exit
     /// event is still running. Process groups include Codex, MCP, and SSH
     /// grandchildren spawned by the sidecar.

@@ -20,6 +20,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use ts_rs::TS;
 
 use crate::commands::provider_models::LiveModel;
 
@@ -534,6 +535,214 @@ pub fn resolve_capabilities(
     }
 }
 
+/// The single pre-dispatch image guard used by BOTH transports (the in-process
+/// runner and the Node sidecar branch). R4b decision 4: vision is resolved from
+/// the static table only for now — a live catalog entry would not change the
+/// vision answer, so passing `None` keeps the two call sites identical and the
+/// guard free of I/O.
+///
+/// A refusal here is deliberate fail-closed behavior: an image on a route whose
+/// vision is `unsupported` OR `unknown` is rejected with a named error rather
+/// than silently dropped.
+pub fn require_route_supports_images(provider: &str, model: &str) -> Result<(), CapabilityError> {
+    resolve_capabilities(provider, model, None).require_image_input()
+}
+
+// --- R4b: the concrete, ts-rs-friendly readout of a capability snapshot. The
+// generic `CapabilityKnowledge<T>` cannot be emitted to TypeScript directly, so
+// each capability is projected into a flat `{ state, provenance, reason, value? }`
+// view. The value is present only when the state is `supported`.
+
+/// A boolean-valued capability (`vision`, `structured_output`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BoolCapabilityView {
+    pub state: String,
+    pub provenance: String,
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(optional)]
+    pub value: Option<bool>,
+}
+
+/// Tool-calling support and whether calls can run in parallel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsCapabilityView {
+    pub state: String,
+    pub provenance: String,
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(optional)]
+    pub parallel: Option<bool>,
+}
+
+/// The context window in tokens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextWindowCapabilityView {
+    pub state: String,
+    pub provenance: String,
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub window: Option<u64>,
+}
+
+/// The reasoning controls a route exposes and its output-budget semantics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReasoningCapabilityView {
+    pub state: String,
+    pub provenance: String,
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(optional)]
+    pub controls: Option<Vec<String>>,
+    #[ts(optional)]
+    pub output_budget_semantics: Option<String>,
+}
+
+/// How a run can be continued.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumabilityCapabilityView {
+    pub state: String,
+    pub provenance: String,
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(optional)]
+    pub mode: Option<String>,
+    #[ts(optional)]
+    pub format_version: Option<String>,
+}
+
+/// The full capability readout for one provider/model. Informational only — it
+/// grants no execution authority; the guard is `require_route_supports_images`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCapabilityView {
+    #[ts(type = "number")]
+    pub version: i64,
+    pub provider: String,
+    pub model: String,
+    pub tools: ToolsCapabilityView,
+    pub vision: BoolCapabilityView,
+    pub reasoning: ReasoningCapabilityView,
+    pub structured_output: BoolCapabilityView,
+    pub context_window: ContextWindowCapabilityView,
+    pub resumability: ResumabilityCapabilityView,
+}
+
+impl CapabilitySnapshot {
+    /// Project this snapshot into the concrete wire view.
+    pub fn view(&self) -> RuntimeCapabilityView {
+        RuntimeCapabilityView {
+            version: self.version,
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            tools: match &self.tools {
+                CapabilityKnowledge::Supported { value, provenance } => ToolsCapabilityView {
+                    state: CapabilityState::Supported.as_str().to_string(),
+                    provenance: provenance.as_str().to_string(),
+                    reason: None,
+                    parallel: Some(value.parallel),
+                },
+                other => ToolsCapabilityView {
+                    state: other.state().as_str().to_string(),
+                    provenance: other.provenance().as_str().to_string(),
+                    reason: other.reason().map(str::to_string),
+                    parallel: None,
+                },
+            },
+            vision: bool_view(&self.vision),
+            reasoning: match &self.reasoning {
+                CapabilityKnowledge::Supported { value, provenance } => ReasoningCapabilityView {
+                    state: CapabilityState::Supported.as_str().to_string(),
+                    provenance: provenance.as_str().to_string(),
+                    reason: None,
+                    controls: Some(value.controls.clone()),
+                    output_budget_semantics: Some(value.output_budget_semantics.clone()),
+                },
+                other => ReasoningCapabilityView {
+                    state: other.state().as_str().to_string(),
+                    provenance: other.provenance().as_str().to_string(),
+                    reason: other.reason().map(str::to_string),
+                    controls: None,
+                    output_budget_semantics: None,
+                },
+            },
+            structured_output: bool_view(&self.structured_output),
+            context_window: match &self.context_window {
+                CapabilityKnowledge::Supported { value, provenance } => {
+                    ContextWindowCapabilityView {
+                        state: CapabilityState::Supported.as_str().to_string(),
+                        provenance: provenance.as_str().to_string(),
+                        reason: None,
+                        window: Some(*value),
+                    }
+                }
+                other => ContextWindowCapabilityView {
+                    state: other.state().as_str().to_string(),
+                    provenance: other.provenance().as_str().to_string(),
+                    reason: other.reason().map(str::to_string),
+                    window: None,
+                },
+            },
+            resumability: match &self.resumability {
+                CapabilityKnowledge::Supported { value, provenance } => {
+                    ResumabilityCapabilityView {
+                        state: CapabilityState::Supported.as_str().to_string(),
+                        provenance: provenance.as_str().to_string(),
+                        reason: None,
+                        mode: Some(match value.mode {
+                            ResumeMode::Typed => "typed".to_string(),
+                            ResumeMode::Semantic => "semantic".to_string(),
+                        }),
+                        format_version: value.format_version.clone(),
+                    }
+                }
+                other => ResumabilityCapabilityView {
+                    state: other.state().as_str().to_string(),
+                    provenance: other.provenance().as_str().to_string(),
+                    reason: other.reason().map(str::to_string),
+                    mode: None,
+                    format_version: None,
+                },
+            },
+        }
+    }
+}
+
+fn bool_view(knowledge: &CapabilityKnowledge<bool>) -> BoolCapabilityView {
+    match knowledge {
+        // A `supported` variant carrying `false` means "we know it is not
+        // supported"; project it as `unsupported` so a consumer branching on
+        // `state` agrees with `require_image_input` (which refuses it).
+        CapabilityKnowledge::Supported { value, provenance } => BoolCapabilityView {
+            state: if *value {
+                CapabilityState::Supported.as_str().to_string()
+            } else {
+                CapabilityState::Unsupported.as_str().to_string()
+            },
+            provenance: provenance.as_str().to_string(),
+            reason: if *value {
+                None
+            } else {
+                Some("recorded as not supported".to_string())
+            },
+            value: Some(*value),
+        },
+        other => BoolCapabilityView {
+            state: other.state().as_str().to_string(),
+            provenance: other.provenance().as_str().to_string(),
+            reason: other.reason().map(str::to_string),
+            value: None,
+        },
+    }
+}
+
 fn snapshot_hash(payload: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(payload.as_bytes()))
 }
@@ -776,5 +985,70 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn route_image_guard_is_fail_closed_across_id_forms() {
+        // Supported route: the AgentCli id and the canonical keyring name agree.
+        assert!(require_route_supports_images("api-claude", "claude-sonnet-4-5").is_ok());
+        assert!(require_route_supports_images("anthropic", "claude-sonnet-4-5").is_ok());
+
+        // The sidecar transports pass their own provider ids; both must resolve
+        // to a vision-capable family so the guard does not refuse them.
+        assert!(require_route_supports_images("claude-oauth", "claude-sonnet-4-5").is_ok());
+        assert!(require_route_supports_images("openai-agents", "gpt-4o").is_ok());
+
+        // Unknown route (aggregator / named provider): refused, never dropped.
+        assert!(matches!(
+            require_route_supports_images("api-openrouter", "some/odd-model"),
+            Err(CapabilityError::AttachmentUnsupported {
+                state: CapabilityState::Unknown,
+                ..
+            })
+        ));
+        assert!(matches!(
+            require_route_supports_images("sugar", "whatever"),
+            Err(CapabilityError::AttachmentUnsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn capability_view_flattens_tri_state_and_carries_values() {
+        let view = resolve_capabilities("api-claude", "claude-sonnet-4-5", None).view();
+        assert_eq!(view.provider, "api-claude");
+        assert_eq!(view.model, "claude-sonnet-4-5");
+        assert_eq!(view.vision.state, "supported");
+        assert_eq!(view.vision.provenance, "static");
+        assert_eq!(view.vision.value, Some(true));
+        assert_eq!(view.vision.reason, None);
+        assert_eq!(view.tools.parallel, Some(true));
+        assert_eq!(view.context_window.window, Some(200_000));
+        assert_eq!(view.reasoning.controls, Some(vec!["thinking".to_string()]));
+
+        // Unknown routes carry a reason and no value.
+        let unknown = resolve_capabilities("api-openrouter", "some/odd-model", None).view();
+        assert_eq!(unknown.vision.state, "unknown");
+        assert_eq!(unknown.vision.provenance, "unknown");
+        assert_eq!(unknown.vision.value, None);
+        assert!(unknown.vision.reason.is_some());
+
+        // The view round-trips as JSON (the shape the frontend receives).
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["vision"]["state"], serde_json::json!("supported"));
+        assert_eq!(json["vision"]["value"], serde_json::json!(true));
+        assert_eq!(json["contextWindow"]["window"], serde_json::json!(200_000));
+    }
+
+    #[test]
+    fn view_projects_supported_false_as_unsupported() {
+        // `Supported(false)` must not read as support: the projection agrees
+        // with the guard, which refuses it.
+        let mut snapshot = resolve_capabilities("api-claude", "claude-sonnet-4-5", None);
+        snapshot.vision = CapabilityKnowledge::supported(false, CapabilityProvenance::Static);
+        let view = snapshot.view();
+        assert_eq!(view.vision.state, "unsupported");
+        assert_eq!(view.vision.value, Some(false));
+        assert!(view.vision.reason.is_some());
+        assert!(snapshot.require_image_input().is_err());
     }
 }

@@ -44,6 +44,18 @@ export type RuntimeLaunchView = { operationId: string, conversationId: string, r
 
 export type RuntimeEventView = { runId: string, seq: number, epoch: number, kind: string, payloadHash: string, createdAt: number, };
 
+export type RuntimeCapabilityView = { version: number, provider: string, model: string, tools: ToolsCapabilityView, vision: BoolCapabilityView, reasoning: ReasoningCapabilityView, structuredOutput: BoolCapabilityView, contextWindow: ContextWindowCapabilityView, resumability: ResumabilityCapabilityView, };
+
+export type BoolCapabilityView = { state: string, provenance: string, reason?: string, value?: boolean, };
+
+export type ToolsCapabilityView = { state: string, provenance: string, reason?: string, parallel?: boolean, };
+
+export type ContextWindowCapabilityView = { state: string, provenance: string, reason?: string, window?: number, };
+
+export type ReasoningCapabilityView = { state: string, provenance: string, reason?: string, controls?: Array<string>, outputBudgetSemantics?: string, };
+
+export type ResumabilityCapabilityView = { state: string, provenance: string, reason?: string, mode?: string, formatVersion?: string, };
+
 export type TerminalShellSelectionDto = { profile: string, executable?: string, args?: Array<string>, wslDistro?: string, };
 
 export type WorkspacePaneDto = { id: string, agentId: WorkspaceAgentSlotDto, sessionId: string | null, gridPosition: GridPositionDto, accentColor?: string, pinnedCommands?: Array<string>, taskId?: string, flightId?: string, agentConfigId?: string, initialPrompt?: string, overrideCommand?: string, overrideArgs?: Array<string>,

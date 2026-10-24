@@ -2,6 +2,7 @@
 //! Nothing in the live agent loop calls these yet; they exist so the substrate
 //! can be exercised and validated before integration.
 
+use crate::core::runtime_capabilities::{self, RuntimeCapabilityView};
 use crate::core::runtime_journal as journal;
 use crate::core::runtime_types::{
     FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView,
@@ -52,6 +53,19 @@ pub async fn list_runtime_events(
         })
     })
     .await
+}
+
+/// R4b: the capability readout for a provider/model. Compute-only — no journal
+/// access and no provider dispatch — so it answers with the runtime journal
+/// disabled. It grants no execution authority; the guard that actually refuses
+/// an image is `runtime_capabilities::require_route_supports_images`, invoked
+/// before dispatch by the runner (in-process) and the sidecar branch.
+#[tauri::command]
+pub fn get_runtime_capabilities(
+    provider: String,
+    model: String,
+) -> Result<RuntimeCapabilityView, String> {
+    Ok(runtime_capabilities::resolve_capabilities(&provider, &model, None).view())
 }
 
 #[tauri::command]
@@ -454,6 +468,14 @@ impl RuntimeServices for TauriRuntimeServices {
 
     async fn take_pending_attachments(&self, session_id: &str) -> Vec<ImageAttachment> {
         self.state.runtime_take_attachments(session_id).await
+    }
+
+    async fn has_pending_attachments(&self, session_id: &str) -> bool {
+        self.state.runtime_has_attachments(session_id).await
+    }
+
+    fn capability_guard_enabled(&self) -> bool {
+        journal::is_enabled()
     }
 
     fn load_hooks(&self, execution: &ExecutionTarget) -> Vec<HookConfig> {

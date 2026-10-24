@@ -301,6 +301,20 @@ pub trait RuntimeServices:
     async fn session(&self, session_id: &str) -> Result<RuntimeSession, String>;
     async fn flags(&self, session_id: &str) -> RuntimeFlags;
     async fn take_pending_attachments(&self, session_id: &str) -> Vec<ImageAttachment>;
+    /// Whether the session has queued attachments, WITHOUT draining them. The
+    /// runner checks this before persisting dispatch intent so a capability
+    /// refusal (R4b) leaves no dispatch intent and does not consume the image.
+    /// Required (no default) so a new host cannot silently disable the guard by
+    /// forgetting to answer.
+    async fn has_pending_attachments(&self, session_id: &str) -> bool;
+    /// Whether the runtime authority (the journal) is enabled, which gates the
+    /// R4b pre-dispatch capability guard. Defaults to `false`: when the feature
+    /// is off the guard does not run and the disabled path is byte-identical to
+    /// the pre-R4b behavior (runtime spec §3.1: guards apply "when the feature
+    /// is enabled").
+    fn capability_guard_enabled(&self) -> bool {
+        false
+    }
     fn load_hooks(&self, execution: &ExecutionTarget) -> Vec<HookConfig>;
     async fn execute_tool(
         &self,

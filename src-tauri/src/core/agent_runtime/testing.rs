@@ -173,6 +173,9 @@ pub struct FakeServices {
     deny_all_pending: Mutex<usize>,
     drain_ssh: Mutex<usize>,
     checkpoint_store: Option<Arc<FaultCheckpointStore>>,
+    has_pending_attachments: Mutex<bool>,
+    attachment_drains: Mutex<usize>,
+    capability_guard_enabled: Mutex<bool>,
 }
 
 impl FakeServices {
@@ -212,7 +215,37 @@ impl FakeServices {
             deny_all_pending: Mutex::new(0),
             drain_ssh: Mutex::new(0),
             checkpoint_store: None,
+            has_pending_attachments: Mutex::new(false),
+            attachment_drains: Mutex::new(0),
+            capability_guard_enabled: Mutex::new(false),
         }
+    }
+
+    /// Queue (or clear) a pending attachment so the R4b image guard can be
+    /// exercised. The drain itself stays empty; only the guard's pre-check sees
+    /// this, which is exactly the "would refuse before dispatch" path.
+    pub fn set_has_pending_attachments(&self, has: bool) {
+        *self
+            .has_pending_attachments
+            .lock()
+            .expect("attachments flag") = has;
+    }
+
+    /// Enable the R4b capability guard (mirrors the journal being enabled).
+    pub fn set_capability_guard_enabled(&self, enabled: bool) {
+        *self.capability_guard_enabled.lock().expect("guard flag") = enabled;
+    }
+
+    /// How many times the runner drained queued attachments.
+    pub fn attachment_drains(&self) -> usize {
+        *self.attachment_drains.lock().expect("drain count")
+    }
+
+    /// Override the session's provider/model so a test can pick a route with a
+    /// known (or unknown) vision capability.
+    pub fn set_session_route(&mut self, provider: &str, model: &str) {
+        self.session.provider = provider.to_string();
+        self.session.model = model.to_string();
     }
 
     /// Install a durable checkpoint sink, enabling the journal path for this
@@ -370,7 +403,19 @@ impl RuntimeServices for FakeServices {
     }
 
     async fn take_pending_attachments(&self, _session_id: &str) -> Vec<ImageAttachment> {
+        *self.attachment_drains.lock().expect("drain count") += 1;
         Vec::new()
+    }
+
+    async fn has_pending_attachments(&self, _session_id: &str) -> bool {
+        *self
+            .has_pending_attachments
+            .lock()
+            .expect("attachments flag")
+    }
+
+    fn capability_guard_enabled(&self) -> bool {
+        *self.capability_guard_enabled.lock().expect("guard flag")
     }
 
     fn load_hooks(&self, _execution: &ExecutionTarget) -> Vec<HookConfig> {
@@ -493,6 +538,92 @@ async fn plain_text_stream_emits_ordered_chunks_then_done() {
     assert_eq!(events[2].1["output_tokens"], json!(2));
     assert_eq!(events[2].1["cancelled"], json!(false));
     assert_eq!(*services.attempt_reviewing.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn pending_attachment_on_an_unknown_vision_route_is_refused_before_dispatch() {
+    // The fake session's provider/model ("fake"/"fake-model") has no recorded
+    // vision capability, so the R4b guard must fail closed BEFORE any provider
+    // call. No script is queued: a dispatch would instead fail with "queue
+    // exhausted", which this test distinguishes against.
+    let mut services = FakeServices::new("s-image");
+    let store = Arc::new(FaultCheckpointStore::new());
+    services.install_checkpoints(Arc::clone(&store));
+    services.set_capability_guard_enabled(true);
+    services.set_has_pending_attachments(true);
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-image"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.contains("image"),
+        "error must name the image: {error}"
+    );
+    assert!(
+        error.contains("vision"),
+        "error must name the capability: {error}"
+    );
+    // Nothing was dispatched, nothing was emitted, and the image was NOT
+    // consumed: the guard runs before the drain and before the PreRequest
+    // dispatch-intent checkpoint (only UserTurnAccepted was persisted).
+    assert_eq!(*services.stream_calls.lock().unwrap(), 0);
+    assert!(services.recorded_events().is_empty());
+    assert_eq!(services.attachment_drains(), 0);
+    assert_eq!(
+        store.boundaries(),
+        vec![CheckpointBoundary::UserTurnAccepted]
+    );
+}
+
+#[tokio::test]
+async fn pending_attachment_on_a_supported_vision_route_dispatches() {
+    // A route with explicit static vision support passes the guard, so the
+    // scripted response is consumed normally.
+    let mut services = FakeServices::new("s-image-ok");
+    services.set_session_route("api-claude", "claude-sonnet-4-5");
+    services.set_capability_guard_enabled(true);
+    services.set_has_pending_attachments(true);
+    services.push_script(text_script("described the image"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-image-ok"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Completed {
+            input_tokens: 2,
+            output_tokens: 1
+        }
+    );
+    assert_eq!(*services.stream_calls.lock().unwrap(), 1);
+    assert_eq!(services.attachment_drains(), 1);
+}
+
+#[tokio::test]
+async fn pending_attachment_is_ignored_when_the_guard_is_disabled() {
+    // With the runtime authority off (default), the disabled path is
+    // byte-identical: the image is not refused.
+    let services = FakeServices::new("s-image-off");
+    services.set_has_pending_attachments(true);
+    services.push_script(text_script("ok"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-image-off"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Completed {
+            input_tokens: 2,
+            output_tokens: 1
+        }
+    );
+    assert_eq!(*services.stream_calls.lock().unwrap(), 1);
 }
 
 #[tokio::test]
