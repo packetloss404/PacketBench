@@ -167,6 +167,16 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       on the async runner task; (3) resume does not enforce policy/MCP hashes.
       **Before R5:** per-turn run identity (follow-ups currently reuse the
       initial binding, not a new linked run).
+- [x] **P1 — R3b must-fixes.** Restart/continue now selects `kind` from
+      `conversation_has_owner` (so an owned conversation uses `existing` and
+      links `previous_run_id`); checkpoint persistence is `async` and runs on
+      `spawn_blocking` (no SQLite work on the runner task); resume is fail-closed
+      — `check_resumable_typed` returns `PolicyUnverified` without a live
+      `CompatibilityContext`, so the command surface offers only `semantic`.
+      `cargo test --lib` 1174/0; independent review: safe, no blockers.
+      **Still open before enabling by default:** wire a real
+      `CompatibilityContext` into the resume path (or delete the now-unreachable
+      typed branch) and add a direct `prepare_session_run` kind-selection test.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

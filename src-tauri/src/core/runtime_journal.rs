@@ -16,6 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::runtime_checkpoint::CompatibilityContext;
 use super::runtime_types::{
     validate_id, validate_sha256_digest, FrozenRuntimeLaunch, PrepareRuntimeRunInput,
     PrepareRuntimeRunResult, RuntimeEventView, RuntimeLaunchView, RuntimeRunSummary,
@@ -424,6 +425,27 @@ pub fn prepare_operation(
     }
 }
 
+/// Whether a conversation already has a durable owner, i.e. a journaled turn
+/// exists for it. Callers use this to choose the prepare `kind`: an unowned
+/// conversation is an `initial` launch; an owned one is an `existing` turn that
+/// allocates a new run linked to the prior root run. Preparing a second
+/// `initial` for an owned conversation is rejected by [`prepare_operation`].
+pub fn conversation_has_owner(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<bool, String> {
+    validate_id("conversationId", conversation_id)?;
+    connection
+        .query_row(
+            "SELECT 1 FROM conversation_owners WHERE conversation_id = ?1",
+            params![conversation_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|row| row.is_some())
+        .map_err(|e| format!("Failed to read conversation owner: {e}"))
+}
+
 pub fn get_operation(
     connection: &Connection,
     operation_id: &str,
@@ -583,14 +605,33 @@ pub struct ResumeInspection {
     pub inspected_revision: Option<String>,
 }
 
+/// Inspect a run for resume with no live policy context. Never dispatches.
+///
+/// Because the durable run binding does not record the tool-policy/MCP
+/// authority, the policy hashes cannot be verified here, so typed replay is
+/// refused fail-closed: only `semantic` is offered for a run that has a
+/// checkpoint. Callers that *can* reconstruct the live policy should use
+/// [`inspect_resume_with_compatibility`].
+pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeInspection, String> {
+    inspect_resume_with_compatibility(connection, run_id, None)
+}
+
 /// Inspect a run for resume. Never dispatches.
 ///
 /// * No checkpoint at all -> `legacy_semantic`: only `semantic` is permitted.
 /// * Corrupt/newer checkpoint -> preserved, refused; no typed resume.
 /// * Incompatible schema/transport/model -> explicit `semantic` fallback.
-/// * Compatible checkpoint -> `typed` + `semantic`; pending effects still allow
-///   a typed resume but keep the effect unresolved.
-pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeInspection, String> {
+/// * `current` is `None` (policy hashes unverifiable) -> typed refused,
+///   `semantic` only.
+/// * `current` is `Some` -> [`validate_compatibility`] is run; a mismatch
+///   (manifest/tool-policy/MCP) refuses typed, `semantic` only.
+/// * Fully compatible checkpoint -> `typed` + `semantic`; pending effects still
+///   allow a typed resume but keep the effect unresolved.
+pub fn inspect_resume_with_compatibility(
+    connection: &Connection,
+    run_id: &str,
+    current: Option<&CompatibilityContext>,
+) -> Result<ResumeInspection, String> {
     validate_id("runId", run_id)?;
     let row = connection
         .query_row(
@@ -644,9 +685,10 @@ pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeIns
                 Ok(checkpoint) => {
                     pending_effect_ids = checkpoint.pending_effect_ids.clone();
                     needs_reconciliation = !pending_effect_ids.is_empty();
-                    match crate::core::runtime_checkpoint::check_resumable(
+                    match crate::core::runtime_checkpoint::check_resumable_typed(
                         &checkpoint,
                         &expected_model_route,
+                        current,
                     ) {
                         Ok(()) => {
                             permitted_modes.push("typed".to_string());
@@ -672,7 +714,7 @@ pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeIns
                         }
                         Err(err) => {
                             permitted_modes.push("semantic".to_string());
-                            incompatibilities.push(format!("incompatible checkpoint: {err}"));
+                            incompatibilities.push(format!("typed resume unavailable: {err}"));
                         }
                     }
                 }
@@ -702,19 +744,44 @@ pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeIns
     })
 }
 
-/// Continue an interrupted run at `epoch + 1` via compare-and-swap. This does
-/// NOT start the provider, dispatch a request or execute a tool: it only
-/// advances the durable epoch and records the resume intent.
-///
-/// A missing/incompatible checkpoint falls back to explicit `semantic`; a
-/// corrupt/newer checkpoint is preserved and refused for `typed`. A stale
-/// `expected_epoch` or stale `inspected_revision` is rejected.
+/// Continue an interrupted run at `epoch + 1` via compare-and-swap, with no
+/// live policy context. Typed resume is refused fail-closed because the policy
+/// hashes cannot be verified from the durable binding. Use
+/// [`resume_run_with_compatibility`] when a live policy context is available.
 pub fn resume_run(
     connection: &Connection,
     run_id: &str,
     expected_epoch: i64,
     mode: &str,
     inspected_revision: Option<&str>,
+) -> Result<RuntimeRunSummary, String> {
+    resume_run_with_compatibility(
+        connection,
+        run_id,
+        expected_epoch,
+        mode,
+        inspected_revision,
+        None,
+    )
+}
+
+/// Continue an interrupted run at `epoch + 1` via compare-and-swap. This does
+/// NOT start the provider, dispatch a request or execute a tool: it only
+/// advances the durable epoch and records the resume intent.
+///
+/// A missing/incompatible checkpoint falls back to explicit `semantic`; a
+/// corrupt/newer checkpoint is preserved and refused for `typed`. A `typed`
+/// resume additionally requires the current [`CompatibilityContext`] to match
+/// the checkpoint's manifest/tool-policy/MCP hashes; when `current` is `None`
+/// the policy cannot be verified and typed is refused. A stale
+/// `expected_epoch` or stale `inspected_revision` is rejected.
+pub fn resume_run_with_compatibility(
+    connection: &Connection,
+    run_id: &str,
+    expected_epoch: i64,
+    mode: &str,
+    inspected_revision: Option<&str>,
+    current: Option<&CompatibilityContext>,
 ) -> Result<RuntimeRunSummary, String> {
     validate_id("runId", run_id)?;
     if expected_epoch < 0 {
@@ -745,7 +812,7 @@ pub fn resume_run(
         ));
     }
 
-    let inspection = inspect_resume(connection, run_id)?;
+    let inspection = inspect_resume_with_compatibility(connection, run_id, current)?;
     if !inspection.permitted_modes.iter().any(|m| m == mode) {
         return Err(format!(
             "Resume mode \"{mode}\" is not permitted for run {run_id}: {}",
@@ -995,6 +1062,22 @@ mod tests {
         assert!(prepare_operation(&connection, &bad).is_err());
     }
 
+    /// A live compatibility context matching `write_checkpoint`'s stored hashes
+    /// (manifest = digest(2), tool-policy = digest(3), mcp = digest(4)).
+    fn compatibility(model_route: &str) -> crate::core::runtime_checkpoint::CompatibilityContext {
+        use crate::core::runtime_checkpoint::{
+            CompatibilityContext, CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_TRANSPORT_VERSION,
+        };
+        CompatibilityContext {
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
+            transport_version: CHECKPOINT_TRANSPORT_VERSION,
+            model_route: model_route.to_string(),
+            manifest_hash: digest(2),
+            tool_policy_hash: digest(3),
+            mcp_hash: digest(4),
+        }
+    }
+
     fn write_checkpoint(
         connection: &Connection,
         run_id: &str,
@@ -1067,14 +1150,143 @@ mod tests {
             vec![],
             1,
         );
-        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        // A full matching live context verifies the policy hashes, so typed is
+        // offered.
+        let context = compatibility("anthropic:claude");
+        let inspection =
+            inspect_resume_with_compatibility(&connection, &prepared.run_id, Some(&context))
+                .unwrap();
         assert_eq!(inspection.permitted_modes, vec!["typed", "semantic"]);
         assert_eq!(inspection.inspected_revision.as_deref(), Some(id.as_str()));
         // A stale inspection revision is rejected before the epoch advances.
-        assert!(resume_run(&connection, &prepared.run_id, 0, "typed", Some("other")).is_err());
-        let resumed = resume_run(&connection, &prepared.run_id, 0, "typed", Some(&id)).unwrap();
+        assert!(resume_run_with_compatibility(
+            &connection,
+            &prepared.run_id,
+            0,
+            "typed",
+            Some("other"),
+            Some(&context),
+        )
+        .is_err());
+        let resumed = resume_run_with_compatibility(
+            &connection,
+            &prepared.run_id,
+            0,
+            "typed",
+            Some(&id),
+            Some(&context),
+        )
+        .unwrap();
         assert_eq!(resumed.epoch, 1);
         assert_eq!(resumed.resume_mode, "typed");
+    }
+
+    #[test]
+    fn resume_without_policy_context_offers_only_semantic() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let id = write_checkpoint(
+            &connection,
+            &prepared.run_id,
+            0,
+            "anthropic:claude",
+            vec![],
+            1,
+        );
+        // No live context: the policy hashes cannot be verified, so typed replay
+        // is refused fail-closed and only semantic is offered.
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["semantic"]);
+        assert!(inspection
+            .incompatibilities
+            .iter()
+            .any(|m| m.contains("could not be verified")));
+        assert!(resume_run(&connection, &prepared.run_id, 0, "typed", Some(&id)).is_err());
+        assert!(resume_run(&connection, &prepared.run_id, 0, "semantic", None).is_ok());
+    }
+
+    #[test]
+    fn policy_hash_mismatch_refuses_typed_resume() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let id = write_checkpoint(
+            &connection,
+            &prepared.run_id,
+            0,
+            "anthropic:claude",
+            vec![],
+            1,
+        );
+        // Same schema/transport/model, but the live tool-policy hash differs.
+        let mut context = compatibility("anthropic:claude");
+        context.tool_policy_hash = digest(9);
+        let inspection =
+            inspect_resume_with_compatibility(&connection, &prepared.run_id, Some(&context))
+                .unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["semantic"]);
+        assert!(inspection
+            .incompatibilities
+            .iter()
+            .any(|m| m.contains("tool-policy")));
+        assert!(resume_run_with_compatibility(
+            &connection,
+            &prepared.run_id,
+            0,
+            "typed",
+            Some(&id),
+            Some(&context),
+        )
+        .is_err());
+        assert!(resume_run_with_compatibility(
+            &connection,
+            &prepared.run_id,
+            0,
+            "semantic",
+            None,
+            Some(&context),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn second_prepare_for_owned_conversation_uses_existing_and_links_previous_run() {
+        let connection = open_at(&temp_db()).unwrap();
+        // An unknown conversation has no owner -> an initial launch.
+        assert!(!conversation_has_owner(&connection, "conv-1").unwrap());
+        let first = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        // Now it is owned -> a restart must prepare as `existing`.
+        assert!(conversation_has_owner(&connection, "conv-1").unwrap());
+
+        // A second `initial` for the owned conversation is rejected: this is the
+        // hard-failure the kind selection exists to avoid.
+        assert!(prepare_operation(&connection, &input("op-1b", &digest(2))).is_err());
+
+        let mut follow_up = input("op-2", &digest(2));
+        follow_up.kind = "existing".to_string();
+        let second = prepare_operation(&connection, &follow_up).unwrap();
+        assert!(second.created);
+        assert_ne!(second.run_id, first.run_id);
+        assert_eq!(second.epoch, 0);
+
+        // The new run is linked to the prior root run.
+        let previous: Option<String> = connection
+            .query_row(
+                "SELECT previous_run_id FROM runs WHERE run_id = ?1",
+                params![second.run_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(previous.as_deref(), Some(first.run_id.as_str()));
+
+        // The owner now points at the newest root run.
+        let latest: String = connection
+            .query_row(
+                "SELECT latest_root_run_id FROM conversation_owners WHERE conversation_id = ?1",
+                params!["conv-1"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(latest, second.run_id);
     }
 
     #[test]
@@ -1089,7 +1301,10 @@ mod tests {
             vec!["effect-1".to_string()],
             1,
         );
-        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        let context = compatibility("anthropic:claude");
+        let inspection =
+            inspect_resume_with_compatibility(&connection, &prepared.run_id, Some(&context))
+                .unwrap();
         assert!(inspection.needs_reconciliation);
         assert_eq!(inspection.pending_effect_ids, vec!["effect-1"]);
         assert!(inspection.permitted_modes.contains(&"typed".to_string()));

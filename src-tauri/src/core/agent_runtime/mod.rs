@@ -203,8 +203,14 @@ pub struct CheckpointWrite {
 /// Durable typed-history sink. Returned by [`RuntimeServices::checkpoints`] only
 /// when the runtime journal is enabled and the turn is bound to a prepared run;
 /// `None` means the runner takes its pre-journal path unchanged.
+///
+/// `persist` is async so a durable store can move its blocking write off the
+/// runner's task (the Tauri store uses `spawn_blocking`). The runner still
+/// `await`s it, so the boundary commit happens before it proceeds past that
+/// boundary.
+#[async_trait::async_trait]
 pub trait CheckpointStore: Send + Sync {
-    fn persist(&self, write: &CheckpointWrite) -> Result<(), String>;
+    async fn persist(&self, write: &CheckpointWrite) -> Result<(), String>;
 }
 
 /// Immutable session binding read once at the start of a turn.

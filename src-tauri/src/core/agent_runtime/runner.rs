@@ -239,7 +239,7 @@ pub(crate) fn require_provider_completion(
 /// the disabled-journal path: this is a no-op and the runner behaves exactly as
 /// it did before R3b. A store error is propagated so a failed durable commit
 /// blocks continuation rather than degrading into a best-effort log.
-fn persist_checkpoint(
+async fn persist_checkpoint(
     store: Option<&dyn CheckpointStore>,
     boundary: CheckpointBoundary,
     messages: &[ChatMessage],
@@ -248,12 +248,16 @@ fn persist_checkpoint(
 ) -> Result<(), String> {
     match store {
         None => Ok(()),
-        Some(store) => store.persist(&CheckpointWrite {
-            boundary,
-            messages: messages.to_vec(),
-            pending_effect_ids,
-            needs_reconciliation,
-        }),
+        Some(store) => {
+            store
+                .persist(&CheckpointWrite {
+                    boundary,
+                    messages: messages.to_vec(),
+                    pending_effect_ids,
+                    needs_reconciliation,
+                })
+                .await
+        }
     }
 }
 
@@ -272,12 +276,14 @@ async fn persist_current_history<R: RuntimeServices>(
         return Ok(());
     };
     let messages = services.history(session_id).await;
-    store.persist(&CheckpointWrite {
-        boundary,
-        messages,
-        pending_effect_ids,
-        needs_reconciliation,
-    })
+    store
+        .persist(&CheckpointWrite {
+            boundary,
+            messages,
+            pending_effect_ids,
+            needs_reconciliation,
+        })
+        .await
 }
 
 pub(crate) fn tool_is_advertised(name: &str, tools: &[ToolDefinition]) -> bool {
@@ -491,7 +497,8 @@ pub async fn run_turn<R: RuntimeServices>(
             &messages,
             Vec::new(),
             false,
-        )?;
+        )
+        .await?;
 
         // Take pending attachments (only apply to iteration 0 — tool-result iterations don't re-attach).
         let pending_attachments = if iteration == 0 {

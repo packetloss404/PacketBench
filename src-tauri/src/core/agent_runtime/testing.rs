@@ -126,8 +126,9 @@ impl FaultCheckpointStore {
     }
 }
 
+#[async_trait::async_trait]
 impl CheckpointStore for FaultCheckpointStore {
-    fn persist(&self, write: &CheckpointWrite) -> Result<(), String> {
+    async fn persist(&self, write: &CheckpointWrite) -> Result<(), String> {
         let should_fail = {
             let fail_at = self.fail_at.lock().expect("fail_at");
             let mut remaining = self.fail_remaining.lock().expect("fail_remaining");
@@ -146,9 +147,10 @@ impl CheckpointStore for FaultCheckpointStore {
     }
 }
 
+#[async_trait::async_trait]
 impl CheckpointStore for Arc<FaultCheckpointStore> {
-    fn persist(&self, write: &CheckpointWrite) -> Result<(), String> {
-        (**self).persist(write)
+    async fn persist(&self, write: &CheckpointWrite) -> Result<(), String> {
+        (**self).persist(write).await
     }
 }
 
@@ -821,18 +823,31 @@ async fn crashed_intent_reconciles_and_resumes_without_replaying() {
         .unwrap();
 
     // 3. Inspect: the unresolved effect forces needs_reconciliation, but a typed
-    //    resume is still offered (it must be settled, not replayed).
-    let inspection = journal::inspect_resume(&connection, &prepared.run_id).unwrap();
+    //    resume is still offered (it must be settled, not replayed). A full
+    //    matching live context verifies the policy/MCP hashes, which the durable
+    //    binding cannot reconstruct on its own.
+    let context = runtime_checkpoint::CompatibilityContext {
+        schema_version: runtime_checkpoint::CHECKPOINT_SCHEMA_VERSION,
+        transport_version: runtime_checkpoint::CHECKPOINT_TRANSPORT_VERSION,
+        model_route: "fake:fake-model".into(),
+        manifest_hash: runtime_checkpoint::hash_payload("fake"),
+        tool_policy_hash: runtime_checkpoint::hash_payload("bash"),
+        mcp_hash: runtime_checkpoint::hash_payload(""),
+    };
+    let inspection =
+        journal::inspect_resume_with_compatibility(&connection, &prepared.run_id, Some(&context))
+            .unwrap();
     assert!(inspection.needs_reconciliation);
     assert_eq!(inspection.pending_effect_ids, vec!["t1".to_string()]);
 
     // 4. Resume typed bumps the epoch and runs no tool.
-    let resumed = journal::resume_run(
+    let resumed = journal::resume_run_with_compatibility(
         &connection,
         &prepared.run_id,
         0,
         "typed",
         inspection.inspected_revision.as_deref(),
+        Some(&context),
     )
     .unwrap();
     assert_eq!(resumed.epoch, 1);

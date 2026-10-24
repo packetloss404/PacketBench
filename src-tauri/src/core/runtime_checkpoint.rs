@@ -88,6 +88,11 @@ pub enum CheckpointError {
         expected: String,
         found: String,
     },
+    /// Typed replay was refused because the current tool-policy/MCP authority
+    /// could not be verified against the checkpoint (no live compatibility
+    /// context was available). Fail-closed: an unverified policy is never
+    /// treated as a match.
+    PolicyUnverified,
     HashMismatch {
         expected: String,
         found: String,
@@ -148,6 +153,10 @@ impl std::fmt::Display for CheckpointError {
             CheckpointError::ModelRouteMismatch { expected, found } => write!(
                 f,
                 "Checkpoint model route \"{found}\" does not match the expected \"{expected}\""
+            ),
+            CheckpointError::PolicyUnverified => write!(
+                f,
+                "Typed resume refused: the current tool-policy/MCP authority could not be verified against the checkpoint (the run binding does not record it)"
             ),
             CheckpointError::HashMismatch { expected, found } => {
                 write!(
@@ -803,6 +812,29 @@ pub fn check_resumable(
     Ok(())
 }
 
+/// The typed-replay decision at resume. It enforces everything
+/// [`check_resumable`] does, then the manifest/tool-policy/MCP hashes via
+/// [`validate_compatibility`] — but ONLY when the current runtime's
+/// [`CompatibilityContext`] is available.
+///
+/// A durable run binding does not record the tool allowlist or MCP trust
+/// snapshot, so a resume caller usually cannot reconstruct those hashes. When
+/// `current` is `None` the policy cannot be verified and typed replay is
+/// refused fail-closed ([`CheckpointError::PolicyUnverified`]) rather than
+/// allowed on an unverified policy. When `current` is `Some`, a mismatch
+/// (manifest/tool-policy/MCP) refuses typed via [`CheckpointError::HashMismatch`].
+pub fn check_resumable_typed(
+    checkpoint: &Checkpoint,
+    expected_model_route: &str,
+    current: Option<&CompatibilityContext>,
+) -> Result<(), CheckpointError> {
+    check_resumable(checkpoint, expected_model_route)?;
+    match current {
+        Some(context) => validate_compatibility(context, checkpoint),
+        None => Err(CheckpointError::PolicyUnverified),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1277,5 +1309,30 @@ mod tests {
         ));
 
         assert!(check_resumable(&rerouted, "anthropic").is_ok());
+    }
+
+    #[test]
+    fn check_resumable_typed_requires_a_verifiable_policy() {
+        let checkpoint = checkpoint("run-typed", 0, history());
+        // No live context -> the policy/MCP hashes cannot be verified, so typed
+        // replay is refused fail-closed.
+        assert!(matches!(
+            check_resumable_typed(&checkpoint, "anthropic", None),
+            Err(CheckpointError::PolicyUnverified)
+        ));
+        // A full matching context verifies and permits typed.
+        assert!(check_resumable_typed(&checkpoint, "anthropic", Some(&context())).is_ok());
+        // A mismatched policy hash is refused via `validate_compatibility`.
+        let mut mismatch = context();
+        mismatch.tool_policy_hash = digest(9);
+        assert!(matches!(
+            check_resumable_typed(&checkpoint, "anthropic", Some(&mismatch)),
+            Err(CheckpointError::HashMismatch { .. })
+        ));
+        // A model mismatch is still caught before the context is consulted.
+        assert!(matches!(
+            check_resumable_typed(&checkpoint, "openai", None),
+            Err(CheckpointError::ModelRouteMismatch { .. })
+        ));
     }
 }
