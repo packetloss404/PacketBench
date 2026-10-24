@@ -71,7 +71,10 @@ RunRequest/RunOutcome); R2b then extracted the loop into
 (`cargo test --lib` 1136/0) and independently reviewed; R2c added headless
 fake-provider parity tests (1142/0). R3a added the checkpoint schema (journal
 v1→v2) and typed `runtime_checkpoint` module (1156/0, independently reviewed);
-R3b (restart wiring + crash injection) and R4+ remain.V1/V2 followed: shared type tokens raised to comfortable sizes
+R3b added runner checkpoint persistence + inspect/resume behind the default-off
+flag (1170/0, disabled path byte-identical). Three must-fixes remain before the
+journal is enabled by default (existing-conversation restart kind, off-thread
+persistence, resume policy-hash enforcement); R4+ remain.V1/V2 followed: shared type tokens raised to comfortable sizes
 (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
 muted/faint text now clears 4.5:1 on every surface in both themes, gated by a
 token contrast test. The V3–V8 appearance and F6/F7 continuity tranche then

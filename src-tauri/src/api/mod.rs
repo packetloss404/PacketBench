@@ -3,16 +3,16 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::core::{
-    agent_config as core_agent, flight as core_flight, orchestrator as core_orchestrator,
-    storage as core_storage, workspace as core_workspace,
-};
 use crate::commands::draft_assets::{
     DraftAssetMeta, ReadDraftAssetDto, StageDraftAssetInput, StagedDraftAssetDto,
 };
 use crate::core::runtime_types::{
     FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView,
     RuntimeLaunchView, RuntimeRunSummary,
+};
+use crate::core::{
+    agent_config as core_agent, flight as core_flight, orchestrator as core_orchestrator,
+    storage as core_storage, workspace as core_workspace,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -3147,7 +3147,8 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(PrepareRuntimeRunResult);
     push_decl!(RuntimeRunSummary);
     push_decl!(RuntimeLaunchView);
-    push_decl!(RuntimeEventView);    push_decl!(TerminalShellSelectionDto);
+    push_decl!(RuntimeEventView);
+    push_decl!(TerminalShellSelectionDto);
     push_decl!(WorkspacePaneDto);
     push_decl!(GithubRepoDto);
     push_decl!(ExecutionTargetRefDto);

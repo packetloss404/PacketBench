@@ -701,13 +701,20 @@ pub fn load_checkpoint(
 }
 
 /// Keep the latest [`CHECKPOINT_RETENTION_PER_RUN`] checkpoints for a run and
-/// delete older ones. Returns the number pruned. Checkpoints outside the run are
-/// untouched; active/unacknowledged pruning is the runner's concern (R3b).
+/// delete older ones. Returns the number pruned.
+///
+/// Two guards (runtime spec §4.3, R3b review gaps):
+/// * A checkpoint that still carries `pending_effect_ids` is never pruned — an
+///   unacknowledged effect is reconciliation evidence, not retention garbage.
+/// * Retention is ordered by `(epoch, seq)`, not `seq` alone, so a restarted
+///   (higher-epoch) run's newest checkpoints always win over a stale epoch's.
 pub fn prune_checkpoints(connection: &Connection, run_id: &str) -> Result<usize, CheckpointError> {
     connection
         .execute(
-            "DELETE FROM checkpoints WHERE run_id = ?1 AND checkpoint_id NOT IN (\
-             SELECT checkpoint_id FROM checkpoints WHERE run_id = ?1 ORDER BY seq DESC LIMIT ?2)",
+            "DELETE FROM checkpoints WHERE run_id = ?1 AND pending_effect_ids = '[]' \
+             AND checkpoint_id NOT IN (\
+             SELECT checkpoint_id FROM checkpoints WHERE run_id = ?1 \
+             ORDER BY epoch DESC, seq DESC LIMIT ?2)",
             params![run_id, CHECKPOINT_RETENTION_PER_RUN as i64],
         )
         .map_err(|e| CheckpointError::Store(e.to_string()))
@@ -721,6 +728,78 @@ pub fn store_checkpoint(
 ) -> Result<(), CheckpointError> {
     insert_checkpoint(connection, encoded, limits)?;
     prune_checkpoints(connection, &encoded.run_id)?;
+    Ok(())
+}
+
+/// The next monotonic checkpoint sequence for `(run_id, epoch)`, so a restart
+/// or a later turn on the same run never collides with an existing seq.
+pub fn next_checkpoint_seq(
+    connection: &Connection,
+    run_id: &str,
+    epoch: i64,
+) -> Result<i64, CheckpointError> {
+    connection
+        .query_row(
+            "SELECT COALESCE(MAX(seq), -1) + 1 FROM checkpoints WHERE run_id = ?1 AND epoch = ?2",
+            params![run_id, epoch],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| CheckpointError::Store(e.to_string()))
+}
+
+/// Load the newest checkpoint for a run by `(epoch, seq)`, or `None` when the
+/// run has none. A corrupt/newer row surfaces its decode error and is left in
+/// place (never deleted, never downgraded).
+pub fn load_latest_checkpoint(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<Option<Checkpoint>, CheckpointError> {
+    let id: Option<String> = connection
+        .query_row(
+            "SELECT checkpoint_id FROM checkpoints WHERE run_id = ?1 \
+             ORDER BY epoch DESC, seq DESC LIMIT 1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| CheckpointError::Store(e.to_string()))?;
+    match id {
+        Some(id) => load_checkpoint(connection, &id).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Resume-time compatibility check for one checkpoint against the current
+/// runtime's model route and schema/transport versions. A newer schema is
+/// refused before any field comparison so it is never downgraded.
+pub fn check_resumable(
+    checkpoint: &Checkpoint,
+    expected_model_route: &str,
+) -> Result<(), CheckpointError> {
+    if checkpoint.schema_version > CHECKPOINT_SCHEMA_VERSION {
+        return Err(CheckpointError::NewerSchema {
+            found: checkpoint.schema_version,
+            supported: CHECKPOINT_SCHEMA_VERSION,
+        });
+    }
+    if checkpoint.schema_version != CHECKPOINT_SCHEMA_VERSION {
+        return Err(CheckpointError::SchemaMismatch {
+            expected: CHECKPOINT_SCHEMA_VERSION,
+            found: checkpoint.schema_version,
+        });
+    }
+    if checkpoint.transport_version != CHECKPOINT_TRANSPORT_VERSION {
+        return Err(CheckpointError::TransportMismatch {
+            expected: CHECKPOINT_TRANSPORT_VERSION,
+            found: checkpoint.transport_version,
+        });
+    }
+    if checkpoint.model_route != expected_model_route {
+        return Err(CheckpointError::ModelRouteMismatch {
+            expected: expected_model_route.to_string(),
+            found: checkpoint.model_route.clone(),
+        });
+    }
     Ok(())
 }
 
@@ -1107,5 +1186,96 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, CheckpointError::SecretDetected { .. }));
+    }
+
+    #[test]
+    fn pending_effect_checkpoints_are_never_pruned() {
+        let connection = open();
+        let run_id = setup_run(&connection, "conv-pending");
+        // One ancient checkpoint that still carries an unacknowledged effect.
+        let mut pending = checkpoint(&run_id, 0, history());
+        pending.pending_effect_ids = vec!["effect-1".to_string()];
+        let encoded = encode(&pending, &CheckpointLimits::default()).unwrap();
+        insert_checkpoint(&connection, &encoded, &CheckpointLimits::default()).unwrap();
+        // Then flood with empty-pending checkpoints so the old one falls outside
+        // the retention window.
+        for seq in 1..12 {
+            let encoded = encode(
+                &checkpoint(&run_id, seq, history()),
+                &CheckpointLimits::default(),
+            )
+            .unwrap();
+            insert_checkpoint(&connection, &encoded, &CheckpointLimits::default()).unwrap();
+        }
+        prune_checkpoints(&connection, &run_id).unwrap();
+
+        let survivors: Vec<(i64, String)> = connection
+            .prepare(
+                "SELECT seq, pending_effect_ids FROM checkpoints WHERE run_id = ?1 ORDER BY seq",
+            )
+            .unwrap()
+            .query_map(params![run_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        // The pending checkpoint (seq 0) survives even though it is the oldest,
+        // and only the latest ten empty ones remain.
+        assert!(survivors.iter().any(|(seq, _)| *seq == 0));
+        assert_eq!(survivors.len(), 11);
+    }
+
+    #[test]
+    fn retention_orders_by_epoch_then_seq() {
+        let connection = open();
+        let run_id = setup_run(&connection, "conv-epoch-retention");
+        // A stale epoch with a high seq must lose to a newer epoch's low seq.
+        let mut stale = checkpoint(&run_id, 999, history());
+        stale.epoch = 0;
+        let mut fresh = checkpoint(&run_id, 0, history());
+        fresh.epoch = 1;
+        let stale = encode(&stale, &CheckpointLimits::default()).unwrap();
+        let fresh = encode(&fresh, &CheckpointLimits::default()).unwrap();
+        insert_checkpoint(&connection, &stale, &CheckpointLimits::default()).unwrap();
+        insert_checkpoint(&connection, &fresh, &CheckpointLimits::default()).unwrap();
+
+        let latest = load_latest_checkpoint(&connection, &run_id)
+            .unwrap()
+            .expect("a checkpoint");
+        assert_eq!(latest.epoch, 1);
+        assert_eq!(latest.seq, 0);
+    }
+
+    #[test]
+    fn next_seq_is_monotonic_within_an_epoch() {
+        let connection = open();
+        let run_id = setup_run(&connection, "conv-next-seq");
+        assert_eq!(next_checkpoint_seq(&connection, &run_id, 0).unwrap(), 0);
+        let encoded = encode(
+            &checkpoint(&run_id, 0, history()),
+            &CheckpointLimits::default(),
+        )
+        .unwrap();
+        insert_checkpoint(&connection, &encoded, &CheckpointLimits::default()).unwrap();
+        assert_eq!(next_checkpoint_seq(&connection, &run_id, 0).unwrap(), 1);
+        // A new epoch restarts at zero.
+        assert_eq!(next_checkpoint_seq(&connection, &run_id, 1).unwrap(), 0);
+    }
+
+    #[test]
+    fn check_resumable_rejects_newer_schema_and_model_mismatch() {
+        let mut newer = checkpoint("run-newer-resume", 0, history());
+        newer.schema_version = CHECKPOINT_SCHEMA_VERSION + 1;
+        assert!(matches!(
+            check_resumable(&newer, "anthropic"),
+            Err(CheckpointError::NewerSchema { .. })
+        ));
+
+        let rerouted = checkpoint("run-route-resume", 0, history());
+        assert!(matches!(
+            check_resumable(&rerouted, "openai"),
+            Err(CheckpointError::ModelRouteMismatch { .. })
+        ));
+
+        assert!(check_resumable(&rerouted, "anthropic").is_ok());
     }
 }

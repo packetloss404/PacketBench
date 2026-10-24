@@ -15,8 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
 
 use crate::core::agent_runtime::{
-    EditDecision, PermissionDecision, PermissionMode, RunOutcome, RunRequest, RuntimeServices,
-    ToolExecContext,
+    CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, PermissionDecision,
+    PermissionMode, RunOutcome, RunRequest, RuntimeServices, ToolExecContext,
 };
 use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::{self, HookConfig, HookEvent};
@@ -235,6 +235,51 @@ pub(crate) fn require_provider_completion(
     Ok(())
 }
 
+/// Persist one durable checkpoint when the journal is active. A `None` store is
+/// the disabled-journal path: this is a no-op and the runner behaves exactly as
+/// it did before R3b. A store error is propagated so a failed durable commit
+/// blocks continuation rather than degrading into a best-effort log.
+fn persist_checkpoint(
+    store: Option<&dyn CheckpointStore>,
+    boundary: CheckpointBoundary,
+    messages: &[ChatMessage],
+    pending_effect_ids: Vec<String>,
+    needs_reconciliation: bool,
+) -> Result<(), String> {
+    match store {
+        None => Ok(()),
+        Some(store) => store.persist(&CheckpointWrite {
+            boundary,
+            messages: messages.to_vec(),
+            pending_effect_ids,
+            needs_reconciliation,
+        }),
+    }
+}
+
+/// Persist a checkpoint from the session's current history. The history read is
+/// skipped entirely when the journal is disabled, so the disabled path adds no
+/// work beyond the `checkpoints()` probe.
+async fn persist_current_history<R: RuntimeServices>(
+    services: &R,
+    store: Option<&dyn CheckpointStore>,
+    session_id: &str,
+    boundary: CheckpointBoundary,
+    pending_effect_ids: Vec<String>,
+    needs_reconciliation: bool,
+) -> Result<(), String> {
+    let Some(store) = store else {
+        return Ok(());
+    };
+    let messages = services.history(session_id).await;
+    store.persist(&CheckpointWrite {
+        boundary,
+        messages,
+        pending_effect_ids,
+        needs_reconciliation,
+    })
+}
+
 pub(crate) fn tool_is_advertised(name: &str, tools: &[ToolDefinition]) -> bool {
     tools.iter().any(|tool| tool.name == name)
 }
@@ -331,11 +376,28 @@ pub async fn run_turn<R: RuntimeServices>(
     let session_id = request.session_id.as_str();
     let session = services.session(session_id).await?;
 
+    // Durable checkpoint sink. `None` (journal disabled / unbound session) keeps
+    // the exact pre-journal code path — every persist below is then a no-op.
+    let checkpoint_store = services.checkpoints(session_id).await;
+    let checkpoint_store = checkpoint_store.as_deref();
+
     let provider_name = session.provider.clone();
     let model = session.model.clone();
     let execution = session.execution.clone();
     let system_prompt = session.system_prompt.clone();
     let thinking_enabled = session.thinking_enabled;
+
+    // Boundary 1 (runtime §4.1 step 1): the user turn is accepted into durable
+    // history before any model call.
+    persist_current_history(
+        services,
+        checkpoint_store,
+        session_id,
+        CheckpointBoundary::UserTurnAccepted,
+        Vec::new(),
+        false,
+    )
+    .await?;
 
     let _ = services.provider(&provider_name)?;
     let api_key = services.load_api_key(&provider_name)?;
@@ -420,6 +482,16 @@ pub async fn run_turn<R: RuntimeServices>(
 
         // Get current message history
         let messages = services.history(session_id).await;
+
+        // Boundary 2 (runtime §4.1 step 2): dispatch intent for the model
+        // request is durable before the request goes out.
+        persist_checkpoint(
+            checkpoint_store,
+            CheckpointBoundary::PreRequest,
+            &messages,
+            Vec::new(),
+            false,
+        )?;
 
         // Take pending attachments (only apply to iteration 0 — tool-result iterations don't re-attach).
         let pending_attachments = if iteration == 0 {
@@ -586,6 +658,18 @@ pub async fn run_turn<R: RuntimeServices>(
         {
             services.push_history(session_id, assistant_msg).await;
         }
+
+        // Boundary 5 (runtime §4.1 step 3): the completed assistant typed blocks
+        // and tool-call IDs are durable before any resulting tool is dispatched.
+        persist_current_history(
+            services,
+            checkpoint_store,
+            session_id,
+            CheckpointBoundary::AssistantReceipt,
+            Vec::new(),
+            false,
+        )
+        .await?;
 
         // If no tool calls, we're done
         if tool_calls.is_empty() {
@@ -1059,12 +1143,37 @@ pub async fn run_turn<R: RuntimeServices>(
             })
             .collect();
 
+        // Boundary 3 (runtime §4.1 steps 4–6): every tool's intent is durable,
+        // with its effect id pending, before any tool runs. A crash after this
+        // point but before the receipt leaves the effect unresolved.
+        let tool_ids: Vec<String> = tool_calls.iter().map(|tc| tc.id.clone()).collect();
+        persist_current_history(
+            services,
+            checkpoint_store,
+            session_id,
+            CheckpointBoundary::ToolIntent,
+            tool_ids.clone(),
+            false,
+        )
+        .await?;
+
         let raw_results = tokio::select! {
             _ = &mut cancel_rx => {
                 // Dropping join_all drops every in-flight tool future. Child
                 // processes and network requests owned by those futures can
                 // unwind immediately instead of waiting for the next model
-                // iteration to observe cancellation.
+                // iteration to observe cancellation. The tools' outcome is now
+                // ambiguous, so mark the pending effects for reconciliation;
+                // this is best-effort and never changes the cancel outcome.
+                let _ = persist_current_history(
+                    services,
+                    checkpoint_store,
+                    session_id,
+                    CheckpointBoundary::ToolIntent,
+                    tool_ids.clone(),
+                    true,
+                )
+                .await;
                 finish_cancelled_agent_turn(
                     services,
                     session_id,
@@ -1103,6 +1212,19 @@ pub async fn run_turn<R: RuntimeServices>(
                 },
             )
             .await;
+
+        // Boundary 4 (runtime §4.1 step 7): the tool receipt plus the updated
+        // typed history are durable before the next model request. Clearing the
+        // pending ids here is what makes a completed tool non-replayable.
+        persist_current_history(
+            services,
+            checkpoint_store,
+            session_id,
+            CheckpointBoundary::ToolReceipt,
+            Vec::new(),
+            false,
+        )
+        .await?;
 
         info!(
             session_id = %session_id,

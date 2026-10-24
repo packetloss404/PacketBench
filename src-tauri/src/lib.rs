@@ -591,6 +591,8 @@ pub fn run() {
             commands::agent_runtime::get_runtime_run,
             commands::agent_runtime::list_runtime_events,
             commands::agent_runtime::cancel_runtime_run,
+            commands::agent_runtime::inspect_runtime_resume,
+            commands::agent_runtime::resume_runtime_run,
             // Draft attachment assets (F2B)
             commands::draft_assets::stage_agent_draft_asset,
             commands::draft_assets::read_agent_draft_asset,

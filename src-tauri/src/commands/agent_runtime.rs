@@ -4,8 +4,8 @@
 
 use crate::core::runtime_journal as journal;
 use crate::core::runtime_types::{
-    PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView, RuntimeLaunchView,
-    RuntimeRunSummary,
+    FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView,
+    RuntimeLaunchView, RuntimeRunSummary,
 };
 
 async fn on_blocking<T: Send + 'static>(
@@ -67,6 +67,189 @@ pub async fn cancel_runtime_run(
     .await
 }
 
+// --- R3b: resume. `inspect` is read-only (no dispatch); `resume` advances the
+// durable epoch and does NOT start the provider. Both are inert unless the
+// journal is enabled. Registration in `lib.rs` is the coordinator's window.
+
+// Registration in `lib.rs` is deliberately left to the coordinator's window;
+// until then these are not reachable through the invoke handler.
+#[tauri::command]
+pub async fn inspect_runtime_resume(run_id: String) -> Result<journal::ResumeInspection, String> {
+    on_blocking(move || {
+        journal::with_journal(|connection| journal::inspect_resume(connection, &run_id))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn resume_runtime_run(
+    run_id: String,
+    expected_epoch: i64,
+    mode: String,
+    inspected_revision: Option<String>,
+) -> Result<RuntimeRunSummary, String> {
+    on_blocking(move || {
+        journal::with_journal(|connection| {
+            journal::resume_run(
+                connection,
+                &run_id,
+                expected_epoch,
+                &mode,
+                inspected_revision.as_deref(),
+            )
+        })
+    })
+    .await
+}
+
+/// Bind a freshly prepared runtime run to a session when the journal is enabled.
+/// Returns `Ok(None)` (a no-op) when the journal is off, so the disabled path is
+/// byte-identical to today. A journal failure is surfaced, not swallowed.
+pub async fn prepare_session_run(
+    session_id: &str,
+    provider: &str,
+    model: &str,
+    project_path: &str,
+) -> Result<Option<RuntimeRunBinding>, String> {
+    if !journal::is_enabled() {
+        return Ok(None);
+    }
+    let operation_id = format!("op-{}-{}", session_id, Uuid::new_v4());
+    let request_digest = runtime_checkpoint::hash_payload(&format!(
+        "{}:{}:{}:{}",
+        session_id, provider, model, project_path
+    ));
+    let input = PrepareRuntimeRunInput {
+        operation_id,
+        conversation_id: session_id.to_string(),
+        kind: "initial".to_string(),
+        retry_of_operation_id: None,
+        request_digest,
+        launch: FrozenRuntimeLaunch {
+            route: provider.to_string(),
+            model: model.to_string(),
+            requested_isolation: "checkout".to_string(),
+            draft_id: session_id.to_string(),
+            draft_revision: "1".to_string(),
+            project_key: format!("local:{}", project_path),
+            base_path: project_path.to_string(),
+        },
+    };
+    let result = on_blocking(move || {
+        journal::with_journal(|connection| journal::prepare_operation(connection, &input))
+    })
+    .await?;
+    Ok(Some(RuntimeRunBinding {
+        run_id: result.run_id,
+        epoch: result.epoch,
+    }))
+}
+
+/// Derive the checkpoint compatibility identity from a frozen session binding.
+/// The resume path can only reconstruct the model route from the frozen launch,
+/// so model/schema/transport are the fields enforced there; the policy hashes
+/// are recorded here and validated on load by `validate_compatibility`.
+fn checkpoint_compatibility(session: &RuntimeSession) -> CompatibilityContext {
+    let model_route = format!("{}:{}", session.provider, session.model);
+    let manifest_hash = runtime_checkpoint::hash_payload(&format!(
+        "{}:{}:{}",
+        session.provider,
+        session.model,
+        session.execution.label()
+    ));
+    let tool_policy = match &session.allowed_tools {
+        Some(list) => {
+            let mut sorted = list.clone();
+            sorted.sort();
+            sorted.join(",")
+        }
+        None => "*".to_string(),
+    };
+    let mcp = match &session.mcp_trust_snapshot {
+        Some(snapshot) => serde_json::to_string(snapshot).unwrap_or_default(),
+        None => String::new(),
+    };
+    CompatibilityContext {
+        schema_version: CHECKPOINT_SCHEMA_VERSION,
+        transport_version: CHECKPOINT_TRANSPORT_VERSION,
+        model_route,
+        manifest_hash,
+        tool_policy_hash: runtime_checkpoint::hash_payload(&tool_policy),
+        mcp_hash: runtime_checkpoint::hash_payload(&mcp),
+    }
+}
+
+/// Durable checkpoint sink backed by the runtime journal. Bound to one run and
+/// one compatibility context; assigns sequence numbers and enforces retention.
+pub struct JournalCheckpointStore {
+    binding: RuntimeRunBinding,
+    compatibility: CompatibilityContext,
+}
+
+impl JournalCheckpointStore {
+    pub fn new(binding: RuntimeRunBinding, compatibility: CompatibilityContext) -> Self {
+        Self {
+            binding,
+            compatibility,
+        }
+    }
+}
+
+impl CheckpointStore for JournalCheckpointStore {
+    fn persist(&self, write: &CheckpointWrite) -> Result<(), String> {
+        let binding = self.binding.clone();
+        let compatibility = self.compatibility.clone();
+        let messages = write.messages.clone();
+        let pending_effect_ids = write.pending_effect_ids.clone();
+        let needs_reconciliation = write.needs_reconciliation;
+        let boundary = write.boundary;
+        journal::with_journal(move |connection| {
+            let seq =
+                runtime_checkpoint::next_checkpoint_seq(connection, &binding.run_id, binding.epoch)
+                    .map_err(String::from)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let checkpoint = Checkpoint {
+                checkpoint_id: Uuid::new_v4().to_string(),
+                run_id: binding.run_id.clone(),
+                epoch: binding.epoch,
+                seq,
+                schema_version: compatibility.schema_version,
+                transport_version: compatibility.transport_version,
+                model_route: compatibility.model_route.clone(),
+                manifest_hash: compatibility.manifest_hash.clone(),
+                tool_policy_hash: compatibility.tool_policy_hash.clone(),
+                mcp_hash: compatibility.mcp_hash.clone(),
+                pending_effect_ids,
+                classification: CheckpointClassification::Private,
+                messages,
+                created_at: now,
+            };
+            let encoded = runtime_checkpoint::encode(&checkpoint, &CheckpointLimits::default())
+                .map_err(String::from)?;
+            runtime_checkpoint::store_checkpoint(
+                connection,
+                &encoded,
+                &CheckpointLimits::default(),
+            )
+            .map_err(String::from)?;
+            if needs_reconciliation {
+                journal::mark_run_needs_reconciliation(connection, &binding.run_id)?;
+            } else if boundary == CheckpointBoundary::UserTurnAccepted {
+                connection
+                    .execute(
+                        "UPDATE runs SET state = 'running' WHERE run_id = ?1",
+                        rusqlite::params![binding.run_id],
+                    )
+                    .map_err(|e| format!("Failed to mark run running: {e}"))?;
+            }
+            Ok(())
+        })
+    }
+}
+
 // --- R2b: Tauri implementation of the runner seam. Every method delegates to
 // the existing `ApiAgentState`, keyring, provider registry, native MCP session,
 // Flight status and hooks; no loop logic lives here.
@@ -83,16 +266,22 @@ use crate::commands::api_agent::{
 };
 use crate::commands::api_keys;
 use crate::core::agent_runtime::{
-    EditDecision, EventSink, FlightStatusSink, HistoryStore, PermissionBroker, PermissionDecision,
-    RuntimeFlags, RuntimeServices, RuntimeSession, ToolExecContext,
+    CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, EventSink,
+    FlightStatusSink, HistoryStore, PermissionBroker, PermissionDecision, RuntimeFlags,
+    RuntimeRunBinding, RuntimeServices, RuntimeSession, ToolExecContext,
 };
 use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::{self, HookConfig};
 use crate::core::llm_provider::{get_provider, LlmProvider};
 use crate::core::llm_types::{ChatMessage, ImageAttachment, StreamChunk, ToolCall, ToolResult};
+use crate::core::runtime_checkpoint::{
+    self, Checkpoint, CheckpointClassification, CheckpointLimits, CompatibilityContext,
+    CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_TRANSPORT_VERSION,
+};
 use crate::core::tool_runtime;
 use crate::core::tool_runtime_ssh::SSH_TOOL_OWNER;
 use crate::core::tool_subagent::{ParentLlm, PARENT_LLM};
+use uuid::Uuid;
 
 /// Forwards runner events to the Tauri event bus verbatim.
 struct TauriEventSink {
@@ -294,5 +483,20 @@ impl RuntimeServices for TauriRuntimeServices {
         account_native_request_chunk(session_id, provider, model, chunk, |entry| {
             crate::commands::api_agent::record_completed_usage(&self.app_handle, entry)
         })
+    }
+
+    /// The real store only when the journal is enabled AND this session is bound
+    /// to a prepared run; otherwise `None`, which keeps the runner on its exact
+    /// pre-journal path.
+    async fn checkpoints(&self, session_id: &str) -> Option<Box<dyn CheckpointStore>> {
+        if !journal::is_enabled() {
+            return None;
+        }
+        let binding = self.state.runtime_run_binding(session_id).await?;
+        let session = self.state.runtime_session(session_id).await?;
+        Some(Box::new(JournalCheckpointStore::new(
+            binding,
+            checkpoint_compatibility(&session),
+        )))
     }
 }

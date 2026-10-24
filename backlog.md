@@ -154,6 +154,19 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       must**: validate schema on load, guard pruning against active runs /
       `pending_effect_ids`, order retention by `(epoch, seq)`, and wire
       runner/restart with crash-injection tests.
+- [x] **P1 — Checkpoint integration and resume (R3b).** The runner persists
+      typed checkpoints at five durable boundaries (user turn, pre-request,
+      assistant receipt, tool intent, tool receipt) and supports
+      `inspect_runtime_resume` / `resume_runtime_run` (CAS epoch+1, no dispatch,
+      corrupt/newer preserved, explicit `semantic` fallback), all behind
+      `PACKETBENCH_RUNTIME_JOURNAL` (default off). The disabled path is
+      byte-identical (independently verified). `cargo test --lib` 1170/0.
+      **Must fix before enabling by default:** (1) restart/continue of an
+      existing conversation sends `kind:"initial"` with a fresh operation id and
+      hard-fails the owner check; (2) checkpoint persistence runs synchronously
+      on the async runner task; (3) resume does not enforce policy/MCP hashes.
+      **Before R5:** per-turn run identity (follow-ups currently reuse the
+      initial binding, not a new linked run).
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

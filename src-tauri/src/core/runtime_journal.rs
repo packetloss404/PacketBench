@@ -12,6 +12,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -548,6 +549,245 @@ pub fn frozen_launch_for(
     serde_json::from_str(&raw).map_err(|e| format!("Corrupt frozen launch: {e}"))
 }
 
+/// Mark a run as needing reconciliation without touching its epoch or sequence.
+/// Used when the runner leaves an effect unresolved (crash before receipt).
+pub fn mark_run_needs_reconciliation(connection: &Connection, run_id: &str) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE runs SET state = 'needs_reconciliation' WHERE run_id = ?1",
+            params![run_id],
+        )
+        .map_err(|e| format!("Failed to mark run needs_reconciliation: {e}"))?;
+    Ok(())
+}
+
+/// What `inspect_runtime_resume` reports: the permitted resume modes plus every
+/// incompatibility found. This is a read-only projection — it never dispatches
+/// a provider, executes a tool or mutates the run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeInspection {
+    pub run_id: String,
+    pub conversation_id: String,
+    pub operation_id: String,
+    pub epoch: i64,
+    pub state: String,
+    pub latest_durable_seq: i64,
+    pub permitted_modes: Vec<String>,
+    pub incompatibilities: Vec<String>,
+    pub pending_effect_ids: Vec<String>,
+    pub needs_reconciliation: bool,
+    pub checkpoint_id: Option<String>,
+    /// Opaque revision token the caller echoes back to `resume_run`. Present iff
+    /// a checkpoint row exists (even a corrupt/newer one).
+    pub inspected_revision: Option<String>,
+}
+
+/// Inspect a run for resume. Never dispatches.
+///
+/// * No checkpoint at all -> `legacy_semantic`: only `semantic` is permitted.
+/// * Corrupt/newer checkpoint -> preserved, refused; no typed resume.
+/// * Incompatible schema/transport/model -> explicit `semantic` fallback.
+/// * Compatible checkpoint -> `typed` + `semantic`; pending effects still allow
+///   a typed resume but keep the effect unresolved.
+pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeInspection, String> {
+    validate_id("runId", run_id)?;
+    let row = connection
+        .query_row(
+            "SELECT conversation_id, operation_id, epoch, state, latest_seq FROM runs WHERE run_id = ?1",
+            params![run_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read run: {e}"))?
+        .ok_or_else(|| format!("Unknown run: {run_id}"))?;
+    let (conversation_id, operation_id, epoch, state, latest_seq) = row;
+
+    let frozen = frozen_launch_for(connection, &operation_id)?;
+    let expected_model_route = format!("{}:{}", frozen.route, frozen.model);
+
+    let latest_id: Option<String> = connection
+        .query_row(
+            "SELECT checkpoint_id FROM checkpoints WHERE run_id = ?1 \
+             ORDER BY epoch DESC, seq DESC LIMIT 1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read checkpoints: {e}"))?;
+
+    let mut permitted_modes: Vec<String> = Vec::new();
+    let mut incompatibilities: Vec<String> = Vec::new();
+    let mut pending_effect_ids: Vec<String> = Vec::new();
+    let mut needs_reconciliation = false;
+    let mut checkpoint_id: Option<String> = None;
+    let mut inspected_revision: Option<String> = None;
+
+    match latest_id {
+        None => {
+            permitted_modes.push("semantic".to_string());
+            incompatibilities
+                .push("legacy_semantic: no durable checkpoint for this run".to_string());
+        }
+        Some(id) => {
+            checkpoint_id = Some(id.clone());
+            inspected_revision = Some(id.clone());
+            match crate::core::runtime_checkpoint::load_checkpoint(connection, &id) {
+                Ok(checkpoint) => {
+                    pending_effect_ids = checkpoint.pending_effect_ids.clone();
+                    needs_reconciliation = !pending_effect_ids.is_empty();
+                    match crate::core::runtime_checkpoint::check_resumable(
+                        &checkpoint,
+                        &expected_model_route,
+                    ) {
+                        Ok(()) => {
+                            permitted_modes.push("typed".to_string());
+                            permitted_modes.push("semantic".to_string());
+                            if needs_reconciliation {
+                                incompatibilities.push(
+                                    "pending_effect_ids present; the effect stays unresolved"
+                                        .to_string(),
+                                );
+                            }
+                        }
+                        Err(
+                            err @ crate::core::runtime_checkpoint::CheckpointError::NewerSchema {
+                                ..
+                            },
+                        ) => {
+                            // A newer checkpoint is preserved read-only: no typed
+                            // resume, and not silently downgraded. Explicit
+                            // semantic continuation stays available.
+                            incompatibilities
+                                .push(format!("{err}; checkpoint preserved read-only"));
+                            permitted_modes.push("semantic".to_string());
+                        }
+                        Err(err) => {
+                            permitted_modes.push("semantic".to_string());
+                            incompatibilities.push(format!("incompatible checkpoint: {err}"));
+                        }
+                    }
+                }
+                Err(err) => {
+                    // A corrupt row is preserved and refused; only explicit
+                    // semantic continuation is offered.
+                    incompatibilities.push(format!("corrupt checkpoint {id}: {err}"));
+                    permitted_modes.push("semantic".to_string());
+                }
+            }
+        }
+    }
+
+    Ok(ResumeInspection {
+        run_id: run_id.to_string(),
+        conversation_id,
+        operation_id,
+        epoch,
+        state,
+        latest_durable_seq: latest_seq,
+        permitted_modes,
+        incompatibilities,
+        pending_effect_ids,
+        needs_reconciliation,
+        checkpoint_id,
+        inspected_revision,
+    })
+}
+
+/// Continue an interrupted run at `epoch + 1` via compare-and-swap. This does
+/// NOT start the provider, dispatch a request or execute a tool: it only
+/// advances the durable epoch and records the resume intent.
+///
+/// A missing/incompatible checkpoint falls back to explicit `semantic`; a
+/// corrupt/newer checkpoint is preserved and refused for `typed`. A stale
+/// `expected_epoch` or stale `inspected_revision` is rejected.
+pub fn resume_run(
+    connection: &Connection,
+    run_id: &str,
+    expected_epoch: i64,
+    mode: &str,
+    inspected_revision: Option<&str>,
+) -> Result<RuntimeRunSummary, String> {
+    validate_id("runId", run_id)?;
+    if expected_epoch < 0 {
+        return Err("expectedEpoch must be >= 0".to_string());
+    }
+    if mode != "typed" && mode != "semantic" {
+        return Err(format!("Unknown resume mode: {mode}"));
+    }
+
+    let (state, epoch): (String, i64) = connection
+        .query_row(
+            "SELECT state, epoch FROM runs WHERE run_id = ?1",
+            params![run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read run: {e}"))?
+        .ok_or_else(|| format!("Unknown run: {run_id}"))?;
+
+    if matches!(state.as_str(), "cancelled" | "completed" | "failed") {
+        return Err(format!(
+            "Run {run_id} is terminal ({state}); it cannot be resumed"
+        ));
+    }
+    if epoch != expected_epoch {
+        return Err(format!(
+            "Stale epoch for run {run_id}: expected {expected_epoch}, current {epoch}"
+        ));
+    }
+
+    let inspection = inspect_resume(connection, run_id)?;
+    if !inspection.permitted_modes.iter().any(|m| m == mode) {
+        return Err(format!(
+            "Resume mode \"{mode}\" is not permitted for run {run_id}: {}",
+            inspection.incompatibilities.join("; ")
+        ));
+    }
+    if mode == "typed" {
+        let current = inspection
+            .inspected_revision
+            .clone()
+            .ok_or_else(|| "typed resume requires a durable checkpoint".to_string())?;
+        if inspected_revision != Some(current.as_str()) {
+            return Err(format!(
+                "Stale resume inspection for run {run_id}: expected revision {current}"
+            ));
+        }
+    }
+
+    let new_epoch = epoch + 1;
+    let changed = connection
+        .execute(
+            "UPDATE runs SET epoch = ?1, state = 'prepared' WHERE run_id = ?2 AND epoch = ?3",
+            params![new_epoch, run_id, expected_epoch],
+        )
+        .map_err(|e| format!("Failed to advance run epoch: {e}"))?;
+    if changed == 0 {
+        return Err(format!(
+            "Stale epoch for run {run_id}: expected {expected_epoch}"
+        ));
+    }
+    let payload = serde_json::json!({
+        "mode": mode,
+        "inspectedRevision": inspected_revision,
+    })
+    .to_string();
+    insert_event(connection, run_id, new_epoch, "resumed", &payload)?;
+
+    let mut summary = get_run(connection, run_id)?;
+    summary.resume_mode = mode.to_string();
+    Ok(summary)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,5 +993,142 @@ mod tests {
         assert!(prepare_operation(&connection, &worktree).is_err());
         let bad = input("op-2", "not-a-digest");
         assert!(prepare_operation(&connection, &bad).is_err());
+    }
+
+    fn write_checkpoint(
+        connection: &Connection,
+        run_id: &str,
+        seq: i64,
+        model_route: &str,
+        pending: Vec<String>,
+        schema_version: i64,
+    ) -> String {
+        use crate::core::llm_types::{ChatMessage, ChatRole, MessageContent};
+        use crate::core::runtime_checkpoint::{
+            self, Checkpoint, CheckpointClassification, CheckpointLimits,
+        };
+        let checkpoint = Checkpoint {
+            checkpoint_id: format!("ckpt-{seq}-{}", Uuid::new_v4()),
+            run_id: run_id.to_string(),
+            epoch: 0,
+            seq,
+            schema_version,
+            transport_version: runtime_checkpoint::CHECKPOINT_TRANSPORT_VERSION,
+            model_route: model_route.to_string(),
+            manifest_hash: digest(2),
+            tool_policy_hash: digest(3),
+            mcp_hash: digest(4),
+            pending_effect_ids: pending,
+            classification: CheckpointClassification::Private,
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: MessageContent::text("hi"),
+            }],
+            created_at: 1,
+        };
+        let encoded =
+            runtime_checkpoint::encode(&checkpoint, &CheckpointLimits::default()).unwrap();
+        runtime_checkpoint::insert_checkpoint(connection, &encoded, &CheckpointLimits::default())
+            .unwrap();
+        checkpoint.checkpoint_id
+    }
+
+    #[test]
+    fn legacy_run_resumes_only_semantically() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["semantic"]);
+        assert!(inspection.inspected_revision.is_none());
+        assert!(!inspection.needs_reconciliation);
+        assert!(resume_run(&connection, &prepared.run_id, 0, "typed", None).is_err());
+        let resumed = resume_run(&connection, &prepared.run_id, 0, "semantic", None).unwrap();
+        assert_eq!(resumed.epoch, 1);
+        assert_eq!(resumed.resume_mode, "semantic");
+    }
+
+    #[test]
+    fn resume_rejects_a_stale_epoch() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let err = resume_run(&connection, &prepared.run_id, 5, "semantic", None).unwrap_err();
+        assert!(err.contains("Stale epoch"));
+    }
+
+    #[test]
+    fn compatible_checkpoint_permits_typed_resume() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let id = write_checkpoint(
+            &connection,
+            &prepared.run_id,
+            0,
+            "anthropic:claude",
+            vec![],
+            1,
+        );
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["typed", "semantic"]);
+        assert_eq!(inspection.inspected_revision.as_deref(), Some(id.as_str()));
+        // A stale inspection revision is rejected before the epoch advances.
+        assert!(resume_run(&connection, &prepared.run_id, 0, "typed", Some("other")).is_err());
+        let resumed = resume_run(&connection, &prepared.run_id, 0, "typed", Some(&id)).unwrap();
+        assert_eq!(resumed.epoch, 1);
+        assert_eq!(resumed.resume_mode, "typed");
+    }
+
+    #[test]
+    fn pending_effect_checkpoint_reports_needs_reconciliation() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        write_checkpoint(
+            &connection,
+            &prepared.run_id,
+            0,
+            "anthropic:claude",
+            vec!["effect-1".to_string()],
+            1,
+        );
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert!(inspection.needs_reconciliation);
+        assert_eq!(inspection.pending_effect_ids, vec!["effect-1"]);
+        assert!(inspection.permitted_modes.contains(&"typed".to_string()));
+    }
+
+    #[test]
+    fn incompatible_model_checkpoint_falls_back_to_semantic() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        write_checkpoint(&connection, &prepared.run_id, 0, "openai:gpt", vec![], 1);
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["semantic"]);
+        assert!(resume_run(&connection, &prepared.run_id, 0, "typed", None).is_err());
+        assert!(resume_run(&connection, &prepared.run_id, 0, "semantic", None).is_ok());
+    }
+
+    #[test]
+    fn newer_schema_checkpoint_is_preserved_and_typed_refused() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let id = write_checkpoint(
+            &connection,
+            &prepared.run_id,
+            0,
+            "anthropic:claude",
+            vec![],
+            crate::core::runtime_checkpoint::CHECKPOINT_SCHEMA_VERSION + 1,
+        );
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["semantic"]);
+        assert!(resume_run(&connection, &prepared.run_id, 0, "typed", Some(&id)).is_err());
+        // The newer row is preserved, never deleted or downgraded.
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM checkpoints WHERE checkpoint_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }

@@ -145,6 +145,68 @@ pub enum RunOutcome {
     Failed(String),
 }
 
+/// The runtime-journal run a turn is bound to. Present only when the journal is
+/// enabled and the session was prepared; the runner then persists checkpoints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeRunBinding {
+    pub run_id: String,
+    pub epoch: i64,
+}
+
+/// Durable boundaries where typed history is persisted (runtime spec §4.1).
+///
+/// The runner writes one checkpoint per boundary. The order is: user turn
+/// accepted, pre-request, tool intent, tool receipt, assistant receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointBoundary {
+    /// The user turn has been accepted into history, before any model call.
+    UserTurnAccepted,
+    /// A model request is about to be dispatched.
+    PreRequest,
+    /// A tool is about to run; its effect id is now pending.
+    ToolIntent,
+    /// A tool finished and its result is durably in history.
+    ToolReceipt,
+    /// A completed assistant turn is durably in history.
+    AssistantReceipt,
+}
+
+impl CheckpointBoundary {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CheckpointBoundary::UserTurnAccepted => "user_turn_accepted",
+            CheckpointBoundary::PreRequest => "pre_request",
+            CheckpointBoundary::ToolIntent => "tool_intent",
+            CheckpointBoundary::ToolReceipt => "tool_receipt",
+            CheckpointBoundary::AssistantReceipt => "assistant_receipt",
+        }
+    }
+}
+
+/// One durable checkpoint write from the runner. The store owns run identity,
+/// compatibility hashes, sequence assignment, retention and redaction; the
+/// runner only supplies the typed history and what is still pending.
+#[derive(Debug, Clone)]
+pub struct CheckpointWrite {
+    pub boundary: CheckpointBoundary,
+    /// Full typed history at this boundary (tool_use/tool_result pairing plus
+    /// opaque provider reasoning), in order.
+    pub messages: Vec<ChatMessage>,
+    /// Effect ids whose receipt is not yet durable. Non-empty means the run has
+    /// an unresolved effect and must be reconciled, never blind-replayed.
+    pub pending_effect_ids: Vec<String>,
+    /// True when the outcome is unknown/ambiguous (e.g. a tool ran but its
+    /// receipt could not be committed).
+    pub needs_reconciliation: bool,
+}
+
+/// Durable typed-history sink. Returned by [`RuntimeServices::checkpoints`] only
+/// when the runtime journal is enabled and the turn is bound to a prepared run;
+/// `None` means the runner takes its pre-journal path unchanged.
+pub trait CheckpointStore: Send + Sync {
+    fn persist(&self, write: &CheckpointWrite) -> Result<(), String>;
+}
+
 /// Immutable session binding read once at the start of a turn.
 #[derive(Clone)]
 pub struct RuntimeSession {
@@ -247,6 +309,12 @@ pub trait RuntimeServices:
         model: &str,
         chunk: &StreamChunk,
     ) -> Result<(), String>;
+    /// Durable checkpoint sink for this turn, or `None` when the runtime journal
+    /// is disabled or the session is not bound to a prepared run. The default
+    /// keeps the journal inert: the runner takes its pre-journal path.
+    async fn checkpoints(&self, _session_id: &str) -> Option<Box<dyn CheckpointStore>> {
+        None
+    }
     fn now_ms(&self) -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

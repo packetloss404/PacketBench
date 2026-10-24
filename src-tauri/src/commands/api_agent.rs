@@ -9,7 +9,7 @@ use crate::commands::agent_sidecar::{is_sidecar_provider, SidecarManager, SIDECA
 use crate::commands::api_keys;
 use crate::commands::provider_stats;
 use crate::core::agent_runtime::runner::{error_event, run_turn, ErrorPayload};
-use crate::core::agent_runtime::{RunRequest, RuntimeFlags, RuntimeSession};
+use crate::core::agent_runtime::{RunRequest, RuntimeFlags, RuntimeRunBinding, RuntimeSession};
 use crate::core::execution::{ExecutionTarget, SshConfig};
 use crate::core::llm_provider::{get_provider, IN_PROCESS_PROVIDERS};
 use crate::core::llm_system_prompt::build_system_prompt;
@@ -42,6 +42,9 @@ pub struct ApiAgentState {
     pending_permissions: Mutex<HashMap<(String, String), oneshot::Sender<PermissionDecision>>>,
     /// Pending write_file edits awaiting user approval, keyed by tool_call id.
     pending_edits: Mutex<HashMap<(String, String), oneshot::Sender<EditDecision>>>,
+    /// Runtime-journal run bound to each session, when the journal is enabled.
+    /// Empty (and therefore inert) on the default path.
+    runtime_runs: Mutex<HashMap<String, RuntimeRunBinding>>,
 }
 
 struct ActiveTurn {
@@ -131,6 +134,7 @@ impl ApiAgentState {
             configs: Mutex::new(HashMap::new()),
             pending_permissions: Mutex::new(HashMap::new()),
             pending_edits: Mutex::new(HashMap::new()),
+            runtime_runs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -248,6 +252,23 @@ impl ApiAgentState {
         if let Some(history) = histories.get_mut(session_id) {
             history.push(message);
         }
+    }
+
+    /// Bind a session to a prepared runtime-journal run. Called only when the
+    /// journal is enabled; the default path never populates this map.
+    pub(crate) async fn bind_runtime_run(&self, session_id: &str, binding: RuntimeRunBinding) {
+        self.runtime_runs
+            .lock()
+            .await
+            .insert(session_id.to_string(), binding);
+    }
+
+    pub(crate) async fn runtime_run_binding(&self, session_id: &str) -> Option<RuntimeRunBinding> {
+        self.runtime_runs.lock().await.get(session_id).cloned()
+    }
+
+    pub(crate) async fn unbind_runtime_run(&self, session_id: &str) {
+        self.runtime_runs.lock().await.remove(session_id);
     }
 
     pub(crate) async fn runtime_is_tool_auto_allowed(&self, session_id: &str, tool: &str) -> bool {
@@ -1470,9 +1491,19 @@ async fn start_api_agent_session_inner(
         }
     });
 
+    // R3b: when the runtime journal is enabled, prepare a durable run so the
+    // runner can persist checkpoints. Disabled (the default), this is a no-op
+    // and the path below is byte-identical to today.
+    let runtime_binding =
+        super::agent_runtime::prepare_session_run(&session_id, &provider, &model, &project_path)
+            .await?;
+
     // Claim the session before mutating its config/history. A duplicate start
     // cannot overwrite a live turn and inherit the old task's eventual cleanup.
     let (turn_id, cancel_rx) = tokio::select! { biased; _ = admission.cancel.cancelled() => return Err("Session startup was stopped.".into()), result = state.begin_turn(&session_id) => result? };
+    if let Some(binding) = runtime_binding {
+        state.bind_runtime_run(&session_id, binding).await;
+    }
 
     // Store session config and history
     {
@@ -1974,6 +2005,7 @@ pub async fn close_api_agent_session(
     // Keep the active-turn marker until the task actually unwinds; this blocks
     // a replacement turn from racing with cleanup after close.
     state.cancel_turn(&session_id).await;
+    state.unbind_runtime_run(&session_id).await;
     // Remove history and config
     {
         let mut histories = state.histories.lock().await;
