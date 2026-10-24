@@ -77,7 +77,11 @@ flag (1170/0, disabled path byte-identical), and its three must-fixes landed
 capability + manifest modules and journal v2→v3 (1190/0); R4b added the
 capability readout command + DTO/schema/wrappers and the shared fail-closed
 image guard on both transports, gated on the journal being enabled so the
-journal-off path is byte-identical (1196/0, full gates green). R5+ remain.
+journal-off path is byte-identical (1196/0, full gates green). R5a added the
+budget admission substrate (journal v4 + `core/runtime_budget.rs`, 1214/0) and
+R5b wired per-request admission into the native runner plus the `usage.jsonl`
+request_id bridge, gated on a configured budget (1228/0, full gates green). R6+
+remain.
 V1/V2 followed: shared type tokens raised to comfortable sizes
 (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
 muted/faint text now clears 4.5:1 on every surface in both themes, gated by a

@@ -1018,6 +1018,8 @@ pub async fn launch_flight_async(
             Some(false), // approve_writes
             None,        // command_path
             None,        // workspace — derived from ssh_config/local project_path
+            None,        // budget_scope_key — flight attempts run without a session budget
+            None,        // budget_limit_usd
         )
         .await
         {

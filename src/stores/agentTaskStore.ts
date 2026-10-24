@@ -74,7 +74,10 @@ import { useReviewStore } from "@/stores/reviewStore";
 import { useAgentDraftStore } from "@/stores/agentDraftStore";
 import { useMcpStore } from "@/stores/mcpStore";
 import { useMcpTrustStore } from "@/stores/mcpTrustStore";
-import { assertCostGuardrailsAllowLaunch } from "@/stores/costGuardrailStore";
+import {
+  assertCostGuardrailsAllowLaunch,
+  useCostGuardrailStore,
+} from "@/stores/costGuardrailStore";
 import { loadAgentsMd } from "@/lib/agentsMd";
 import type { GitHubRepo } from "@/types/github";
 import type {
@@ -384,6 +387,20 @@ const apiListenerInstallInFlight = new Map<string, Promise<void>>();
 const apiResumeInFlight = new Map<string, symbol>();
 const pendingTurnAdmissions = new Map<string, { token: symbol; newSession: boolean }>();
 const latestTurnAdmissions = new Map<string, symbol>();
+
+/** R5b: the backend budget args for a session start, or none when the session
+ * limit is not a positive number. The scope key is the conversation's local id
+ * so every request in the session reserves against the same ceiling. The
+ * `[string, number]` cast at the spread sites works around TypeScript's refusal
+ * to spread a union of tuples; an empty tuple still spreads to zero args. */
+function sessionBudgetArgs(conversationId: string): [] | [string, number] {
+  const limit = useCostGuardrailStore.getState().sessionLimitUsd;
+  if (typeof limit === "number" && limit > 0) {
+    const args: [string, number] = [`local:${conversationId}`, limit];
+    return args;
+  }
+  return [];
+}
 
 /** Stop/delete can revoke preflight while analytics or resume preparation is
  * awaiting IPC. No provider call runs until the same turn dispatches. */
@@ -991,6 +1008,7 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
                 null, // commandPath — no surviving sidecar provider is CLI-backed
                 undefined,
                 frozenMcpTrust,
+                ...(sessionBudgetArgs(id) as [string, number]),
               ),
             );
           },
@@ -2067,6 +2085,7 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
               null, // commandPath — no surviving sidecar provider is CLI-backed
               undefined,
               frozenMcpTrust,
+              ...(sessionBudgetArgs(conversationId) as [string, number]),
             ),
           );
         },

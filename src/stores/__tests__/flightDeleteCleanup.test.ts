@@ -70,6 +70,7 @@ vi.mock("@/lib/tauri", () => ({
 
 vi.mock("@/stores/costGuardrailStore", () => ({
   assertCostGuardrailsAllowLaunch: vi.fn(),
+  useCostGuardrailStore: { getState: () => ({ sessionLimitUsd: null }) },
 }));
 
 vi.mock("@/stores/agentTaskStore", () => ({

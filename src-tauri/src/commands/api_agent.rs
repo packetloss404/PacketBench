@@ -67,6 +67,14 @@ fn drain_session_pending<T>(
         .collect()
 }
 
+/// R5b per-session spend admission. Present only when the frontend supplied a
+/// scope key and a positive USD limit; absent otherwise, which keeps the
+/// disabled path byte-identical.
+struct SessionBudget {
+    scope_key: String,
+    limit_usd_micros: i64,
+}
+
 struct SessionConfig {
     provider: String,
     model: String,
@@ -91,6 +99,8 @@ struct SessionConfig {
     native_mcp_session: Arc<crate::core::mcp_session::NativeMcpSession>,
     custom_agents: Arc<Vec<crate::commands::custom_agents::CustomAgentDef>>,
     tasks: Arc<crate::core::tool_tasks::SessionTasks>,
+    /// Optional spend admission for this session (R5b). None = no budget.
+    budget: Option<SessionBudget>,
 }
 
 impl ApiAgentState {
@@ -249,6 +259,17 @@ impl ApiAgentState {
         configs
             .get(session_id)
             .is_some_and(|cfg| !cfg.pending_attachments.is_empty())
+    }
+
+    /// R5b: the session's configured budget as `(scope_key, limit_usd_micros)`,
+    /// or `None` when the session has no budget. Read by the runner's admission
+    /// path; absence means admission is a no-op.
+    pub(crate) async fn runtime_session_budget(&self, session_id: &str) -> Option<(String, i64)> {
+        let configs = self.configs.lock().await;
+        configs
+            .get(session_id)
+            .and_then(|cfg| cfg.budget.as_ref())
+            .map(|budget| (budget.scope_key.clone(), budget.limit_usd_micros))
     }
 
     pub(crate) async fn runtime_history(&self, session_id: &str) -> Vec<ChatMessage> {
@@ -469,16 +490,24 @@ mod tests {
                 cache_read_input_tokens: 20,
                 cache_creation_input_tokens: 0,
             };
-            super::account_native_request_chunk("parent", "openai", "gpt-5.5", &done, |entry| {
-                recorded.push(entry.clone());
-                Ok(())
-            })
+            super::account_native_request_chunk(
+                "parent",
+                "openai",
+                "gpt-5.5",
+                Some("req-1"),
+                &done,
+                |entry| {
+                    recorded.push(entry.clone());
+                    Ok(())
+                },
+            )
             .unwrap();
             if streamed_error {
                 super::account_native_request_chunk(
                     "parent",
                     "openai",
                     "gpt-5.5",
+                    Some("req-1"),
                     &StreamChunk::Error {
                         message: "next request failed".into(),
                     },
@@ -494,6 +523,7 @@ mod tests {
             assert_eq!(recorded[0].input_tokens, 100);
             assert_eq!(recorded[0].session_id, "parent");
             assert_eq!(recorded[0].agent_id, None);
+            assert_eq!(recorded[0].request_id.as_deref(), Some("req-1"));
         }
     }
 
@@ -506,18 +536,30 @@ mod tests {
             cache_creation_input_tokens: 0,
         };
         assert_eq!(
-            super::account_native_request_chunk("parent", "openai", "gpt-5.5", &done, |_| Err(
-                "disk full".into()
-            ))
+            super::account_native_request_chunk(
+                "parent",
+                "openai",
+                "gpt-5.5",
+                Some("req-1"),
+                &done,
+                |_| Err("disk full".into())
+            )
             .unwrap_err(),
             "disk full"
         );
         let mut recorded = Vec::new();
         for _ in 0..2 {
-            super::account_native_request_chunk("parent", "openai", "gpt-5.5", &done, |entry| {
-                recorded.push(entry.clone());
-                Ok(())
-            })
+            super::account_native_request_chunk(
+                "parent",
+                "openai",
+                "gpt-5.5",
+                Some("req-1"),
+                &done,
+                |entry| {
+                    recorded.push(entry.clone());
+                    Ok(())
+                },
+            )
             .unwrap();
         }
         assert_eq!(recorded.len(), 2);
@@ -1199,6 +1241,8 @@ pub async fn start_api_agent_session(
     approve_writes: Option<bool>,
     command_path: Option<String>,
     workspace: Option<ApiAgentWorkspaceInput>,
+    budget_scope_key: Option<String>,
+    budget_limit_usd: Option<f64>,
 ) -> Result<(), String> {
     let id = session_id.clone();
     let result = start_api_agent_session_inner(
@@ -1224,6 +1268,8 @@ pub async fn start_api_agent_session(
         approve_writes,
         command_path,
         workspace,
+        budget_scope_key,
+        budget_limit_usd,
     )
     .await;
     if let Err(error) = &result {
@@ -1255,6 +1301,8 @@ async fn start_api_agent_session_inner(
     approve_writes: Option<bool>,
     command_path: Option<String>,
     workspace: Option<ApiAgentWorkspaceInput>,
+    budget_scope_key: Option<String>,
+    budget_limit_usd: Option<f64>,
 ) -> Result<(), String> {
     // R4b pre-dispatch image guard for the sidecar transport. Placed before any
     // side-effecting admission/counter work so a refusal changes nothing. The
@@ -1538,6 +1586,23 @@ async fn start_api_agent_session_inner(
         state.bind_runtime_run(&session_id, binding).await;
     }
 
+    // R5b: a session budget needs BOTH a scope key and a positive limit that
+    // survives micro-dollar rounding; anything else leaves admission a no-op.
+    let budget = match (budget_scope_key, budget_limit_usd) {
+        (Some(scope_key), Some(limit)) if limit.is_finite() && limit > 0.0 => {
+            let limit_usd_micros = (limit * 1_000_000.0).round();
+            if limit_usd_micros >= 1.0 {
+                Some(SessionBudget {
+                    scope_key,
+                    limit_usd_micros: limit_usd_micros as i64,
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
     // Store session config and history
     {
         let mut configs = state.configs.lock().await;
@@ -1560,6 +1625,7 @@ async fn start_api_agent_session_inner(
                 native_mcp_session,
                 custom_agents,
                 tasks: Arc::new(crate::core::tool_tasks::SessionTasks::default()),
+                budget,
             },
         );
 
@@ -1642,14 +1708,18 @@ pub async fn send_api_agent_message(
             let route = sidecar.session_route(&session_id).await;
             let result = match &route {
                 Some((provider, model)) => {
-                    crate::core::runtime_capabilities::require_route_supports_images(provider, model)
+                    crate::core::runtime_capabilities::require_route_supports_images(
+                        provider, model,
+                    )
                 }
-                None => Err(crate::core::runtime_capabilities::CapabilityError::AttachmentUnsupported {
-                    attachment: "image".to_string(),
-                    capability: "vision".to_string(),
-                    state: crate::core::runtime_capabilities::CapabilityState::Unknown,
-                    reason: "the session's provider route is unknown".to_string(),
-                }),
+                None => Err(
+                    crate::core::runtime_capabilities::CapabilityError::AttachmentUnsupported {
+                        attachment: "image".to_string(),
+                        capability: "vision".to_string(),
+                        state: crate::core::runtime_capabilities::CapabilityState::Unknown,
+                        reason: "the session's provider route is unknown".to_string(),
+                    },
+                ),
             };
             if let Err(error) = result {
                 let message = error.to_string();
@@ -2191,6 +2261,7 @@ fn child_usage_entry(
         provider: Some(usage.provider),
         agent_id: Some("subagent".to_string()),
         session_id: session_id.to_string(),
+        request_id: None,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cache_read: usage.cache_read,
@@ -2229,9 +2300,10 @@ pub(crate) fn account_native_request_chunk(
     session_id: &str,
     provider: &str,
     model: &str,
+    request_id: Option<&str>,
     chunk: &StreamChunk,
     record: impl FnOnce(&crate::commands::usage::UsageEntry) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<Option<i64>, String> {
     if let StreamChunk::Done {
         input_tokens,
         output_tokens,
@@ -2251,7 +2323,9 @@ pub(crate) fn account_native_request_chunk(
             },
         );
         entry.agent_id = None;
+        entry.request_id = request_id.map(str::to_string);
         record(&entry)?;
+        return Ok(Some((entry.cost_usd * 1_000_000.0).round() as i64));
     }
-    Ok(())
+    Ok(None)
 }

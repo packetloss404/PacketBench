@@ -25,6 +25,7 @@ vi.mock("@/lib/agentsMd", () => ({
 }));
 vi.mock("@/stores/costGuardrailStore", () => ({
   assertCostGuardrailsAllowLaunch: (...args: unknown[]) => budgetMock(...args),
+  useCostGuardrailStore: { getState: () => ({ sessionLimitUsd: null }) },
 }));
 vi.mock("@/lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/tauri")>()),

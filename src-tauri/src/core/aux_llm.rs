@@ -672,6 +672,7 @@ pub(crate) fn record_usage(
         provider: Some(route.provider.clone()),
         agent_id: Some(task.id().to_string()),
         session_id: session_id.to_string(),
+        request_id: None,
         input_tokens: turn.input_tokens,
         output_tokens: turn.output_tokens,
         cache_read: turn.cache_read,

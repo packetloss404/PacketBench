@@ -3984,6 +3984,11 @@ export async function startApiAgentSession(
   workspace?: ApiAgentWorkspaceInput | null,
   /** MCPH4: immutable per-server authority captured for this session. */
   mcpTrustSnapshot?: McpTrustSnapshot[] | null,
+  /** R5b: budget admission scope for this session. Supplied together with
+   * `budgetLimitUsd` only when a positive session limit is configured. */
+  budgetScopeKey?: string,
+  /** R5b: session spend ceiling in USD, paired with `budgetScopeKey`. */
+  budgetLimitUsd?: number,
 ): Promise<void> {
   return invoke("start_api_agent_session", {
     sessionId,
@@ -4005,6 +4010,8 @@ export async function startApiAgentSession(
     commandPath: commandPath ?? null,
     workspace: workspace ?? apiAgentWorkspaceFrom(projectPath, sshConfig),
     mcpTrustSnapshot: mcpTrustSnapshot ?? null,
+    budgetScopeKey: budgetScopeKey ?? null,
+    budgetLimitUsd: budgetLimitUsd ?? null,
   });
 }
 

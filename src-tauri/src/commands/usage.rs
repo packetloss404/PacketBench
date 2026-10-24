@@ -32,6 +32,12 @@ pub struct UsageEntry {
     pub provider: Option<String>,
     pub agent_id: Option<String>,
     pub session_id: String,
+    /// Runtime-journal request correlation id (R5b). Lets the native agent loop
+    /// settle the journal reservation that admitted this request after the row
+    /// is durable. Absent on historical rows — same backwards-compatibility
+    /// posture as `provider`/`repriced_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read: u64,
@@ -320,6 +326,7 @@ mod tests {
             provider: Some("openai".into()),
             agent_id: None,
             session_id: session.into(),
+            request_id: None,
             input_tokens: 10,
             output_tokens: 20,
             cache_read: 0,
@@ -522,5 +529,28 @@ mod tests {
             assert!(s.ends_with("usage.jsonl"));
             assert!(s.contains(DATA_DIR_NAME));
         }
+    }
+
+    #[test]
+    fn a_historical_row_without_request_id_parses_and_stays_absent() {
+        // A row written before R5b has no `request_id`; it must deserialize and
+        // re-serialize without the key.
+        let json = r#"{"ts":"2026-01-01T00:00:00Z","source":"test","model":"gpt-5.5","provider":"openai","agent_id":null,"session_id":"hist","input_tokens":1,"output_tokens":2,"cache_read":0,"cache_write":0,"cost_usd":0.1}"#;
+        let row: UsageEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(row.request_id, None);
+        assert!(
+            !serde_json::to_string(&row).unwrap().contains("request_id"),
+            "an absent request_id must not be serialized"
+        );
+    }
+
+    #[test]
+    fn a_request_id_round_trips_through_the_row() {
+        let mut row = entry("correlated");
+        row.request_id = Some("correlated:0:abc".to_string());
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("\"request_id\":\"correlated:0:abc\""));
+        let parsed: UsageEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.request_id.as_deref(), Some("correlated:0:abc"));
     }
 }

@@ -14,9 +14,11 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
 
+use uuid::Uuid;
+
 use crate::core::agent_runtime::{
-    CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, PermissionDecision,
-    PermissionMode, RunOutcome, RunRequest, RuntimeServices, ToolExecContext,
+    BudgetAdmission, CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision,
+    PermissionDecision, PermissionMode, RunOutcome, RunRequest, RuntimeServices, ToolExecContext,
 };
 use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::{self, HookConfig, HookEvent};
@@ -234,6 +236,29 @@ pub(crate) fn require_provider_completion(
         return Err("Provider stream ended before its completion and usage marker; this request is incomplete".into());
     }
     Ok(())
+}
+
+/// Best-effort release of a budget reservation that will not be settled.
+/// Errors are logged and never allowed to mask the original failure; the
+/// pending flag is cleared first so no later path can double-release.
+async fn release_pending_reservation<R: RuntimeServices>(
+    services: &R,
+    session_id: &str,
+    request_id: &str,
+    pending: &mut bool,
+) {
+    if !*pending {
+        return;
+    }
+    *pending = false;
+    if let Err(error) = services.release_request(session_id, request_id).await {
+        warn!(
+            session_id = %session_id,
+            request_id = %request_id,
+            error = %error,
+            "Failed to release a budget reservation; the request stays reserved"
+        );
+    }
 }
 
 /// Persist one durable checkpoint when the journal is active. A `None` store is
@@ -505,16 +530,50 @@ pub async fn run_turn<R: RuntimeServices>(
                 .map_err(|error| error.to_string())?;
         }
 
+        // Build the provider BEFORE admission so a provider-construction
+        // failure cannot strand a reservation. Behavior is otherwise identical.
+        let provider_ref = services.provider(&provider_name)?;
+
+        // R5b per-request budget admission. Runs BEFORE the dispatch-intent
+        // checkpoint and the usage-health check so a refused request records no
+        // intent and spends nothing. With no configured budget the host returns
+        // `NotConfigured` and this is a no-op, so the disabled path is
+        // byte-identical.
+        let request_id = format!("{session_id}:{iteration}:{}", Uuid::new_v4());
+        let mut pending_reservation = matches!(
+            services
+                .admit_request(
+                    session_id,
+                    &request_id,
+                    &provider_name,
+                    &model,
+                    &messages,
+                    16384,
+                )
+                .await?,
+            BudgetAdmission::Reserved
+        );
+
         // Boundary 2 (runtime §4.1 step 2): dispatch intent for the model
         // request is durable before the request goes out.
-        persist_checkpoint(
+        if let Err(error) = persist_checkpoint(
             checkpoint_store,
             CheckpointBoundary::PreRequest,
             &messages,
             Vec::new(),
             false,
         )
-        .await?;
+        .await
+        {
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
+            return Err(error);
+        }
 
         // Take pending attachments (only apply to iteration 0 — tool-result iterations don't re-attach).
         let pending_attachments = if iteration == 0 {
@@ -538,10 +597,18 @@ pub async fn run_turn<R: RuntimeServices>(
             cache_key: Some(session_id.to_string()),
         };
 
-        services.ensure_usage_healthy()?;
+        if let Err(error) = services.ensure_usage_healthy() {
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
+            return Err(error);
+        }
         // Stream the response
         let (tx, mut rx) = mpsc::channel::<StreamChunk>(64);
-        let provider_ref = services.provider(&provider_name)?;
         let api_key_clone = api_key.clone();
         let request_clone = request;
 
@@ -572,6 +639,13 @@ pub async fn run_turn<R: RuntimeServices>(
                     // `stream_chat` stops holding the upstream HTTP connection
                     // and pushing into the now-dropped mpsc channel.
                     stream_handle.abort();
+                    release_pending_reservation(
+                        services,
+                        session_id,
+                        &request_id,
+                        &mut pending_reservation,
+                    )
+                    .await;
                     finish_cancelled_agent_turn(
                         services,
                         session_id,
@@ -586,9 +660,42 @@ pub async fn run_turn<R: RuntimeServices>(
                 }
                 chunk = rx.recv() => {
                     if let Some(chunk) = &chunk {
-                        if let Err(error) = services.account_request_chunk(session_id, &provider_name, &model, chunk) {
-                            stream_handle.abort();
-                            return Err(error);
+                        // Only a request with a live reservation carries a
+                        // correlation id, so a no-budget run's ledger rows stay
+                        // byte-identical to before R5b. The id is still live at
+                        // the `Done` call because settle happens after it.
+                        let request_id_arg = if pending_reservation {
+                            Some(request_id.as_str())
+                        } else {
+                            None
+                        };
+                        match services.account_request_chunk(session_id, &provider_name, &model, request_id_arg, chunk) {
+                            Ok(Some(actual)) => {
+                                // The usage row is durable; settle the journal
+                                // reservation with the exact actual.
+                                if pending_reservation {
+                                    if let Err(error) = services.settle_request(session_id, &request_id, actual).await {
+                                        // The ledger append already succeeded;
+                                        // leave the reservation reserved (the
+                                        // conservative policy, matching a
+                                        // failed append) rather than releasing.
+                                        return Err(error);
+                                    }
+                                    pending_reservation = false;
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                // The ledger append failed, so the actual spend
+                                // is unrecorded. Deliberately leave the
+                                // reservation reserved rather than release it:
+                                // freeing the headroom would let unrecorded
+                                // spend be silently re-admitted. The failed
+                                // append has already latched accounting
+                                // unhealthy, which blocks further admission.
+                                stream_handle.abort();
+                                return Err(error);
+                            }
                         }
                     }
                     match chunk {
@@ -664,17 +771,62 @@ pub async fn run_turn<R: RuntimeServices>(
 
         // Wait for the provider result. Provider-level failures that did not
         // arrive as a StreamChunk are surfaced by the outer loop exactly once.
-        let stream_result = stream_handle
-            .await
-            .map_err(|e| format!("LLM stream task failed: {}", e))?;
+        let stream_result = match stream_handle.await {
+            Ok(result) => result,
+            Err(e) => {
+                release_pending_reservation(
+                    services,
+                    session_id,
+                    &request_id,
+                    &mut pending_reservation,
+                )
+                .await;
+                return Err(format!("LLM stream task failed: {}", e));
+            }
+        };
 
         if got_error {
             // The detailed StreamChunk::Error was already emitted above.
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
             return Ok(RunOutcome::Failed(
                 error_message.unwrap_or_else(|| "provider error".to_string()),
             ));
         }
-        require_provider_completion(request_completed, stream_result)?;
+        if let Err(error) = require_provider_completion(request_completed, stream_result) {
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
+            return Err(error);
+        }
+
+        // The provider reported completion, so `account_request_chunk` should
+        // have returned the actual on `Done` and settled. If the reservation is
+        // still pending the host violated that contract; release it so no
+        // reservation survives a completed iteration.
+        if request_completed && pending_reservation {
+            warn!(
+                session_id = %session_id,
+                request_id = %request_id,
+                "Provider reported completion without an accounted actual; releasing the budget reservation"
+            );
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
+        }
 
         if let Some(assistant_msg) =
             build_assistant_history_message(&text_content, &tool_calls, provider_reasoning)
@@ -684,7 +836,7 @@ pub async fn run_turn<R: RuntimeServices>(
 
         // Boundary 5 (runtime §4.1 step 3): the completed assistant typed blocks
         // and tool-call IDs are durable before any resulting tool is dispatched.
-        persist_current_history(
+        if let Err(error) = persist_current_history(
             services,
             checkpoint_store,
             session_id,
@@ -692,7 +844,17 @@ pub async fn run_turn<R: RuntimeServices>(
             Vec::new(),
             false,
         )
-        .await?;
+        .await
+        {
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
+            return Err(error);
+        }
 
         // If no tool calls, we're done
         if tool_calls.is_empty() {
@@ -1170,7 +1332,7 @@ pub async fn run_turn<R: RuntimeServices>(
         // with its effect id pending, before any tool runs. A crash after this
         // point but before the receipt leaves the effect unresolved.
         let tool_ids: Vec<String> = tool_calls.iter().map(|tc| tc.id.clone()).collect();
-        persist_current_history(
+        if let Err(error) = persist_current_history(
             services,
             checkpoint_store,
             session_id,
@@ -1178,7 +1340,17 @@ pub async fn run_turn<R: RuntimeServices>(
             tool_ids.clone(),
             false,
         )
-        .await?;
+        .await
+        {
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
+            return Err(error);
+        }
 
         let raw_results = tokio::select! {
             _ = &mut cancel_rx => {
@@ -1195,6 +1367,13 @@ pub async fn run_turn<R: RuntimeServices>(
                     CheckpointBoundary::ToolIntent,
                     tool_ids.clone(),
                     true,
+                )
+                .await;
+                release_pending_reservation(
+                    services,
+                    session_id,
+                    &request_id,
+                    &mut pending_reservation,
                 )
                 .await;
                 finish_cancelled_agent_turn(
@@ -1239,7 +1418,7 @@ pub async fn run_turn<R: RuntimeServices>(
         // Boundary 4 (runtime §4.1 step 7): the tool receipt plus the updated
         // typed history are durable before the next model request. Clearing the
         // pending ids here is what makes a completed tool non-replayable.
-        persist_current_history(
+        if let Err(error) = persist_current_history(
             services,
             checkpoint_store,
             session_id,
@@ -1247,7 +1426,17 @@ pub async fn run_turn<R: RuntimeServices>(
             Vec::new(),
             false,
         )
-        .await?;
+        .await
+        {
+            release_pending_reservation(
+                services,
+                session_id,
+                &request_id,
+                &mut pending_reservation,
+            )
+            .await;
+            return Err(error);
+        }
 
         info!(
             session_id = %session_id,

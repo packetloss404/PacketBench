@@ -226,3 +226,12 @@ Grounded in a source review.
 2. No tokenizer in-repo: use a conservative estimator and label `countKind: estimate`; no strict guaranteed-fit mode.
 3. Overflow blocks before spend (`blocked_context`) at the same seam as the R4b guard.
 4. R6 depends on R3-R5; implement after R5.
+
+## R5b addendum (confirmed 2026-10-23)
+
+Native in-process path only; sidecar/SDK soft-turn excluded (no per-request claim).
+
+1. **Estimate source: backend heuristic via pricing.** Reserve = `pricing::calculate_cost(model, input_tokens, output_tokens, 0, 0)` where `input_tokens = ceil(sum(serialized message chars) / 3)` (conservative) and `output_tokens = max_tokens` (16384). Reserve is then ceil-ed +10% by `UsdMicros::ceil_reserve`. A model with no `pricing_for(model)` is unpriced and refused **only when a budget is configured**. Documented as a conservative upper bound; R6 refines context accounting.
+2. **Admission gating: only when a budget is passed.** No `budget_scope_key`/`budget_limit_usd` from the frontend => no reservation => byte-identical path. v1 scope is per-session (`local:<conversationId>`); daily/monthly/provider/flight caps stay frontend once-per-turn. Cross-session global enforcement is out of scope for the single-scope slice.
+3. **Ledger bridge: correlate via `request_id`.** Add an additive optional `request_id` to `UsageEntry` (serde default, so historical rows parse). The runner generates one `request_id` per dispatch, reserves it, and after the provider `Done` the accounting path writes the raw row (carrying `request_id`) and the runner settles the journal reservation with the same actual. If the ledger append fails, the reservation stays reserved (accounting already blocks further admission). Locks are never nested: journal writes and the ledger write are separate calls.
+4. Settle uses the exact actual (`nearest_settle`); an overage is a labelled residual. Error/cancel releases the reservation.

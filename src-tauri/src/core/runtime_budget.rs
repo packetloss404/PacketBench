@@ -2,12 +2,22 @@
 //!
 //! Substrate only — nothing in the live agent loop calls this yet; R5b wires the
 //! runner. The journal is authoritative for admission: a request is admitted by
-//! writing a reservation in the same transaction as its `requests` row, and the
-//! scope's live headroom is always the sum of its *active* reservations, not a
-//! running counter that could drift. `usage.jsonl` remains the canonical raw
+//! writing a reservation in the same transaction as its `requests` row. A scope
+//! is a **cumulative spend cap**, not a concurrency guard: its committed total is
+//! the sum of every non-released reservation (settled rows at their actual,
+//! still-reserved rows at their reserve), recomputed from the rows rather than a
+//! running counter that could drift. Settling therefore does NOT hand headroom
+//! back — a settled row keeps counting. `usage.jsonl` remains the canonical raw
 //! ledger of what was actually spent; a later slice bridges the two in a
 //! two-phase write (journal reserves, usage reconciles). This module never
 //! reads or writes `usage.jsonl`.
+//!
+//! Crash-window limitation (v1): the reserve/append/settle sequence is not
+//! atomic across the journal and `usage.jsonl`. A crash between the ledger
+//! append and the journal settle (or between admit and append) leaves a
+//! `reserved` row that no reconciliation pass revisits. Startup reconciliation
+//! of orphaned reservations is a follow-up slice; until then such a row
+//! permanently consumes headroom (fail-closed, never over-spend).
 //!
 //! v1 is deliberately **single-scope**: each reservation names exactly one
 //! `scope_key` and there is no scope hierarchy or roll-up. Admission is
@@ -97,7 +107,8 @@ pub enum BudgetError {
         field: String,
         reason: String,
     },
-    /// The scope has too little headroom for the requested reserve.
+    /// The scope's cumulative committed spend (already-spent settled rows plus
+    /// live reserves plus the requested reserve) would exceed its limit.
     Exceeded {
         scope_key: String,
         limit_usd_micros: i64,
@@ -213,8 +224,10 @@ pub enum SettlementOutcome {
 /// Admit a request by writing its `requests` row and a matching
 /// `budget_reservations` row in one immediate transaction. A `None` estimate is
 /// refused (never treated as zero); a negative amount or malformed id is
-/// refused; a request whose ceil-reserve would push the scope past its limit is
-/// refused before anything is inserted; a duplicate `request_id` is a conflict.
+/// refused; a request whose ceil-reserve would push the scope's **cumulative
+/// committed spend** (settled actuals + live reserves + this request) past its
+/// limit is refused before anything is inserted; a duplicate `request_id` is a
+/// conflict.
 pub fn reserve(
     connection: &Connection,
     request: ReserveRequest<'_>,
@@ -281,10 +294,14 @@ pub fn reserve(
             });
         }
 
+        // Cumulative committed spend: settled rows count at their actual,
+        // still-reserved rows at their reserve; released rows count for nothing.
+        // This is what makes a scope a cumulative spend cap rather than a
+        // per-request cap — settling must not hand the headroom back.
         let already: i64 = connection
             .query_row(
-                "SELECT COALESCE(SUM(reserved_usd_micros), 0) FROM budget_reservations \
-                 WHERE scope_key = ?1 AND state = 'reserved'",
+                "SELECT COALESCE(SUM(COALESCE(settled_usd_micros, reserved_usd_micros)), 0) \
+                 FROM budget_reservations WHERE scope_key = ?1 AND state != 'released'",
                 params![request.scope.scope_key],
                 |row| row.get(0),
             )
@@ -504,8 +521,11 @@ pub fn release(connection: &Connection, request_id: &str, now: i64) -> Result<()
     }
 }
 
-/// The scope's live headroom usage: the sum of its active (`reserved`)
-/// reservations. An unknown scope has no reservations, so its total is 0.
+/// The scope's *in-flight* reservations: the sum of its active (`reserved`)
+/// rows. This is deliberately NOT the admission figure — [`reserve`] admits
+/// against cumulative committed spend (settled + reserved), so a settled row
+/// keeps consuming the cap even though it is excluded here. An unknown scope has
+/// no reservations, so its total is 0.
 pub fn reserved_total(connection: &Connection, scope_key: &str) -> Result<i64, BudgetError> {
     connection
         .query_row(
@@ -902,5 +922,65 @@ mod tests {
         assert!(UsdMicros::from_micros(1) < UsdMicros::from_micros(2));
 
         assert_eq!(UsdMicros::from_micros(5).to_string(), "5 usd_micros");
+    }
+
+    #[test]
+    fn settled_spend_counts_toward_the_cumulative_cap() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        // Reserve 400 -> 440, settle at 400: the actual is now committed spend.
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+        settle(&connection, "req-1", 400, 2_000).unwrap();
+        assert_eq!(
+            reserved_total(&connection, "local:conv-1").unwrap(),
+            0,
+            "a settled row is no longer in-flight"
+        );
+
+        // Committed = 400; a 500 estimate -> 550 reserve totals 950 <= 1000.
+        let second = reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(500)).unwrap();
+        assert_eq!(second.reserved_usd_micros, 550);
+
+        // Committed = 400 + 550 = 950; another 400 -> 440 would reach 1390.
+        let error =
+            reserve_with(&connection, "req-3", "run-1", &scope(1_000), Some(400)).unwrap_err();
+        match error {
+            BudgetError::Exceeded {
+                already_reserved_usd_micros,
+                requested_usd_micros,
+                limit_usd_micros,
+                ..
+            } => {
+                assert_eq!(already_reserved_usd_micros, 950);
+                assert_eq!(requested_usd_micros, 440);
+                assert_eq!(limit_usd_micros, 1_000);
+            }
+            other => panic!("expected an exceeded error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_reserve_that_still_fits_the_cumulative_cap_after_settle_is_admitted() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+        // Settle low: only 100 of the 440 reserve was actually spent.
+        settle(&connection, "req-1", 100, 2_000).unwrap();
+
+        // Committed = 100; an 800 estimate -> 880 reserve totals 980 <= 1000.
+        let second = reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(800)).unwrap();
+        assert_eq!(second.reserved_usd_micros, 880);
+    }
+
+    #[test]
+    fn a_released_row_stops_counting_toward_the_cumulative_cap() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(900)).unwrap();
+        release(&connection, "req-1", 2_000).unwrap();
+
+        // The released row is excluded, so the full limit is available again.
+        let second = reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(900)).unwrap();
+        assert_eq!(second.reserved_usd_micros, 990);
     }
 }

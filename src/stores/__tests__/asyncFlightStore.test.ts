@@ -90,6 +90,7 @@ vi.mock("@/lib/tauri", () => ({
 
 vi.mock("@/stores/costGuardrailStore", () => ({
   assertCostGuardrailsAllowLaunch: mocks.assertCostGuardrailsAllowLaunch,
+  useCostGuardrailStore: { getState: () => ({ sessionLimitUsd: null }) },
 }));
 
 // Partial mock: only the store handle is stubbed. `apiAgentProvider` /

@@ -312,8 +312,9 @@ use crate::commands::api_agent::{
     mark_attempt_reviewing_for_session, record_child_usage, ApiAgentState,
 };
 use crate::commands::api_keys;
+use crate::commands::pricing;
 use crate::core::agent_runtime::{
-    CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, EventSink,
+    BudgetAdmission, CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, EventSink,
     FlightStatusSink, HistoryStore, PermissionBroker, PermissionDecision, RuntimeFlags,
     RuntimeRunBinding, RuntimeServices, RuntimeSession, ToolExecContext,
 };
@@ -321,6 +322,9 @@ use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::{self, HookConfig};
 use crate::core::llm_provider::{get_provider, LlmProvider};
 use crate::core::llm_types::{ChatMessage, ImageAttachment, StreamChunk, ToolCall, ToolResult};
+use crate::core::runtime_budget::{
+    self, BudgetError, BudgetScope, ReserveRequest, SettlementOutcome,
+};
 use crate::core::runtime_checkpoint::{
     self, Checkpoint, CheckpointClassification, CheckpointLimits, CompatibilityContext,
     CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_TRANSPORT_VERSION,
@@ -533,11 +537,156 @@ impl RuntimeServices for TauriRuntimeServices {
         session_id: &str,
         provider: &str,
         model: &str,
+        request_id: Option<&str>,
         chunk: &StreamChunk,
-    ) -> Result<(), String> {
-        account_native_request_chunk(session_id, provider, model, chunk, |entry| {
+    ) -> Result<Option<i64>, String> {
+        account_native_request_chunk(session_id, provider, model, request_id, chunk, |entry| {
             crate::commands::api_agent::record_completed_usage(&self.app_handle, entry)
         })
+    }
+
+    /// R5b admission. No-op unless the journal is enabled AND the session has a
+    /// configured budget. The estimate is a conservative backend heuristic
+    /// (`ceil(serialized bytes / 3)` input tokens plus the request's `max_tokens`
+    /// output), priced through the shared table; an unpriced model is refused
+    /// fail-closed rather than treated as free.
+    async fn admit_request(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        provider: &str,
+        model: &str,
+        messages: &[ChatMessage],
+        max_tokens: u64,
+    ) -> Result<BudgetAdmission, String> {
+        if !journal::is_enabled() {
+            return Ok(BudgetAdmission::NotConfigured);
+        }
+        let Some((scope_key, limit_usd_micros)) =
+            self.state.runtime_session_budget(session_id).await
+        else {
+            return Ok(BudgetAdmission::NotConfigured);
+        };
+
+        let serialized_chars: u64 = messages
+            .iter()
+            .map(|message| {
+                serde_json::to_string(message)
+                    .map(|text| text.len() as u64)
+                    .unwrap_or(0)
+            })
+            .sum();
+        let input_tokens = serialized_chars.div_ceil(3);
+        let output_tokens = max_tokens;
+
+        if pricing::pricing_for(model).is_none() {
+            return Err(format!(
+                "No price is known for provider \"{provider}\" model \"{model}\"; an unpriced request is refused while a budget is configured"
+            ));
+        }
+        let cost = pricing::calculate_cost(model, input_tokens, output_tokens, 0, 0);
+        let estimate_micros = (cost * 1_000_000.0).round() as i64;
+
+        // A reservation is journalled against a run, so a budgeted request
+        // without a run binding cannot be admitted. This is unreachable in
+        // practice (the journal-enabled start path always binds a run), but it
+        // must fail closed with a clear message rather than minting an identity.
+        let (run_id, epoch) = match self.state.runtime_run_binding(session_id).await {
+            Some(binding) => (binding.run_id, binding.epoch),
+            None => {
+                return Err(
+                    "Cannot admit a budgeted request: the session has no runtime run binding"
+                        .to_string(),
+                )
+            }
+        };
+        let now = self.now_ms();
+        let request_id = request_id.to_string();
+        let provider = provider.to_string();
+        let model = model.to_string();
+        let scope = BudgetScope {
+            scope_key,
+            limit_usd_micros,
+        };
+        on_blocking(move || {
+            journal::with_journal(|connection| {
+                runtime_budget::reserve(
+                    connection,
+                    ReserveRequest {
+                        request_id: &request_id,
+                        run_id: &run_id,
+                        epoch,
+                        scope: &scope,
+                        provider: &provider,
+                        model: &model,
+                        estimate_usd_micros: Some(estimate_micros),
+                        now,
+                    },
+                )
+                .map(|_| ())
+                .map_err(String::from)
+            })
+        })
+        .await?;
+        Ok(BudgetAdmission::Reserved)
+    }
+
+    /// Settle a reservation with the exact actual. A settle for a reservation
+    /// that was never made is a bug, so `NotFound`/`Conflict` surface as errors;
+    /// an overage is labelled with a warning.
+    async fn settle_request(
+        &self,
+        _session_id: &str,
+        request_id: &str,
+        actual_usd_micros: i64,
+    ) -> Result<(), String> {
+        if !journal::is_enabled() {
+            return Ok(());
+        }
+        let now = self.now_ms();
+        let request_id_owned = request_id.to_string();
+        let outcome = on_blocking(move || {
+            journal::with_journal(|connection| {
+                runtime_budget::settle(connection, &request_id_owned, actual_usd_micros, now)
+                    .map_err(String::from)
+            })
+        })
+        .await?;
+        if let SettlementOutcome::Overage {
+            reserved_usd_micros,
+            settled_usd_micros,
+            overage_usd_micros,
+        } = outcome
+        {
+            tracing::warn!(
+                request_id = %request_id,
+                reserved_usd_micros,
+                settled_usd_micros,
+                overage_usd_micros,
+                "Budget request settled over its reservation; residual labelled by runtime_budget"
+            );
+        }
+        Ok(())
+    }
+
+    /// Best-effort release of an unsettled reservation. An absent reservation is
+    /// ignored (release may race a settle); other errors surface.
+    async fn release_request(&self, _session_id: &str, request_id: &str) -> Result<(), String> {
+        if !journal::is_enabled() {
+            return Ok(());
+        }
+        let now = self.now_ms();
+        let request_id_owned = request_id.to_string();
+        on_blocking(move || {
+            journal::with_journal(|connection| {
+                match runtime_budget::release(connection, &request_id_owned, now) {
+                    Ok(()) => Ok(()),
+                    Err(BudgetError::NotFound { .. }) => Ok(()),
+                    Err(error) => Err(error.to_string()),
+                }
+            })
+        })
+        .await
     }
 
     /// The real store only when the journal is enabled AND this session is bound

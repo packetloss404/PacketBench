@@ -164,6 +164,7 @@ pub(crate) fn sidecar_usage_entry(
         provider: Some(provider.to_string()),
         agent_id: None,
         session_id: session_id.to_string(),
+        request_id: None,
         input_tokens,
         output_tokens,
         cache_read,

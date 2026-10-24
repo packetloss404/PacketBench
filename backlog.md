@@ -217,6 +217,26 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       two-phase `usage.jsonl` bridge, passing per-turn limits from the frontend.
       Hard precondition: callers must go through `with_journal` (its process-global
       connection mutex is what makes the admission read race-free).
+- [x] **P1 — Per-request budget wiring + ledger bridge (R5b).** The native runner
+      reserves per model request before the `PreRequest` dispatch intent (and
+      before any spend) when the session has a budget, settles on the provider
+      `Done` with the exact actual, and releases on provider error/cancellation.
+      The scope is a **cumulative** spend cap (already-spent + reserved +
+      requested). Estimate is a conservative backend heuristic (serialized
+      message bytes / 3 input tokens + `max_tokens` output, priced); an unpriced
+      model is refused only when a budget is configured. `UsageEntry` gains an
+      additive optional `request_id` so the raw ledger row correlates with the
+      journal reservation (settle happens after the append; locks are never
+      nested). Frontend passes `local:<conversationId>` + the session limit; no
+      budget => no reservation => byte-identical (ledger rows included). 1228/0;
+      full gates green; independent review findings (cumulative cap, Done-without-
+      actual leak, unwrapped `?`, ledger byte-identity, run-binding fallback,
+      settle-error policy) all fixed. **Known limits:** (a) a crash between the
+      ledger append and the journal settle (or between admit and append) leaves a
+      `reserved` row with no startup reconciliation pass yet — follow-up; (b) only
+      the per-session cap is enforced at request granularity (daily/monthly/
+      provider/flight stay frontend once-per-turn); (c) flight-launched API
+      sessions pass no budget, so R5b does not cover them.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

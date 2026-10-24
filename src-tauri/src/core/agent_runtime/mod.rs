@@ -145,6 +145,16 @@ pub enum RunOutcome {
     Failed(String),
 }
 
+/// Outcome of a per-request budget admission check (R5b). `NotConfigured` is
+/// the disabled path: no budget is set (or the journal is off), so the runner
+/// takes no reservation and no settlement. `Reserved` means a durable
+/// reservation now governs the request and MUST be settled or released.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetAdmission {
+    NotConfigured,
+    Reserved,
+}
+
 /// The runtime-journal run a turn is bound to. Present only when the journal is
 /// enabled and the session was prepared; the runner then persists checkpoints.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,13 +332,49 @@ pub trait RuntimeServices:
         call: ToolCall,
         ctx: ToolExecContext,
     ) -> ToolResult;
+    /// Account one streamed chunk. Returns `Some(actual_usd_micros)` exactly
+    /// once, on the `Done` chunk for the request (after the raw usage row is
+    /// durable), and `None` for every other chunk. The runner settles the
+    /// journal reservation with the returned actual.
     fn account_request_chunk(
         &self,
         session_id: &str,
         provider: &str,
         model: &str,
+        request_id: Option<&str>,
         chunk: &StreamChunk,
-    ) -> Result<(), String>;
+    ) -> Result<Option<i64>, String>;
+    /// Admit a model request against the session's configured budget. Gated on
+    /// a configured budget (scope key + limit): with none, or with the journal
+    /// disabled, this is a no-op returning [`BudgetAdmission::NotConfigured`],
+    /// so the disabled path is unchanged. The default is that no-op — a host
+    /// that never sets a budget needs no override.
+    async fn admit_request(
+        &self,
+        _session_id: &str,
+        _request_id: &str,
+        _provider: &str,
+        _model: &str,
+        _messages: &[ChatMessage],
+        _max_tokens: u64,
+    ) -> Result<BudgetAdmission, String> {
+        Ok(BudgetAdmission::NotConfigured)
+    }
+    /// Settle a reservation with the exact actual cost. Default is a no-op for
+    /// hosts that never reserve.
+    async fn settle_request(
+        &self,
+        _session_id: &str,
+        _request_id: &str,
+        _actual_usd_micros: i64,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// Release a reservation that will not be settled (cancel, error, refusal
+    /// after admission). Default is a no-op for hosts that never reserve.
+    async fn release_request(&self, _session_id: &str, _request_id: &str) -> Result<(), String> {
+        Ok(())
+    }
     /// Durable checkpoint sink for this turn, or `None` when the runtime journal
     /// is disabled or the session is not bound to a prepared run. The default
     /// keeps the journal inert: the runner takes its pre-journal path.

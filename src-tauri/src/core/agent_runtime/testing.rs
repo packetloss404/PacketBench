@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, oneshot, Notify};
 
 use crate::core::agent_runtime::runner::run_turn;
 use crate::core::agent_runtime::{
-    CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, EventSink,
+    BudgetAdmission, CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, EventSink,
     FlightStatusSink, HistoryStore, PermissionBroker, PermissionDecision, PermissionMode,
     RecordingEventSink, RunOutcome, RunRequest, RuntimeFlags, RuntimeServices, RuntimeSession,
     ToolExecContext,
@@ -176,6 +176,13 @@ pub struct FakeServices {
     has_pending_attachments: Mutex<bool>,
     attachment_drains: Mutex<usize>,
     capability_guard_enabled: Mutex<bool>,
+    admission: Mutex<Result<BudgetAdmission, String>>,
+    scripted_actual_usd_micros: Mutex<Option<i64>>,
+    scripted_account_error: Mutex<Option<String>>,
+    scripted_settle_error: Mutex<Option<String>>,
+    admit_calls: Mutex<Vec<(String, String, String, String, u64)>>,
+    settle_calls: Mutex<Vec<(String, String, i64)>>,
+    release_calls: Mutex<Vec<(String, String)>>,
 }
 
 impl FakeServices {
@@ -218,6 +225,13 @@ impl FakeServices {
             has_pending_attachments: Mutex::new(false),
             attachment_drains: Mutex::new(0),
             capability_guard_enabled: Mutex::new(false),
+            admission: Mutex::new(Ok(BudgetAdmission::NotConfigured)),
+            scripted_actual_usd_micros: Mutex::new(None),
+            scripted_account_error: Mutex::new(None),
+            scripted_settle_error: Mutex::new(None),
+            admit_calls: Mutex::new(Vec::new()),
+            settle_calls: Mutex::new(Vec::new()),
+            release_calls: Mutex::new(Vec::new()),
         }
     }
 
@@ -234,6 +248,53 @@ impl FakeServices {
     /// Enable the R4b capability guard (mirrors the journal being enabled).
     pub fn set_capability_guard_enabled(&self, enabled: bool) {
         *self.capability_guard_enabled.lock().expect("guard flag") = enabled;
+    }
+
+    /// Script what the next `admit_request` returns: `NotConfigured`, `Reserved`
+    /// or a refusal error.
+    pub fn set_admission(&self, result: Result<BudgetAdmission, String>) {
+        *self.admission.lock().expect("admission script") = result;
+    }
+
+    /// Script the actual micro-dollars `account_request_chunk` reports on `Done`.
+    pub fn set_scripted_actual_usd_micros(&self, actual: Option<i64>) {
+        *self
+            .scripted_actual_usd_micros
+            .lock()
+            .expect("actual script") = actual;
+    }
+
+    /// Script `account_request_chunk` to fail on `Done` (models a ledger-append
+    /// failure).
+    pub fn set_scripted_account_error(&self, error: Option<String>) {
+        *self
+            .scripted_account_error
+            .lock()
+            .expect("account error script") = error;
+    }
+
+    /// Script `settle_request` to fail (models a journal write failure after the
+    /// ledger append succeeded).
+    pub fn set_scripted_settle_error(&self, error: Option<String>) {
+        *self
+            .scripted_settle_error
+            .lock()
+            .expect("settle error script") = error;
+    }
+
+    /// `(session_id, request_id, provider, model, max_tokens)` per admission.
+    pub fn admit_calls(&self) -> Vec<(String, String, String, String, u64)> {
+        self.admit_calls.lock().expect("admit calls").clone()
+    }
+
+    /// `(session_id, request_id, actual_usd_micros)` per settlement.
+    pub fn settle_calls(&self) -> Vec<(String, String, i64)> {
+        self.settle_calls.lock().expect("settle calls").clone()
+    }
+
+    /// `(session_id, request_id)` per release.
+    pub fn release_calls(&self) -> Vec<(String, String)> {
+        self.release_calls.lock().expect("release calls").clone()
     }
 
     /// How many times the runner drained queued attachments.
@@ -444,8 +505,73 @@ impl RuntimeServices for FakeServices {
         _session_id: &str,
         _provider: &str,
         _model: &str,
-        _chunk: &StreamChunk,
+        _request_id: Option<&str>,
+        chunk: &StreamChunk,
+    ) -> Result<Option<i64>, String> {
+        if matches!(chunk, StreamChunk::Done { .. }) {
+            if let Some(error) = self
+                .scripted_account_error
+                .lock()
+                .expect("account error script")
+                .clone()
+            {
+                return Err(error);
+            }
+            Ok(*self
+                .scripted_actual_usd_micros
+                .lock()
+                .expect("actual script"))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn admit_request(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        provider: &str,
+        model: &str,
+        _messages: &[ChatMessage],
+        max_tokens: u64,
+    ) -> Result<BudgetAdmission, String> {
+        self.admit_calls.lock().expect("admit calls").push((
+            session_id.to_string(),
+            request_id.to_string(),
+            provider.to_string(),
+            model.to_string(),
+            max_tokens,
+        ));
+        self.admission.lock().expect("admission script").clone()
+    }
+
+    async fn settle_request(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        actual_usd_micros: i64,
     ) -> Result<(), String> {
+        self.settle_calls.lock().expect("settle calls").push((
+            session_id.to_string(),
+            request_id.to_string(),
+            actual_usd_micros,
+        ));
+        if let Some(error) = self
+            .scripted_settle_error
+            .lock()
+            .expect("settle error script")
+            .clone()
+        {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn release_request(&self, session_id: &str, request_id: &str) -> Result<(), String> {
+        self.release_calls
+            .lock()
+            .expect("release calls")
+            .push((session_id.to_string(), request_id.to_string()));
         Ok(())
     }
 
@@ -986,5 +1112,244 @@ async fn crashed_intent_reconciles_and_resumes_without_replaying() {
         services.executed_tools.lock().unwrap().len(),
         1,
         "resume must not replay the completed tool"
+    );
+}
+
+// --- R5b: per-request budget admission wired into the runner loop. ---------
+
+#[tokio::test]
+async fn budget_configured_settles_the_reservation_with_the_actual_on_done() {
+    let services = FakeServices::new("s-budget-settle");
+    services.set_admission(Ok(BudgetAdmission::Reserved));
+    services.set_scripted_actual_usd_micros(Some(1234));
+    services.push_script(text_script("ok"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-budget-settle"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Completed {
+            input_tokens: 2,
+            output_tokens: 1
+        }
+    );
+    let admits = services.admit_calls();
+    assert_eq!(admits.len(), 1);
+    assert_eq!(admits[0].0, "s-budget-settle");
+    assert_eq!(admits[0].2, "fake");
+    assert_eq!(admits[0].3, "fake-model");
+    assert_eq!(admits[0].4, 16384);
+    let settles = services.settle_calls();
+    assert_eq!(settles.len(), 1);
+    assert_eq!(settles[0].0, "s-budget-settle");
+    assert_eq!(settles[0].1, admits[0].1, "settles the admitted request");
+    assert_eq!(settles[0].2, 1234);
+    assert!(services.release_calls().is_empty());
+}
+
+#[tokio::test]
+async fn budget_configured_releases_the_reservation_on_provider_error() {
+    let services = FakeServices::new("s-budget-error");
+    services.set_admission(Ok(BudgetAdmission::Reserved));
+    services.set_scripted_actual_usd_micros(Some(999));
+    services.push_script(ScriptStep::Chunks(vec![StreamChunk::Error {
+        message: "boom".to_string(),
+    }]));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-budget-error"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome, RunOutcome::Failed("boom".to_string()));
+    assert!(services.settle_calls().is_empty());
+    let releases = services.release_calls();
+    assert_eq!(releases.len(), 1);
+    assert_eq!(releases[0].0, "s-budget-error");
+    assert_eq!(releases[0].1, services.admit_calls()[0].1);
+}
+
+#[tokio::test]
+async fn budget_append_failure_leaves_the_reservation_reserved() {
+    // A failed ledger append must NOT release the reservation: freeing the
+    // headroom would let unrecorded spend be silently re-admitted.
+    let services = FakeServices::new("s-budget-append-fail");
+    services.set_admission(Ok(BudgetAdmission::Reserved));
+    services.set_scripted_account_error(Some("ledger append failed".to_string()));
+    services.push_script(text_script("hi"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-budget-append-fail"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("ledger append failed"), "got: {error}");
+    assert!(services.settle_calls().is_empty());
+    assert!(
+        services.release_calls().is_empty(),
+        "the reservation must stay reserved on an append failure"
+    );
+}
+
+#[tokio::test]
+async fn budget_configured_releases_the_reservation_on_cancellation() {
+    let services = FakeServices::new("s-budget-cancel");
+    services.set_admission(Ok(BudgetAdmission::Reserved));
+    services.push_script(ScriptStep::ChunksThenBlock(vec![StreamChunk::TextDelta {
+        text: "partial".to_string(),
+    }]));
+
+    let started = Arc::clone(&services.started);
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let canceller = tokio::spawn(async move {
+        started.notified().await;
+        let _ = cancel_tx.send(());
+    });
+
+    let outcome = run_turn(&services, run_request("s-budget-cancel"), cancel_rx)
+        .await
+        .unwrap();
+    canceller.await.unwrap();
+
+    assert_eq!(outcome, RunOutcome::Cancelled);
+    assert!(services.settle_calls().is_empty());
+    let releases = services.release_calls();
+    assert_eq!(releases.len(), 1);
+    assert_eq!(releases[0].0, "s-budget-cancel");
+    assert_eq!(releases[0].1, services.admit_calls()[0].1);
+}
+
+#[tokio::test]
+async fn no_budget_reserves_nothing_and_leaves_the_event_stream_unchanged() {
+    let services = FakeServices::new("s-no-budget");
+    services.push_script(text_script("hi"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-no-budget"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Completed {
+            input_tokens: 2,
+            output_tokens: 1
+        }
+    );
+    // Admission is the budget probe, so it is always consulted; with no budget
+    // it returns `NotConfigured` and no reservation lifecycle call follows.
+    let admits = services.admit_calls();
+    assert_eq!(admits.len(), 1);
+    assert!(services.settle_calls().is_empty());
+    assert!(services.release_calls().is_empty());
+    let events = services.recorded_events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0],
+        ("api-agent:chunk:s-no-budget".to_string(), json!("hi"))
+    );
+    assert_eq!(events[1].0, "api-agent:done:s-no-budget");
+    assert_eq!(events[1].1["cancelled"], json!(false));
+}
+
+#[tokio::test]
+async fn budget_refusal_fails_before_dispatch_and_reserves_nothing() {
+    let services = FakeServices::new("s-budget-refused");
+    services.set_admission(Err("No price is known for this route".to_string()));
+    services.push_script(text_script("should never run"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-budget-refused"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("No price is known"));
+    assert_eq!(*services.stream_calls.lock().unwrap(), 0);
+    assert!(services.recorded_events().is_empty());
+    assert!(services.settle_calls().is_empty());
+    assert!(services.release_calls().is_empty());
+}
+
+#[tokio::test]
+async fn a_multi_iteration_turn_settles_each_request_without_releasing() {
+    let services = FakeServices::new("s-multi");
+    services.allow_tool("bash");
+    services.set_admission(Ok(BudgetAdmission::Reserved));
+    services.set_scripted_actual_usd_micros(Some(50));
+    services.push_script(bash_call_script());
+    services.push_script(text_script("done"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-multi"), cancel_rx)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, RunOutcome::Completed { .. }));
+
+    let admits = services.admit_calls();
+    assert_eq!(admits.len(), 2, "one admission per provider iteration");
+    assert_ne!(
+        admits[0].1, admits[1].1,
+        "each request gets a distinct request_id"
+    );
+    let settles = services.settle_calls();
+    assert_eq!(settles.len(), 2, "each request settles");
+    assert_eq!(settles[0].1, admits[0].1);
+    assert_eq!(settles[1].1, admits[1].1);
+    assert_eq!(settles[0].2, 50);
+    assert_eq!(settles[1].2, 50);
+    assert!(services.release_calls().is_empty());
+}
+
+#[tokio::test]
+async fn a_done_without_an_accounted_actual_releases_the_reservation() {
+    // A host that reports `Done` but returns `None` from `account_request_chunk`
+    // violates the contract; the reservation must not survive the iteration.
+    let services = FakeServices::new("s-done-none");
+    services.set_admission(Ok(BudgetAdmission::Reserved));
+    services.set_scripted_actual_usd_micros(None);
+    services.push_script(text_script("ok"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-done-none"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outcome,
+        RunOutcome::Completed {
+            input_tokens: 2,
+            output_tokens: 1
+        }
+    );
+    assert!(services.settle_calls().is_empty());
+    let releases = services.release_calls();
+    assert_eq!(releases.len(), 1);
+    assert_eq!(releases[0].0, "s-done-none");
+    assert_eq!(releases[0].1, services.admit_calls()[0].1);
+}
+
+#[tokio::test]
+async fn a_settle_error_leaves_the_reservation_reserved_and_fails_the_turn() {
+    // The ledger append already succeeded, so a settle failure must NOT release
+    // the reservation; it surfaces as a turn error instead.
+    let services = FakeServices::new("s-settle-error");
+    services.set_admission(Ok(BudgetAdmission::Reserved));
+    services.set_scripted_actual_usd_micros(Some(7));
+    services.set_scripted_settle_error(Some("journal settle failed".to_string()));
+    services.push_script(text_script("ok"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-settle-error"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("journal settle failed"), "got: {error}");
+    assert_eq!(services.settle_calls().len(), 1);
+    assert!(
+        services.release_calls().is_empty(),
+        "a settle error must not release the reservation"
     );
 }
