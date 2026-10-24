@@ -149,7 +149,7 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       schema/transport/model/policy compatibility, prunes to the latest 10 per
       run, refuses secret-looking payloads (token-aware, not substring), and
       returns named errors for blob/run/total budget violations. `cargo test
-      --lib` 1156/0; independent review found no blockers (fixed a latent
+    --lib` 1156/0; independent review found no blockers (fixed a latent
       redaction false-positive and a byte-vs-char budget bug it found). **R3b
       must**: validate schema on load, guard pruning against active runs /
       `pending_effect_ids`, order retention by `(epoch, seq)`, and wire
