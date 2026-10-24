@@ -27,12 +27,13 @@ use super::runtime_types::{
 ///
 /// R3a (H2 typed checkpoints) bumped this from 1 to 2 to add the `checkpoints`
 /// table. R4a (H5/H6 capabilities + manifest identity) bumps it from 2 to 3 to
-/// add the `manifests` and `capability_snapshots` tables. This is the JOURNAL
-/// migration target; it is deliberately separate from
-/// `runtime_types::RUNTIME_SCHEMA_VERSION`, which is the `RuntimeRunSummary`
-/// wire version (still 1). A file written by a newer build is refused, never
-/// downgraded.
-pub const JOURNAL_SCHEMA_VERSION: i64 = 3;
+/// add the `manifests` and `capability_snapshots` tables. R5a (H4 budget
+/// admission) bumps it from 3 to 4 to add the `requests` and
+/// `budget_reservations` tables. This is the JOURNAL migration target; it is
+/// deliberately separate from `runtime_types::RUNTIME_SCHEMA_VERSION`, which is
+/// the `RuntimeRunSummary` wire version (still 1). A file written by a newer
+/// build is refused, never downgraded.
+pub const JOURNAL_SCHEMA_VERSION: i64 = 4;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -220,6 +221,45 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|e| format!("Failed to migrate runtime journal to v3: {e}"))?;
+    }
+    if version < 4 {
+        connection
+            .execute_batch(
+                "BEGIN;\n\
+                 CREATE TABLE requests (\n\
+                   request_id TEXT PRIMARY KEY,\n\
+                   run_id TEXT NOT NULL,\n\
+                   epoch INTEGER NOT NULL,\n\
+                   scope_key TEXT NOT NULL,\n\
+                   provider TEXT NOT NULL,\n\
+                   model TEXT NOT NULL,\n\
+                   estimated_usd_micros INTEGER NOT NULL,\n\
+                   reserved_usd_micros INTEGER NOT NULL,\n\
+                   settled_usd_micros INTEGER,\n\
+                   state TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL,\n\
+                   settled_at INTEGER,\n\
+                   FOREIGN KEY (run_id) REFERENCES runs(run_id)\n\
+                 );\n\
+                 CREATE INDEX idx_requests_run ON requests(run_id, epoch);\n\
+                 CREATE INDEX idx_requests_scope ON requests(scope_key, state);\n\
+                 CREATE TABLE budget_reservations (\n\
+                   reservation_id TEXT PRIMARY KEY,\n\
+                   request_id TEXT NOT NULL UNIQUE,\n\
+                   scope_key TEXT NOT NULL,\n\
+                   limit_usd_micros INTEGER NOT NULL,\n\
+                   reserved_usd_micros INTEGER NOT NULL,\n\
+                   settled_usd_micros INTEGER,\n\
+                   state TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL,\n\
+                   settled_at INTEGER,\n\
+                   FOREIGN KEY (request_id) REFERENCES requests(request_id)\n\
+                 );\n\
+                 CREATE INDEX idx_budget_reservations_scope ON budget_reservations(scope_key, state);\n\
+                 PRAGMA user_version = 4;\n\
+                 COMMIT;",
+            )
+            .map_err(|e| format!("Failed to migrate runtime journal to v4: {e}"))?;
     }
     Ok(())
 }
@@ -977,14 +1017,79 @@ mod tests {
             == 1
     }
 
+    fn column_names(connection: &Connection, table: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        let names = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap();
+        names.collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
+    fn assert_columns(connection: &Connection, table: &str, expected: &[&str]) {
+        let actual = column_names(connection, table);
+        let expected: Vec<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(actual, expected, "{table} columns changed");
+    }
+
+    /// A non-additive edit to a pre-existing table would change this stable
+    /// column list; asserting it catches a migration that rewrote history.
+    fn assert_core_columns_unchanged(connection: &Connection) {
+        assert_columns(
+            connection,
+            "runs",
+            &[
+                "run_id",
+                "conversation_id",
+                "operation_id",
+                "previous_run_id",
+                "parent_run_id",
+                "root_run_id",
+                "epoch",
+                "state",
+                "latest_seq",
+                "instance_id",
+            ],
+        );
+        assert_columns(
+            connection,
+            "checkpoints",
+            &[
+                "checkpoint_id",
+                "run_id",
+                "epoch",
+                "seq",
+                "schema_version",
+                "transport_version",
+                "model_route",
+                "manifest_hash",
+                "tool_policy_hash",
+                "mcp_hash",
+                "payload",
+                "pending_effect_ids",
+                "payload_hash",
+                "classification",
+                "created_at",
+            ],
+        );
+    }
+
     #[test]
     fn fresh_journal_is_at_current_version_with_all_tables() {
         let connection = open_at(&temp_db()).unwrap();
+        assert_eq!(JOURNAL_SCHEMA_VERSION, 4);
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, JOURNAL_SCHEMA_VERSION);
-        for table in ["checkpoints", "manifests", "capability_snapshots"] {
+        for table in [
+            "checkpoints",
+            "manifests",
+            "capability_snapshots",
+            "requests",
+            "budget_reservations",
+        ] {
             assert!(table_exists(&connection, table), "{table} must exist");
         }
     }
@@ -1013,7 +1118,7 @@ mod tests {
         connection
             .execute_batch(
                 "DROP TABLE checkpoints; DROP TABLE manifests; DROP TABLE capability_snapshots; \
-                 PRAGMA user_version = 1;",
+                 DROP TABLE budget_reservations; DROP TABLE requests; PRAGMA user_version = 1;",
             )
             .unwrap();
         migrate(&connection).unwrap();
@@ -1031,12 +1136,13 @@ mod tests {
             })
             .unwrap();
         assert_eq!(surviving, 1);
-        // The v1 tables survive the additive migration.
+        // The v1 tables survive the additive migration, column-for-column.
         assert!(table_exists(&connection, "runs"));
+        assert_core_columns_unchanged(&connection);
     }
 
     #[test]
-    fn v2_journal_migrates_to_v3_additively() {
+    fn v2_journal_migrates_additively_to_current() {
         let connection = open_at(&temp_db()).unwrap();
         // Seed v2 rows so the additive migration's "no data touched" claim is
         // asserted for the tables that already existed at v2.
@@ -1059,14 +1165,15 @@ mod tests {
         // Simulate a file written by the v2 build.
         connection
             .execute_batch(
-                "DROP TABLE manifests; DROP TABLE capability_snapshots; PRAGMA user_version = 2;",
+                "DROP TABLE manifests; DROP TABLE capability_snapshots; \
+                 DROP TABLE budget_reservations; DROP TABLE requests; PRAGMA user_version = 2;",
             )
             .unwrap();
         migrate(&connection).unwrap();
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, JOURNAL_SCHEMA_VERSION);
         assert!(table_exists(&connection, "manifests"));
         assert!(table_exists(&connection, "capability_snapshots"));
         // The seeded v2 rows survive the additive migration.
@@ -1078,6 +1185,60 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))
             .unwrap();
         assert_eq!(runs, 1);
+        assert_core_columns_unchanged(&connection);
+    }
+
+    #[test]
+    fn v3_journal_migrates_to_v4_additively() {
+        let connection = open_at(&temp_db()).unwrap();
+        // Seed v3 rows so the additive migration's "no data touched" claim is
+        // asserted for the tables that already existed at v3.
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, conversation_id, operation_id, root_run_id, epoch, state, latest_seq) \
+                 VALUES ('run-1', 'conv-1', 'op-1', 'run-1', 0, 'prepared', 0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO manifests (manifest_id, content_hash, payload, created_at) \
+                 VALUES ('manifest-1', ?1, '{}', 1)",
+                params![digest(6)],
+            )
+            .unwrap();
+        // Simulate a file written by the v3 build: the v4 tables do not exist.
+        connection
+            .execute_batch(
+                "DROP TABLE budget_reservations; DROP TABLE requests; PRAGMA user_version = 3;",
+            )
+            .unwrap();
+        migrate(&connection).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+        assert!(table_exists(&connection, "requests"));
+        assert!(table_exists(&connection, "budget_reservations"));
+        // The new tables start empty.
+        for table in ["requests", "budget_reservations"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table} must start empty");
+        }
+        // The seeded v3 rows survive the additive migration.
+        let runs: i64 = connection
+            .query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(runs, 1);
+        let manifests: i64 = connection
+            .query_row("SELECT COUNT(*) FROM manifests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(manifests, 1);
+        assert_core_columns_unchanged(&connection);
     }
 
     #[test]

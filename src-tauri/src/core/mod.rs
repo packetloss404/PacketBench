@@ -54,6 +54,8 @@ pub mod pty;
 pub(crate) mod pty_output;
 // One-time reprice of historical cost figures written with the pre-CE2 rates.
 pub mod reprice;
+// R5a: budget admission ledger (H4) — single-scope reservations in the journal.
+pub mod runtime_budget;
 // R1a: backend runtime journal substrate (launch identity/idempotency).
 pub mod runtime_journal;
 // R3a: typed checkpoints (H2) — validated, hash-addressed conversation history.

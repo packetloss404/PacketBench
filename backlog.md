@@ -203,6 +203,20 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       Named providers (sugar/cline-pass/opencode-go/ollama-cloud/google/xai) and
       `api-openrouter`/`api-minimax`/`api-custom` resolve vision `unknown` →
       refused while enabled; widen the static table only with evidence.
+- [x] **P1 — Budget admission substrate (R5a).** Journal v4 (additive, fail-closed)
+      adds `requests` + `budget_reservations`; `core/runtime_budget.rs` implements
+      single-scope, in-journal request admission: unpriced is a strict reject
+      (never zero), a reserve ceils the estimate by 10% headroom, admission sums
+      only _active_ reservations inside one `BEGIN IMMEDIATE` transaction, a
+      duplicate `request_id` is a conflict, settlement is the exact actual with a
+      labelled overage (never a silent reopen), and release frees headroom.
+      Negative amounts and malformed ids are refused. Substrate only — nothing in
+      the live loop calls it yet. `cargo test --lib` 1214/0; independent review
+      findings (negative-amount bypass, check-outside-transaction, unguarded
+      UPDATEs) all fixed. **R5b remains:** wire runner per-request admission + the
+      two-phase `usage.jsonl` bridge, passing per-turn limits from the frontend.
+      Hard precondition: callers must go through `with_journal` (its process-global
+      connection mutex is what makes the admission read race-free).
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript
