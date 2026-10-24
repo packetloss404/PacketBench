@@ -29,6 +29,9 @@ use crate::core::tool_tasks::SessionTasks;
 
 pub mod runner;
 
+#[cfg(test)]
+pub mod testing;
+
 /// Where durable/progress events go. The Tauri adapter emits `api-agent:*`;
 /// the headless evaluation lane records them instead.
 pub trait EventSink: Send + Sync {

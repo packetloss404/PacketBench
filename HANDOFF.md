@@ -68,9 +68,8 @@ R2 (same-runner extraction) plus H2/H4 integration remain. R2a added the
 `core/agent_runtime/` host-boundary seam (EventSink + recording double,
 RunRequest/RunOutcome); R2b then extracted the loop into
 `runner.rs::run_turn<R: RuntimeServices>` with a Tauri adapter, behavior-preserving
-(`cargo test --lib` 1136/0) and independently reviewed; R2c (fake-provider
-parity) and R3+ remain.
-V1/V2 followed: shared type tokens raised to comfortable sizes
+(`cargo test --lib` 1136/0) and independently reviewed; R2c added headless
+fake-provider parity tests (1142/0). R3+ remain.V1/V2 followed: shared type tokens raised to comfortable sizes
 (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
 muted/faint text now clears 4.5:1 on every surface in both themes, gated by a
 token contrast test. The V3–V8 appearance and F6/F7 continuity tranche then

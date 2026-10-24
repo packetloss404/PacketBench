@@ -134,6 +134,14 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       usage/hooks, error-return set all unchanged). Decisions recorded in
       `dev/agent-experience/06-r2b-decisions-and-plan.md`. R2c (fake-provider
       parity tests) and R3+ remain.
+- [x] **P1 — Fake-provider parity tests (R2c).** `#[cfg(test)]` fakes
+      (`ScriptedProvider` implementing the real `LlmProvider` contract +
+      `FakeServices`) drive `run_turn` headlessly; 6 tests cover text streaming,
+      auto-allowed tool call, denied permission (proves non-execution), cancel,
+      `StreamChunk::Error` → `Failed`, and raw transport `Err`. `cargo test --lib`
+      1142/0; independent review found no blockers. Gaps (not blockers):
+      edit-approval, PreToolUse veto, MCP/plan-mode paths, and history
+      `tool_use`↔`tool_result` pairing assertions.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript
