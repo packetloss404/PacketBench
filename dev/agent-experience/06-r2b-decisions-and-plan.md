@@ -180,3 +180,18 @@ R3 (H2 typed checkpoints/restart) splits into R3a and R3b.
 **R3b (integration):** runner/api_agent.rs restart + resume wiring and crash-injection tests around every section-4 boundary.
 
 **Leases:** coordinator owns the journal schema/migration and generated artifacts; runtime implementer owns core/runtime_checkpoint.rs (R3a) and runner.rs + the api_agent.rs window (R3b).
+
+## R4 addendum (autonomous, 2026-10-23)
+
+R4 (H5 capabilities + H6 manifest identity) splits into R4a (core modules + journal table) and R4b (commands + DTOs + tauri.ts/schema + frontend).
+
+**Decisions:**
+
+1. Capability provenance: a tri-state CapabilityKnowledge<T> = supported | unsupported | unknown, each with provenance (live_catalog | static | unknown). Unknown is NEVER treated as supported: when a run requires a behavior (e.g. image input) and capability is unsupported or unknown, fail before dispatch with a named error (no silent drop). Live catalogs (provider_models.rs LiveModel) are the first source; a small static table is second; otherwise unknown.
+2. Manifest identity: a versioned, immutable run manifest (harness/tool-policy hashes, endpoint+model, repository revision, context version, parent/child request ids) stored in the journal by id+hash, resolvable after settings edits (a record, not a live-settings pointer).
+
+**R4a (safe slice):** core/runtime_capabilities.rs + core/runtime_manifest.rs + a manifests/capability_snapshots journal table (v2->v3, additive, fail-closed), with tests (tri-state round-trip, unknown-blocks-image, manifest hash stable across settings edits, corrupt/newer preserved). No DTO/command/frontend.
+
+**R4b (integration):** commands + api/mod.rs DTOs + generated schema + tauri.ts wrappers; wire capability checks before dispatch.
+
+**Leases:** coordinator owns api/mod.rs/lib.rs/schema/tauri.ts; runtime implementer owns core/runtime_capabilities.rs, core/runtime_manifest.rs, the journal schema extension, and the runner/api_agent wiring window (R4b).
