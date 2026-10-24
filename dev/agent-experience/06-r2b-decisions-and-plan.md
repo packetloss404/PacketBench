@@ -163,3 +163,20 @@ material findings → commit + push. No two writers on a shared file at once.
 5. **Sequencing** — confirm R2b lands and is reviewed **alone** before R3 starts.
 
 Approve these (or amend) and R2b begins.
+
+## R3 addendum (approved 2026-10-23)
+
+R3 (H2 typed checkpoints/restart) splits into R3a and R3b.
+
+**Decisions (recommended, approved):**
+
+1. Retention/redaction: checkpoints are private journal payloads, retained latest 10 per run (older pruned); spec payload limits (4 MiB single blob, 256 MiB per run, 2 GiB total); never persist raw secrets/keys; provider replay envelopes stored opaque but classified; export/delete redact by default.
+2. Retry mapping: user Retry stays regenerate and creates a NEW linked run via previousRunId; the journal retryOfOperationId is reserved for a proven pre-dispatch failure.
+3. Checkpoint scope: typed history (tool_use/tool_result pairing + opaque provider reasoning) plus schema/transport/model/policy hashes; incompatible state is rejected or explicitly continued as a fresh (semantic) run; a crash after a mutation without a durable receipt yields needs_reconciliation, never blind replay.
+4. Restart continues the same runId at epoch+1 via CAS; resume does not start the provider.
+
+**R3a (safe slice):** journal checkpoint tables + core/runtime_checkpoint.rs with typed checkpoint encode/decode, compatibility validation and retention/pruning, plus tests (corrupt/newer preserved, retention bounds, redaction). No runner integration.
+
+**R3b (integration):** runner/api_agent.rs restart + resume wiring and crash-injection tests around every section-4 boundary.
+
+**Leases:** coordinator owns the journal schema/migration and generated artifacts; runtime implementer owns core/runtime_checkpoint.rs (R3a) and runner.rs + the api_agent.rs window (R3b).
