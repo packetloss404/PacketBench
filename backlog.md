@@ -142,6 +142,18 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       1142/0; independent review found no blockers. Gaps (not blockers):
       edit-approval, PreToolUse veto, MCP/plan-mode paths, and history
       `tool_use`↔`tool_result` pairing assertions.
+- [x] **P1 — Checkpoint schema and module (R3a).** Journal migrates v1→v2
+      additively (fail-closed on a newer/corrupt file); new
+      `core/runtime_checkpoint.rs` encodes/decodes typed history (tool_use↔
+      tool_result pairing + opaque provider reasoning), validates
+      schema/transport/model/policy compatibility, prunes to the latest 10 per
+      run, refuses secret-looking payloads (token-aware, not substring), and
+      returns named errors for blob/run/total budget violations. `cargo test
+      --lib` 1156/0; independent review found no blockers (fixed a latent
+      redaction false-positive and a byte-vs-char budget bug it found). **R3b
+      must**: validate schema on load, guard pruning against active runs /
+      `pending_effect_ids`, order retention by `(epoch, seq)`, and wire
+      runner/restart with crash-injection tests.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

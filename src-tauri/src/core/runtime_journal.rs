@@ -18,8 +18,17 @@ use uuid::Uuid;
 use super::runtime_types::{
     validate_id, validate_sha256_digest, FrozenRuntimeLaunch, PrepareRuntimeRunInput,
     PrepareRuntimeRunResult, RuntimeEventView, RuntimeLaunchView, RuntimeRunSummary,
-    MAX_EVENTS_PAGE, RUNTIME_SCHEMA_VERSION,
+    MAX_EVENTS_PAGE,
 };
+
+/// On-disk journal schema version, tracked by `PRAGMA user_version`.
+///
+/// R3a (H2 typed checkpoints) bumps this from 1 to 2 to add the `checkpoints`
+/// table. This is the JOURNAL migration target; it is deliberately separate from
+/// `runtime_types::RUNTIME_SCHEMA_VERSION`, which is the `RuntimeRunSummary`
+/// wire version (still 1). A file written by a newer build is refused, never
+/// downgraded.
+pub const JOURNAL_SCHEMA_VERSION: i64 = 2;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -96,16 +105,16 @@ pub fn open_at(path: &Path) -> Result<Connection, String> {
 /// is refused (never downgraded); a corrupt/truncated file surfaces the SQLite
 /// error instead of panicking.
 pub fn migrate(connection: &Connection) -> Result<(), String> {
-    let version: i64 = connection
+    let mut version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| format!("Runtime journal is unreadable: {e}"))?;
 
-    if version > RUNTIME_SCHEMA_VERSION {
+    if version > JOURNAL_SCHEMA_VERSION {
         return Err(format!(
-            "Runtime journal schema v{version} is newer than this build supports (v{RUNTIME_SCHEMA_VERSION}). Update PacketBench."
+            "Runtime journal schema v{version} is newer than this build supports (v{JOURNAL_SCHEMA_VERSION}). Update PacketBench."
         ));
     }
-    if version == 0 {
+    if version < 1 {
         connection
             .execute_batch(
                 "BEGIN;\n\
@@ -155,6 +164,35 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|e| format!("Failed to initialize runtime journal schema: {e}"))?;
+        version = 1;
+    }
+    if version < 2 {
+        connection
+            .execute_batch(
+                "BEGIN;\n\
+                 CREATE TABLE checkpoints (\n\
+                   checkpoint_id TEXT PRIMARY KEY,\n\
+                   run_id TEXT NOT NULL,\n\
+                   epoch INTEGER NOT NULL,\n\
+                   seq INTEGER NOT NULL,\n\
+                   schema_version INTEGER NOT NULL,\n\
+                   transport_version INTEGER NOT NULL,\n\
+                   model_route TEXT NOT NULL,\n\
+                   manifest_hash TEXT NOT NULL,\n\
+                   tool_policy_hash TEXT NOT NULL,\n\
+                   mcp_hash TEXT NOT NULL,\n\
+                   payload TEXT NOT NULL,\n\
+                   pending_effect_ids TEXT NOT NULL,\n\
+                   payload_hash TEXT NOT NULL,\n\
+                   classification TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL,\n\
+                   FOREIGN KEY (run_id) REFERENCES runs(run_id)\n\
+                 );\n\
+                 CREATE INDEX idx_checkpoints_run_seq ON checkpoints(run_id, seq);\n\
+                 PRAGMA user_version = 2;\n\
+                 COMMIT;",
+            )
+            .map_err(|e| format!("Failed to migrate runtime journal to v2: {e}"))?;
     }
     Ok(())
 }
@@ -401,7 +439,7 @@ pub fn get_run(connection: &Connection, run_id: &str) -> Result<RuntimeRunSummar
             params![run_id],
             |row| {
                 Ok(RuntimeRunSummary {
-                    version: RUNTIME_SCHEMA_VERSION,
+                    version: super::runtime_types::RUNTIME_SCHEMA_VERSION,
                     runtime_run_id: row.get(0)?,
                     conversation_id: row.get(1)?,
                     operation_id: row.get(2)?,
@@ -594,6 +632,77 @@ mod tests {
         drop(connection);
         let err = open_at(&path).unwrap_err();
         assert!(err.contains("newer than this build supports"));
+    }
+
+    #[test]
+    fn fresh_journal_is_at_v2_with_checkpoints_table() {
+        let connection = open_at(&temp_db()).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, JOURNAL_SCHEMA_VERSION);
+        let tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'checkpoints'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 1);
+    }
+
+    #[test]
+    fn v1_journal_migrates_to_v2_additively() {
+        let connection = open_at(&temp_db()).unwrap();
+        // Seed a v1 row so the additive migration's "no data touched" claim is
+        // actually asserted (not just the table's existence).
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, conversation_id, operation_id, root_run_id, epoch, state, latest_seq) \
+                 VALUES ('run-1', 'conv-1', 'op-1', 'run-1', 0, 'prepared', 0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO launch_operations (operation_id, conversation_id, kind, request_digest, frozen_input, run_id, phase, created_at) \
+                 VALUES ('op-1', 'conv-1', 'initial', ?1, '{}', 'run-1', 'prepared', 1)",
+                params![digest(1)],
+            )
+            .unwrap();
+        // Simulate a file written by the v1 build.
+        connection
+            .execute_batch("DROP TABLE checkpoints; PRAGMA user_version = 1;")
+            .unwrap();
+        migrate(&connection).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'checkpoints'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 1);
+        // The seeded v1 row survives the additive migration.
+        let surviving: i64 = connection
+            .query_row("SELECT COUNT(*) FROM launch_operations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(surviving, 1);
+        // The v1 tables survive the additive migration.
+        let runs: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'runs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(runs, 1);
     }
 
     #[test]

@@ -56,6 +56,8 @@ pub(crate) mod pty_output;
 pub mod reprice;
 // R1a: backend runtime journal substrate (launch identity/idempotency).
 pub mod runtime_journal;
+// R3a: typed checkpoints (H2) — validated, hash-addressed conversation history.
+pub mod runtime_checkpoint;
 pub mod runtime_types;
 pub mod shared;
 pub mod shell_path;
