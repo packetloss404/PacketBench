@@ -195,3 +195,33 @@ R4 (H5 capabilities + H6 manifest identity) splits into R4a (core modules + jour
 **R4b (integration):** commands + api/mod.rs DTOs + generated schema + tauri.ts wrappers; wire capability checks before dispatch.
 
 **Leases:** coordinator owns api/mod.rs/lib.rs/schema/tauri.ts; runtime implementer owns core/runtime_capabilities.rs, core/runtime_manifest.rs, the journal schema extension, and the runner/api_agent wiring window (R4b).
+
+## R4b / R5 / R6 addendum (autonomous, 2026-10-23)
+
+Grounded in a source review.
+
+**R4b decisions:**
+
+1. Capability DTO: add a concrete, non-generic `RuntimeCapabilityView` in `api/mod.rs` (built from a CapabilitySnapshot), not a ts-rs emit of the generic/tagged Rust enums.
+2. Provenance: emit R4a's vocabulary (live_catalog | static | unknown); the spec's aspirational set is noted, not adopted.
+3. Named providers (sugar/cline-pass/opencode-go/ollama-cloud/google/xai) stay `unknown` for v1 (fail-closed) until per-provider facts exist; document the behavior change.
+4. No Rust live-catalog fetch in R4b (vision comes from the static table); live catalog is an R6 concern.
+5. Reasoning capability is NOT enforced in v1 (only the image guard), to avoid breaking thinking-enabled runs.
+6. One shared image-guard helper in `runtime_capabilities`, called by BOTH the native runner (before `ensure_usage_healthy`/provider) and the sidecar branch in `api_agent.rs`; refusal happens before any spend.
+7. `get_runtime_capabilities` is compute-only and works with the journal off; `get_runtime_context_summary` is deferred to R6 (do not freeze its DTO now).
+
+**R5 decisions:**
+
+1. Admission policy source: the frontend stays the policy owner; the per-turn limits are passed to the backend as data (in the launch/send request), so backend admission needs no store migration.
+2. The journal is authoritative for admission/liability; `usage.jsonl` stays the canonical raw ledger.
+3. Two-phase bridge journal -> release -> ledger append -> journal settle; never nest the two locks.
+4. Ceil-reserve / nearest-settle `UsdMicros`; overage becomes a labelled residual, never silently reopened.
+5. Unpriced routes are strictly rejected in v1 (no fake zero).
+6. First slice is single-scope, native path only, behind the journal flag; SDK soft-turn is excluded (no per-request claim).
+
+**R6 decisions:**
+
+1. Context accounting is backend-native over the durable `HistoryStore`, reusing existing memory/aux retrieval only for optional material (no general memory redesign).
+2. No tokenizer in-repo: use a conservative estimator and label `countKind: estimate`; no strict guaranteed-fit mode.
+3. Overflow blocks before spend (`blocked_context`) at the same seam as the R4b guard.
+4. R6 depends on R3-R5; implement after R5.
