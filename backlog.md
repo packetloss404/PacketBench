@@ -254,6 +254,22 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       rows never block on overflow yet), optional-material omission/retrieval
       (v1 blocks instead of trimming; `omitted` is empty), the
       `get_runtime_context_summary(runId)` read command, and semantic compaction.
+- [x] **P1 — Explicit subagent role resolver + child parity (R7).** New
+      `core/subagent_role.rs` unifies `spawn_subagent` and custom agents on one
+      resolver: an explicit `RouteSource` (`InheritedParent` vs `ExplicitOverride`),
+      a validated `model` override (the previously-ignored field now works; blank
+      inherits; structurally invalid is rejected before any spend), a structured
+      `SubagentResult` (`Completed`/`Incomplete`/`Blocked`/`Failed` — only
+      `Completed` is a non-error tool call), and per-role `max_requests`/
+      `max_output_tokens`. Child model requests reserve/settle against the parent's
+      root budget scope via a `ChildBudgetHook` on `ParentLlm` (inherited by nested
+      children), reusing the runner's admission path and gated on journal+budget.
+      Read-only/denied-tool floors, recursion depth and single-counted child usage
+      are preserved. 1264/0; full gates green; review findings (non-Completed
+      outcomes were wrongly `Ok`, blank-override asymmetry, decorative fields,
+      duplicated cost derivation) all fixed. **Known gap:** the child loop has no
+      cancellation token (a Stop during a child tool round is not honored) —
+      pre-existing, follow-up.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

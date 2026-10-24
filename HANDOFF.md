@@ -82,21 +82,23 @@ budget admission substrate (journal v4 + `core/runtime_budget.rs`, 1214/0) and
 R5b wired per-request admission into the native runner plus the `usage.jsonl`
 request_id bridge, gated on a configured budget (1228/0, full gates green). R6
 added context projection + `blocked_context` overflow blocking (journal v5 +
-`core/runtime_context.rs`, 1244/0). R7+ remain.
-V1/V2 followed: shared type tokens raised to comfortable sizes
-(UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
-muted/faint text now clears 4.5:1 on every surface in both themes, gated by a
-token contrast test. The V3–V8 appearance and F6/F7 continuity tranche then
-landed: App scale/reading/terminal size with one resolver and one root writer,
-theme-aware code, 32/36px targets, accessible names/focus, a resizable sidebar,
-narrow execution-context disclosure, exact attention routing, and matching-turn
-search with reader-position restoration. V3 App scale/terminal size and all
-native evidence remain open. Flight-owned mutation
-gating, old message-link resolution, submission/checkpoint pins,
-scheduled GC/capacity, H2 typed-image replay, native restart evidence and the
-F4 phase surface remain open. Focused Vitest, Rust unit tests, TypeScript and
-ESLint pass. No build or installation was run and native Windows acceptance
-(including real IME confirmation and paste/drop restart) remains open.
+`core/runtime_context.rs`, 1244/0). R7 added the explicit subagent role resolver
+
+- child budget parity (1264/0). R8 (offline runtime-eval harness) remains.
+  V1/V2 followed: shared type tokens raised to comfortable sizes
+  (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
+  muted/faint text now clears 4.5:1 on every surface in both themes, gated by a
+  token contrast test. The V3–V8 appearance and F6/F7 continuity tranche then
+  landed: App scale/reading/terminal size with one resolver and one root writer,
+  theme-aware code, 32/36px targets, accessible names/focus, a resizable sidebar,
+  narrow execution-context disclosure, exact attention routing, and matching-turn
+  search with reader-position restoration. V3 App scale/terminal size and all
+  native evidence remain open. Flight-owned mutation
+  gating, old message-link resolution, submission/checkpoint pins,
+  scheduled GC/capacity, H2 typed-image replay, native restart evidence and the
+  F4 phase surface remain open. Focused Vitest, Rust unit tests, TypeScript and
+  ESLint pass. No build or installation was run and native Windows acceptance
+  (including real IME confirmation and paste/drop restart) remains open.
 
 ## Later agent and experience review — October 19, 2026
 

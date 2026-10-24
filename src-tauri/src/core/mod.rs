@@ -71,6 +71,9 @@ pub mod shared;
 pub mod shell_path;
 pub mod ssh_askpass;
 pub mod storage;
+// R7 (H7): the single explicit child-role resolver shared by spawn_subagent and
+// the custom `agent_*` tools.
+pub mod subagent_role;
 pub mod tool_custom_agent;
 pub mod tool_github;
 pub mod tool_pull_request;

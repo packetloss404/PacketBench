@@ -244,3 +244,12 @@ Native path only, gated on the runtime journal.
 2. **Counts include** system text, tool schemas, images, opaque provider-reasoning envelopes and per-message serialization overhead. Overflow blocks before spend at the same seam as the R4b guard and records the snapshot (`blocked_context`).
 3. **Deferred:** optional-material omission/retrieval (v1 blocks rather than trims; `omitted` stays empty), live-catalog context windows (static table only knows `anthropic`, so other rows resolve the window as unknown and never block), the `get_runtime_context_summary(runId)` read command, and versioned semantic compaction.
 4. **Attachment counting is non-destructive** (`pending_attachment_count`), so a refusal never consumes a queued image.
+
+## R7 addendum (autonomous, 2026-10-23)
+
+Native path; gated on the journal + a configured budget for child reservation.
+
+1. **Override:** `spawn_subagent`'s `model` is a validated override (`ExplicitOverride`); a blank value inherits (`InheritedParent`); a structurally invalid value is refused before any spend. Validation is structural only — the provider route is confirmed by `get_provider`/the key load.
+2. **Structured outcome:** only `Completed` is a non-error tool call; `Incomplete`/`Blocked`/`Failed` return as errors so the parent sees a failure (preserves pre-R7 `is_error` semantics).
+3. **Child budget:** child model requests reserve/settle under the parent's root scope via a `ChildBudgetHook` on `ParentLlm` (inherited by nested children), reusing the runner's admission path. Journal-off is byte-identical; journal-on/no-budget adds one read and no reservation.
+4. **Known gap:** no cancellation token in the child loop (pre-existing); deferred.

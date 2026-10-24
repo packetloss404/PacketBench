@@ -2254,17 +2254,7 @@ fn child_usage_entry(
     session_id: &str,
     usage: crate::core::tool_subagent::ChildUsage,
 ) -> crate::commands::usage::UsageEntry {
-    let cost = crate::commands::pricing::calculate_cost(
-        &usage.model,
-        crate::commands::pricing::billable_input_tokens(
-            &usage.model,
-            usage.input_tokens,
-            usage.cache_read,
-        ),
-        usage.output_tokens,
-        usage.cache_read,
-        usage.cache_write,
-    );
+    let cost = crate::core::tool_subagent::child_usage_cost_usd(&usage);
     crate::commands::usage::UsageEntry {
         ts: crate::commands::usage::current_timestamp_iso(),
         source: provider_to_source(&usage.provider).to_string(),

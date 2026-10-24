@@ -12,11 +12,12 @@ use crate::core::llm_types::{
     ChatMessage, ChatRole, ContentBlock, LlmRequest, MessageContent, StreamChunk, ToolCall,
     ToolDefinition,
 };
+use crate::core::subagent_role::{
+    resolve_subagent_role, SubagentResult, SubagentStatus, SUBAGENT_MAX_OUTPUT_TOKENS,
+};
 use crate::core::tool_runtime;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
-const MAX_ITERATIONS: usize = 8;
 
 /// Tools a sub-agent may never hold, whatever its definition asks for. The
 /// sub-agent loop below has no permission prompt, no plan-mode block, and no
@@ -51,6 +52,34 @@ pub struct ParentLlm {
     pub native_mcp_session: Arc<crate::core::mcp_session::NativeMcpSession>,
     pub tasks: Arc<crate::core::tool_tasks::SessionTasks>,
     pub record_usage: Arc<dyn Fn(ChildUsage) -> Result<(), String> + Send + Sync>,
+    /// R7: reserves/settles each child model request under the parent session's
+    /// root budget scope. `None` is the disabled path (journal off, or a host
+    /// that never sets a budget): no reservation is made and behavior is
+    /// unchanged.
+    pub child_budget: Option<Arc<dyn ChildBudgetHook>>,
+}
+
+/// R7 child-request budget seam. Mirrors the runner's per-request admission
+/// (`RuntimeServices::admit_request`/`settle_request`/`release_request`) so a
+/// child reserves against the SAME root scope as its parent. Implemented by the
+/// Tauri host; a fake serves the tests.
+#[async_trait::async_trait]
+pub trait ChildBudgetHook: Send + Sync {
+    /// Reserve for one child request. `Ok(true)` means a durable reservation
+    /// now exists and MUST be settled or released; `Ok(false)` means no
+    /// reservation was made (journal off / no budget).
+    async fn reserve(
+        &self,
+        request_id: &str,
+        provider: &str,
+        model: &str,
+        messages: &[ChatMessage],
+        max_tokens: u64,
+    ) -> Result<bool, String>;
+    /// Settle a reservation with the exact actual cost.
+    async fn settle(&self, request_id: &str, actual_usd_micros: i64) -> Result<(), String>;
+    /// Release a reservation that will not be settled.
+    async fn release(&self, request_id: &str) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,23 +102,9 @@ pub(crate) fn current_parent_llm() -> Option<ParentLlm> {
     PARENT_LLM.try_with(|parent| parent.clone()).ok()
 }
 
-/// Provider + cheap-tier model for a sub-agent turn: the parent session's
-/// provider when known (fixes the MiniMax-only-user defect), else the
-/// historical Anthropic default.
-pub(crate) fn subagent_provider_and_model() -> (String, String) {
-    match current_parent_llm() {
-        Some(parent) => {
-            let model = crate::core::aux_llm::cheap_tier_model(&parent.provider, &parent.model);
-            (parent.provider, model)
-        }
-        None => ("anthropic".to_string(), "claude-haiku-4-5".to_string()),
-    }
-}
-
 const SUBAGENT_SYSTEM_PROMPT: &str = "You are a focused research sub-agent. Use the read-only tools to investigate the task. After 1-3 tool calls, return a concise one-paragraph summary. Do not produce code or recommendations beyond the summary.";
 
 /// Tool definition advertised to the parent agent.
-#[allow(dead_code)]
 pub fn spawn_subagent_definition() -> ToolDefinition {
     ToolDefinition {
         name: "spawn_subagent".to_string(),
@@ -103,7 +118,7 @@ pub fn spawn_subagent_definition() -> ToolDefinition {
                 },
                 "model": {
                     "type": "string",
-                    "description": "Optional model override (currently ignored — sub-agent always uses a fast default)."
+                    "description": "Optional model override for the sub-agent, validated before dispatch. Omit to inherit the parent session's provider at its fast default."
                 }
             },
             "required": ["task"]
@@ -128,7 +143,7 @@ pub(crate) async fn collect_response(
     mut rx: mpsc::Receiver<StreamChunk>,
     provider: &str,
     model: &str,
-) -> Result<(String, Vec<ToolCall>, Option<serde_json::Value>), String> {
+) -> Result<(String, Vec<ToolCall>, Option<serde_json::Value>, ChildUsage), String> {
     let mut text = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut provider_reasoning = None;
@@ -157,15 +172,16 @@ pub(crate) async fn collect_response(
             } => {
                 let parent = current_parent_llm()
                     .ok_or("Sub-agent usage requires an active conversation")?;
-                (parent.record_usage)(ChildUsage {
+                let usage = ChildUsage {
                     provider: provider.to_string(),
                     model: model.to_string(),
                     input_tokens,
                     output_tokens,
                     cache_read: cache_read_input_tokens,
                     cache_write: cache_creation_input_tokens,
-                })?;
-                return Ok((text, tool_calls, provider_reasoning));
+                };
+                (parent.record_usage)(usage.clone())?;
+                return Ok((text, tool_calls, provider_reasoning, usage));
             }
             _ => {}
         }
@@ -174,12 +190,51 @@ pub(crate) async fn collect_response(
     Err("Sub-agent stream ended without a completion record".to_string())
 }
 
+/// The USD cost of one child request. The SINGLE place the child's cost is
+/// derived: the usage ledger (`commands::api_agent::child_usage_entry`) and the
+/// budget settle both call this, so they cannot drift.
+pub(crate) fn child_usage_cost_usd(usage: &ChildUsage) -> f64 {
+    crate::commands::pricing::calculate_cost(
+        &usage.model,
+        crate::commands::pricing::billable_input_tokens(
+            &usage.model,
+            usage.input_tokens,
+            usage.cache_read,
+        ),
+        usage.output_tokens,
+        usage.cache_read,
+        usage.cache_write,
+    )
+}
+
+/// The exact actual micro-dollars for a child request.
+fn child_actual_usd_micros(usage: &ChildUsage) -> i64 {
+    (child_usage_cost_usd(usage) * 1_000_000.0).round() as i64
+}
+
+/// Fold one request's usage into a running child total.
+fn merge_usage(total: &mut Option<ChildUsage>, next: ChildUsage) {
+    match total {
+        Some(total) => {
+            total.input_tokens += next.input_tokens;
+            total.output_tokens += next.output_tokens;
+            total.cache_read += next.cache_read;
+            total.cache_write += next.cache_write;
+        }
+        None => *total = Some(next),
+    }
+}
+
 /// Shared agentic tool loop for the sub-agent tools (`spawn_subagent` and
 /// custom `agent_*` tools). Runs up to `MAX_ITERATIONS` request→tool-dispatch
 /// rounds against `provider`, recursing into `tool_runtime::execute_tool` for
-/// each tool call (the recursion is boxed at `execute_tool`'s dispatch site),
-/// and returns the final assistant text. `empty_error` is returned when the
-/// loop finishes without producing any text.
+/// each tool call (the recursion is boxed at `execute_tool`'s dispatch site).
+///
+/// Returns a structured [`SubagentResult`] so the caller can tell a completed
+/// child from one that hit the round limit ([`SubagentStatus::Incomplete`]) or
+/// was refused admission ([`SubagentStatus::Blocked`]). Hard failures that are
+/// not a child outcome (recursion depth, missing parent, provider/stream error)
+/// stay `Err`. `empty_error` is returned when the loop finishes without text.
 ///
 /// Task-local depth bounds nested chains without limiting unrelated sessions.
 #[allow(clippy::too_many_arguments)]
@@ -190,10 +245,11 @@ pub(crate) async fn run_agent_loop(
     system_prompt: String,
     tools: Vec<ToolDefinition>,
     max_tokens: u32,
+    max_requests: u32,
     task: String,
     parent_target: &ExecutionTarget,
     empty_error: &str,
-) -> Result<String, String> {
+) -> Result<SubagentResult, String> {
     let depth = SUBAGENT_DEPTH.try_with(|depth| *depth).unwrap_or(0);
     if depth >= MAX_SUBAGENT_DEPTH {
         return Err(format!(
@@ -216,6 +272,7 @@ pub(crate) async fn run_agent_loop(
                     system_prompt,
                     tools,
                     max_tokens,
+                    max_requests,
                     task,
                     parent_target,
                     empty_error,
@@ -223,6 +280,20 @@ pub(crate) async fn run_agent_loop(
             ),
         )
         .await
+}
+
+/// Best-effort release of a child reservation that will not be settled. Errors
+/// are logged, never allowed to mask the original failure.
+async fn release_child_reservation(parent: &ParentLlm, request_id: &str) {
+    if let Some(hook) = parent.child_budget.as_ref() {
+        if let Err(error) = hook.release(request_id).await {
+            tracing::warn!(
+                request_id = %request_id,
+                error = %error,
+                "Failed to release a child budget reservation"
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -233,21 +304,24 @@ async fn run_agent_loop_inner(
     system_prompt: String,
     tools: Vec<ToolDefinition>,
     max_tokens: u32,
+    max_requests: u32,
     task: String,
     parent_target: &ExecutionTarget,
     empty_error: &str,
-) -> Result<String, String> {
+) -> Result<SubagentResult, String> {
     let parent = current_parent_llm().ok_or("Sub-agent requires an active conversation")?;
+    let child_run_id = uuid::Uuid::new_v4().to_string();
     let mut messages: Vec<ChatMessage> = vec![ChatMessage {
         role: ChatRole::User,
         content: MessageContent::text(task),
     }];
 
     let mut final_text = String::new();
+    let mut total_usage: Option<ChildUsage> = None;
     // A child owns a separate conversation, stable across its tool rounds.
     let cache_key = uuid::Uuid::new_v4().to_string();
 
-    for _ in 0..MAX_ITERATIONS {
+    for iteration in 0..max_requests {
         crate::commands::usage::ensure_usage_accounting_healthy()?;
         let request = LlmRequest {
             model: model.clone(),
@@ -262,13 +336,60 @@ async fn run_agent_loop_inner(
             cache_key: Some(cache_key.clone()),
         };
 
+        // R7: reserve against the parent's root scope BEFORE dispatch, exactly
+        // as the runner does for its own requests. `None`/`Ok(false)` is the
+        // disabled path and leaves this loop byte-identical.
+        let request_id = format!("{child_run_id}:{iteration}:{}", uuid::Uuid::new_v4());
+        let mut pending_reservation = false;
+        if let Some(hook) = parent.child_budget.as_ref() {
+            match hook
+                .reserve(
+                    &request_id,
+                    &parent.provider,
+                    &model,
+                    &messages,
+                    max_tokens as u64,
+                )
+                .await
+            {
+                Ok(reserved) => pending_reservation = reserved,
+                Err(reason) => {
+                    return Ok(SubagentResult {
+                        child_run_id,
+                        status: SubagentStatus::Blocked,
+                        summary: reason.clone(),
+                        incomplete_reason: Some(reason),
+                        usage: total_usage,
+                    });
+                }
+            }
+        }
+
         let (tx, rx) = mpsc::channel::<StreamChunk>(64);
         let stream_fut = provider.stream_chat(api_key, request, tx);
         let collect_fut = collect_response(rx, &parent.provider, &model);
 
         let (stream_res, collected) = tokio::join!(stream_fut, collect_fut);
+        let (assistant_text, tool_calls, provider_reasoning, usage) = match collected {
+            Ok(collected) => collected,
+            Err(error) => {
+                if pending_reservation {
+                    release_child_reservation(&parent, &request_id).await;
+                }
+                return Err(error);
+            }
+        };
+        // The usage row is durable (recorded in `collect_response`); settle the
+        // reservation with the exact actual. The actual is NOT recorded again,
+        // so root/child usage is never double-counted.
+        if pending_reservation {
+            if let Some(hook) = parent.child_budget.as_ref() {
+                hook.settle(&request_id, child_actual_usd_micros(&usage))
+                    .await?;
+            }
+        }
+        merge_usage(&mut total_usage, usage);
         stream_res?;
-        let (assistant_text, tool_calls, provider_reasoning) = collected?;
 
         // Build the assistant turn (text + tool_use blocks) for history.
         let mut blocks: Vec<ContentBlock> = Vec::new();
@@ -293,7 +414,13 @@ async fn run_agent_loop_inner(
             return if assistant_text.trim().is_empty() {
                 Err(empty_error.to_string())
             } else {
-                Ok(assistant_text)
+                Ok(SubagentResult {
+                    child_run_id,
+                    status: SubagentStatus::Completed,
+                    summary: assistant_text,
+                    incomplete_reason: None,
+                    usage: total_usage,
+                })
             };
         }
 
@@ -366,7 +493,39 @@ async fn run_agent_loop_inner(
         }
     }
 
-    Err(format!("Sub-agent incomplete: reached the {MAX_ITERATIONS}-round limit without a final answer. Partial progress: {final_text}"))
+    Ok(SubagentResult {
+        child_run_id,
+        status: SubagentStatus::Incomplete,
+        summary: final_text,
+        incomplete_reason: Some(format!(
+            "reached the {max_requests}-round limit without a final answer"
+        )),
+        usage: total_usage,
+    })
+}
+
+/// Map a child outcome to the tool boundary: only a `Completed` child is a
+/// successful tool call (`Ok`). Every other status is an `Err` so the model and
+/// the UI see `is_error: true`, matching pre-R7 where an incomplete sub-agent
+/// was an error. The structured status text is preserved in the message.
+pub(crate) fn result_to_tool_output(result: SubagentResult) -> Result<String, String> {
+    match result.status {
+        SubagentStatus::Completed => Ok(result.to_tool_content()),
+        SubagentStatus::Incomplete | SubagentStatus::Blocked | SubagentStatus::Failed => {
+            Err(result.to_tool_content())
+        }
+    }
+}
+
+/// The `model` argument as an override, or `None` for an absent OR blank value.
+/// A blank argument is "inherit the parent route", exactly like a blank
+/// custom-agent frontmatter model; only a non-blank structurally invalid value
+/// is rejected downstream.
+fn model_override_argument(args: &serde_json::Value) -> Option<&str> {
+    args.get("model")
+        .and_then(|model| model.as_str())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
 }
 
 /// Shared recursion-depth guard for sub-agent tools (spawn_subagent +
@@ -376,7 +535,6 @@ async fn run_agent_loop_inner(
 pub(crate) const MAX_SUBAGENT_DEPTH: usize = 3;
 
 /// Tool entry-point invoked from `tool_runtime::execute_tool`.
-#[allow(dead_code)]
 pub async fn execute_spawn_subagent(
     args: &serde_json::Value,
     parent_target: &ExecutionTarget,
@@ -387,32 +545,70 @@ pub async fn execute_spawn_subagent(
         .ok_or("Missing 'task' parameter")?
         .to_string();
 
-    // Q2: run on the PARENT session's provider at its cheap tier — never on
-    // a hardcoded vendor the user may have no key for.
-    let (provider_id, model) = subagent_provider_and_model();
-    let api_key = crate::commands::api_keys::load_api_key(&provider_id)
-        .map_err(|e| format!("spawn_subagent requires a {} API key: {}", provider_id, e))?;
-
-    let provider = get_provider(&provider_id)?;
+    // Q2: run on the PARENT session's provider at its cheap tier (or the
+    // validated override) — never on a hardcoded vendor the user may have no
+    // key for. Resolve BEFORE the key/provider so an invalid override is
+    // refused with no credential access and no spend. A blank argument inherits.
+    let parent = current_parent_llm().ok_or("Sub-agent requires an active conversation")?;
     let tools = read_only_tool_definitions()?;
+    let allowed_tools = tools.iter().map(|tool| tool.name.clone()).collect();
+    let role = match resolve_subagent_role(
+        model_override_argument(args),
+        &parent.provider,
+        &parent.model,
+        "spawn_subagent",
+        allowed_tools,
+        SUBAGENT_MAX_OUTPUT_TOKENS,
+    ) {
+        Ok(role) => role,
+        Err(error) => return Err(SubagentResult::failed(error.to_string()).to_tool_content()),
+    };
+    tracing::info!(
+        role_id = %role.role_id,
+        role_revision = role.role_revision,
+        route_source = ?role.route_source,
+        provider = %role.provider,
+        model = %role.model,
+        max_requests = role.max_requests,
+        max_output_tokens = role.max_output_tokens,
+        context_policy = %role.context_policy,
+        allowed_tools = ?role.allowed_tools,
+        "subagent role resolved"
+    );
 
-    run_agent_loop(
+    let api_key = crate::commands::api_keys::load_api_key(&role.provider)
+        .map_err(|e| format!("spawn_subagent requires a {} API key: {}", role.provider, e))?;
+    let provider = get_provider(&role.provider)?;
+
+    let result = run_agent_loop(
         &*provider,
         &api_key,
-        model,
+        role.model,
         SUBAGENT_SYSTEM_PROMPT.to_string(),
         tools,
-        2048,
+        role.max_output_tokens,
+        role.max_requests,
         task,
         parent_target,
         "Sub-agent finished without producing a summary",
     )
-    .await
+    .await?;
+    tracing::info!(
+        child_run_id = %result.child_run_id,
+        status = ?result.status,
+        input_tokens = result.usage.as_ref().map(|usage| usage.input_tokens).unwrap_or(0),
+        output_tokens = result.usage.as_ref().map(|usage| usage.output_tokens).unwrap_or(0),
+        "subagent finished"
+    );
+    result_to_tool_output(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The role's request ceiling, derived so this cannot drift from the spec.
+    const MAX_ITERATIONS: usize = crate::core::subagent_role::SUBAGENT_MAX_REQUESTS as usize;
 
     fn def(name: &str) -> ToolDefinition {
         ToolDefinition {
@@ -465,6 +661,100 @@ mod tests {
                 recorded.lock().unwrap().push(usage);
                 Ok(())
             }),
+            child_budget: None,
+        }
+    }
+
+    /// A fake child-budget hook that counts reserve/settle/release calls and
+    /// records the settled actuals. `reserve` reports a live reservation.
+    #[derive(Default)]
+    struct CountingBudget {
+        reserves: std::sync::atomic::AtomicUsize,
+        settles: std::sync::atomic::AtomicUsize,
+        releases: std::sync::atomic::AtomicUsize,
+        actuals: std::sync::Mutex<Vec<i64>>,
+    }
+
+    impl CountingBudget {
+        fn reserves(&self) -> usize {
+            self.reserves.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn settles(&self) -> usize {
+            self.settles.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn releases(&self) -> usize {
+            self.releases.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChildBudgetHook for CountingBudget {
+        async fn reserve(
+            &self,
+            _request_id: &str,
+            _provider: &str,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _max_tokens: u64,
+        ) -> Result<bool, String> {
+            self.reserves
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(true)
+        }
+        async fn settle(&self, _request_id: &str, actual_usd_micros: i64) -> Result<(), String> {
+            self.settles
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.actuals.lock().unwrap().push(actual_usd_micros);
+            Ok(())
+        }
+        async fn release(&self, _request_id: &str) -> Result<(), String> {
+            self.releases
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// The disabled path: the journal is off or the session has no budget.
+    struct UnconfiguredBudget;
+    #[async_trait::async_trait]
+    impl ChildBudgetHook for UnconfiguredBudget {
+        async fn reserve(
+            &self,
+            _request_id: &str,
+            _provider: &str,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _max_tokens: u64,
+        ) -> Result<bool, String> {
+            Ok(false)
+        }
+        async fn settle(&self, _request_id: &str, _actual_usd_micros: i64) -> Result<(), String> {
+            panic!("an unconfigured budget must not settle");
+        }
+        async fn release(&self, _request_id: &str) -> Result<(), String> {
+            panic!("an unconfigured budget must not release");
+        }
+    }
+
+    /// A budget that refuses admission (e.g. the scope cap is exhausted).
+    struct RefusingBudget;
+    #[async_trait::async_trait]
+    impl ChildBudgetHook for RefusingBudget {
+        async fn reserve(
+            &self,
+            _request_id: &str,
+            _provider: &str,
+            _model: &str,
+            _messages: &[ChatMessage],
+            _max_tokens: u64,
+        ) -> Result<bool, String> {
+            Err("budget scope exceeded".to_string())
+        }
+        async fn settle(&self, _request_id: &str, _actual_usd_micros: i64) -> Result<(), String> {
+            panic!("a refused child must not settle");
+        }
+        async fn release(&self, _request_id: &str) -> Result<(), String> {
+            panic!("a refused child must not release");
         }
     }
 
@@ -525,7 +815,7 @@ mod tests {
         }
     }
 
-    async fn run_fixture(provider: &FixtureProvider) -> Result<String, String> {
+    async fn run_fixture(provider: &FixtureProvider) -> Result<SubagentResult, String> {
         run_agent_loop(
             provider,
             "",
@@ -533,6 +823,7 @@ mod tests {
             "".into(),
             vec![def("task_list")],
             20,
+            MAX_ITERATIONS as u32,
             "task".into(),
             &ExecutionTarget::Local {
                 project_path: ".".into(),
@@ -540,6 +831,85 @@ mod tests {
             "empty",
         )
         .await
+    }
+
+    /// A provider that fails mid-stream, so the child releases its reservation.
+    struct ErroringProvider;
+    #[async_trait::async_trait]
+    impl crate::core::llm_provider::LlmProvider for ErroringProvider {
+        fn provider_id(&self) -> &str {
+            "anthropic"
+        }
+        async fn stream_chat(
+            &self,
+            _: &str,
+            _request: LlmRequest,
+            tx: mpsc::Sender<StreamChunk>,
+        ) -> Result<(), String> {
+            tx.send(StreamChunk::TextDelta {
+                text: "partial".into(),
+            })
+            .await
+            .unwrap();
+            tx.send(StreamChunk::Error {
+                message: "boom".into(),
+            })
+            .await
+            .unwrap();
+            Ok(())
+        }
+    }
+
+    /// A provider that, while streaming the OUTER child, runs a nested child
+    /// loop. Used to prove the budget hook is inherited by the whole chain.
+    struct NestedProvider;
+    #[async_trait::async_trait]
+    impl crate::core::llm_provider::LlmProvider for NestedProvider {
+        fn provider_id(&self) -> &str {
+            "anthropic"
+        }
+        async fn stream_chat(
+            &self,
+            _: &str,
+            _request: LlmRequest,
+            tx: mpsc::Sender<StreamChunk>,
+        ) -> Result<(), String> {
+            let inner = FixtureProvider {
+                keep_calling: false,
+                barrier: None,
+            };
+            let target = ExecutionTarget::Local {
+                project_path: ".".into(),
+            };
+            run_agent_loop(
+                &inner,
+                "",
+                "claude-haiku-4-5".into(),
+                "".into(),
+                vec![def("task_list")],
+                20,
+                MAX_ITERATIONS as u32,
+                "inner".into(),
+                &target,
+                "empty",
+            )
+            .await
+            .unwrap();
+            tx.send(StreamChunk::TextDelta {
+                text: "outer".into(),
+            })
+            .await
+            .unwrap();
+            tx.send(StreamChunk::Done {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            })
+            .await
+            .unwrap();
+            Ok(())
+        }
     }
 
     struct ReplayFixtureProvider {
@@ -625,6 +995,7 @@ mod tests {
                             "".into(),
                             vec![def("task_list")],
                             20,
+                            MAX_ITERATIONS as u32,
                             "task".into(),
                             &ExecutionTarget::Local {
                                 project_path: ".".into(),
@@ -634,7 +1005,8 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                assert_eq!(result, "finished");
+                assert_eq!(result.status, SubagentStatus::Completed);
+                assert_eq!(result.to_tool_content(), "finished");
             }
             let requests = provider.requests.lock().unwrap();
             assert_eq!(requests.len(), 4);
@@ -670,7 +1042,7 @@ mod tests {
     #[tokio::test]
     async fn exhaustion_is_incomplete_and_every_child_request_is_accounted() {
         let recorded = Arc::new(std::sync::Mutex::new(vec![]));
-        let error = PARENT_LLM
+        let result = PARENT_LLM
             .scope(
                 parent(recorded.clone()),
                 run_fixture(&FixtureProvider {
@@ -679,9 +1051,19 @@ mod tests {
                 }),
             )
             .await
-            .unwrap_err();
+            .unwrap();
+        // Structured, not a bare string: the loop reports its own status.
+        assert_eq!(result.status, SubagentStatus::Incomplete);
+        assert!(result
+            .incomplete_reason
+            .as_deref()
+            .is_some_and(|reason| !reason.is_empty()));
+        // At the tool boundary an incomplete child is an ERROR, not a success
+        // (pre-R7 semantics), carrying the structured status/reason text.
+        let error = result_to_tool_output(result).unwrap_err();
         assert!(error.contains("incomplete"));
         assert!(error.contains("partial-or-final"));
+        // Exactly one usage row per child request — no duplication.
         let rows = recorded.lock().unwrap();
         assert_eq!(rows.len(), MAX_ITERATIONS);
         assert!(rows.iter().all(|row| row.model == "claude-haiku-4-5"
@@ -766,5 +1148,235 @@ mod tests {
             .await
             .unwrap_err()
             .contains("without a completion"));
+    }
+
+    #[test]
+    fn spawn_subagent_definition_no_longer_advertises_an_ignored_model() {
+        let definition = spawn_subagent_definition();
+        assert!(!definition.description.to_lowercase().contains("ignored"));
+        let model = definition.parameters["properties"]["model"]["description"]
+            .as_str()
+            .expect("model description");
+        assert!(!model.to_lowercase().contains("ignored"));
+        assert!(model.contains("override"));
+    }
+
+    #[test]
+    fn only_a_completed_child_is_a_successful_tool_call() {
+        for (status, is_ok) in [
+            (SubagentStatus::Completed, true),
+            (SubagentStatus::Incomplete, false),
+            (SubagentStatus::Blocked, false),
+            (SubagentStatus::Failed, false),
+        ] {
+            let result = SubagentResult {
+                child_run_id: "child".to_string(),
+                status,
+                summary: "summary".to_string(),
+                incomplete_reason: Some("reason".to_string()),
+                usage: None,
+            };
+            assert_eq!(result_to_tool_output(result).is_ok(), is_ok, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn a_blank_model_argument_is_an_inherit_not_an_override() {
+        assert_eq!(
+            model_override_argument(&serde_json::json!({ "model": "   " })),
+            None
+        );
+        assert_eq!(
+            model_override_argument(&serde_json::json!({ "task": "x" })),
+            None
+        );
+        assert_eq!(
+            model_override_argument(&serde_json::json!({ "model": " claude-opus-4-1 " })),
+            Some("claude-opus-4-1")
+        );
+        // A blank argument therefore resolves as an inherited parent route.
+        let spec = resolve_subagent_role(
+            model_override_argument(&serde_json::json!({ "model": "   " })),
+            "anthropic",
+            "claude-sonnet-4-6",
+            "spawn_subagent",
+            Vec::new(),
+            SUBAGENT_MAX_OUTPUT_TOKENS,
+        )
+        .unwrap();
+        assert_eq!(spec.model, "claude-haiku-4-5");
+        assert_eq!(
+            spec.route_source,
+            crate::core::subagent_role::RouteSource::InheritedParent
+        );
+    }
+
+    #[tokio::test]
+    async fn a_structurally_invalid_override_is_an_err_before_the_provider_is_reached() {
+        let context = parent(Arc::new(std::sync::Mutex::new(vec![])));
+        let args = serde_json::json!({ "task": "investigate", "model": "bad\nmodel" });
+        let target = ExecutionTarget::Local {
+            project_path: ".".into(),
+        };
+        let error = PARENT_LLM
+            .scope(context, execute_spawn_subagent(&args, &target))
+            .await
+            .unwrap_err();
+        // A rejected role never loads a credential or constructs a provider,
+        // and it surfaces as an Err at the tool boundary (is_error: true).
+        assert!(error.contains("failed"));
+        assert!(error.contains("control characters"));
+        assert!(!error.contains("API key"));
+    }
+
+    #[tokio::test]
+    async fn child_budget_hook_reserves_and_settles_each_request_exactly_once() {
+        let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+        let hook = Arc::new(CountingBudget::default());
+        let mut context = parent(recorded.clone());
+        context.child_budget = Some(hook.clone());
+        let result = PARENT_LLM
+            .scope(
+                context,
+                run_fixture(&FixtureProvider {
+                    keep_calling: true,
+                    barrier: None,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, SubagentStatus::Incomplete);
+        assert_eq!(hook.reserves(), MAX_ITERATIONS);
+        assert_eq!(hook.settles(), MAX_ITERATIONS);
+        assert_eq!(hook.releases(), 0);
+        // Settlement is the actual cost, and usage is still recorded once.
+        assert!(hook
+            .actuals
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|actual| *actual >= 0));
+        assert_eq!(recorded.lock().unwrap().len(), MAX_ITERATIONS);
+    }
+
+    #[tokio::test]
+    async fn nested_children_inherit_the_parent_budget_hook() {
+        let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+        let hook = Arc::new(CountingBudget::default());
+        let mut context = parent(recorded.clone());
+        context.child_budget = Some(hook.clone());
+        let target = ExecutionTarget::Local {
+            project_path: ".".into(),
+        };
+        let result = PARENT_LLM
+            .scope(
+                context,
+                run_agent_loop(
+                    &NestedProvider,
+                    "",
+                    "claude-haiku-4-5".into(),
+                    "".into(),
+                    vec![def("task_list")],
+                    20,
+                    MAX_ITERATIONS as u32,
+                    "outer".into(),
+                    &target,
+                    "empty",
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, SubagentStatus::Completed);
+        // One reservation for the outer child, one for the nested child: the
+        // hook is inherited down the chain.
+        assert_eq!(hook.reserves(), 2);
+        assert_eq!(hook.settles(), 2);
+        assert_eq!(hook.releases(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_absent_or_unconfigured_child_budget_makes_no_reservation() {
+        // No hook at all: the disabled path.
+        let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+        let result = PARENT_LLM
+            .scope(
+                parent(recorded.clone()),
+                run_fixture(&FixtureProvider {
+                    keep_calling: false,
+                    barrier: None,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, SubagentStatus::Completed);
+
+        // Hook present but the journal is off / no session budget: it reports
+        // no reservation, so settle/release are never called.
+        let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+        let mut context = parent(recorded.clone());
+        context.child_budget = Some(Arc::new(UnconfiguredBudget));
+        let result = PARENT_LLM
+            .scope(
+                context,
+                run_fixture(&FixtureProvider {
+                    keep_calling: false,
+                    barrier: None,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, SubagentStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn a_refused_budget_blocks_the_child_before_dispatch() {
+        let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+        let mut context = parent(recorded.clone());
+        context.child_budget = Some(Arc::new(RefusingBudget));
+        let result = PARENT_LLM
+            .scope(
+                context,
+                run_fixture(&FixtureProvider {
+                    keep_calling: false,
+                    barrier: None,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status, SubagentStatus::Blocked);
+        assert!(result.to_tool_content().contains("blocked"));
+        assert!(recorded.lock().unwrap().is_empty(), "no spend is recorded");
+    }
+
+    #[tokio::test]
+    async fn a_failed_child_releases_its_reservation() {
+        let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+        let hook = Arc::new(CountingBudget::default());
+        let mut context = parent(recorded.clone());
+        context.child_budget = Some(hook.clone());
+        let error = PARENT_LLM
+            .scope(
+                context,
+                run_agent_loop(
+                    &ErroringProvider,
+                    "",
+                    "claude-haiku-4-5".into(),
+                    "".into(),
+                    vec![def("task_list")],
+                    20,
+                    MAX_ITERATIONS as u32,
+                    "task".into(),
+                    &ExecutionTarget::Local {
+                        project_path: ".".into(),
+                    },
+                    "empty",
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("boom"));
+        assert_eq!(hook.reserves(), 1);
+        assert_eq!(hook.settles(), 0);
+        assert_eq!(hook.releases(), 1);
     }
 }
