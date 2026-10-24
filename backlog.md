@@ -177,6 +177,15 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       **Still open before enabling by default:** wire a real
       `CompatibilityContext` into the resume path (or delete the now-unreachable
       typed branch) and add a direct `prepare_session_run` kind-selection test.
+- [x] **P1 — Capability and manifest modules (R4a).** `core/runtime_capabilities.rs`
+      (tri-state supported/unsupported/unknown with provenance; `unknown` is
+      never treated as supported; the image guard refuses unsupported, unknown
+      and `Supported(false)`) and `core/runtime_manifest.rs` (versioned,
+      content-addressed, immutable run manifest with a stable hash). Journal
+      v2→v3 adds `manifests` + `capability_snapshots` (additive, fail-closed on
+      newer/corrupt; loads refuse newer versions). `cargo test --lib` 1190/0;
+      independent review: safe, no blockers. **R4b remains:** commands + DTOs +
+      generated schema + `tauri.ts` + pre-dispatch capability wiring.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

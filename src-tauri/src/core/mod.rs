@@ -58,6 +58,10 @@ pub mod reprice;
 pub mod runtime_journal;
 // R3a: typed checkpoints (H2) — validated, hash-addressed conversation history.
 pub mod runtime_checkpoint;
+// R4a: tri-state, provenance-carrying capability knowledge (H5).
+pub mod runtime_capabilities;
+// R4a: versioned, content-addressed run manifests (H6).
+pub mod runtime_manifest;
 pub mod runtime_types;
 pub mod shared;
 pub mod shell_path;

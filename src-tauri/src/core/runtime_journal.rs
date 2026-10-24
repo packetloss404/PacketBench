@@ -25,12 +25,14 @@ use super::runtime_types::{
 
 /// On-disk journal schema version, tracked by `PRAGMA user_version`.
 ///
-/// R3a (H2 typed checkpoints) bumps this from 1 to 2 to add the `checkpoints`
-/// table. This is the JOURNAL migration target; it is deliberately separate from
+/// R3a (H2 typed checkpoints) bumped this from 1 to 2 to add the `checkpoints`
+/// table. R4a (H5/H6 capabilities + manifest identity) bumps it from 2 to 3 to
+/// add the `manifests` and `capability_snapshots` tables. This is the JOURNAL
+/// migration target; it is deliberately separate from
 /// `runtime_types::RUNTIME_SCHEMA_VERSION`, which is the `RuntimeRunSummary`
 /// wire version (still 1). A file written by a newer build is refused, never
 /// downgraded.
-pub const JOURNAL_SCHEMA_VERSION: i64 = 2;
+pub const JOURNAL_SCHEMA_VERSION: i64 = 3;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -195,6 +197,29 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|e| format!("Failed to migrate runtime journal to v2: {e}"))?;
+    }
+    if version < 3 {
+        connection
+            .execute_batch(
+                "BEGIN;\n\
+                 CREATE TABLE manifests (\n\
+                   manifest_id TEXT PRIMARY KEY,\n\
+                   content_hash TEXT NOT NULL,\n\
+                   payload TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL\n\
+                 );\n\
+                 CREATE INDEX idx_manifests_hash ON manifests(content_hash);\n\
+                 CREATE TABLE capability_snapshots (\n\
+                   snapshot_id TEXT PRIMARY KEY,\n\
+                   content_hash TEXT NOT NULL,\n\
+                   payload TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL\n\
+                 );\n\
+                 CREATE INDEX idx_capability_snapshots_hash ON capability_snapshots(content_hash);\n\
+                 PRAGMA user_version = 3;\n\
+                 COMMIT;",
+            )
+            .map_err(|e| format!("Failed to migrate runtime journal to v3: {e}"))?;
     }
     Ok(())
 }
@@ -941,25 +966,31 @@ mod tests {
         assert!(err.contains("newer than this build supports"));
     }
 
+    fn table_exists(connection: &Connection, name: &str) -> bool {
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![name],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            == 1
+    }
+
     #[test]
-    fn fresh_journal_is_at_v2_with_checkpoints_table() {
+    fn fresh_journal_is_at_current_version_with_all_tables() {
         let connection = open_at(&temp_db()).unwrap();
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, JOURNAL_SCHEMA_VERSION);
-        let tables: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'checkpoints'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(tables, 1);
+        for table in ["checkpoints", "manifests", "capability_snapshots"] {
+            assert!(table_exists(&connection, table), "{table} must exist");
+        }
     }
 
     #[test]
-    fn v1_journal_migrates_to_v2_additively() {
+    fn v1_journal_migrates_additively_to_current() {
         let connection = open_at(&temp_db()).unwrap();
         // Seed a v1 row so the additive migration's "no data touched" claim is
         // actually asserted (not just the table's existence).
@@ -977,23 +1008,22 @@ mod tests {
                 params![digest(1)],
             )
             .unwrap();
-        // Simulate a file written by the v1 build.
+        // Simulate a file written by the v1 build: none of the later tables
+        // exist yet.
         connection
-            .execute_batch("DROP TABLE checkpoints; PRAGMA user_version = 1;")
+            .execute_batch(
+                "DROP TABLE checkpoints; DROP TABLE manifests; DROP TABLE capability_snapshots; \
+                 PRAGMA user_version = 1;",
+            )
             .unwrap();
         migrate(&connection).unwrap();
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
-        let tables: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'checkpoints'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(tables, 1);
+        assert_eq!(version, JOURNAL_SCHEMA_VERSION);
+        for table in ["checkpoints", "manifests", "capability_snapshots"] {
+            assert!(table_exists(&connection, table), "{table} must exist");
+        }
         // The seeded v1 row survives the additive migration.
         let surviving: i64 = connection
             .query_row("SELECT COUNT(*) FROM launch_operations", [], |row| {
@@ -1002,12 +1032,50 @@ mod tests {
             .unwrap();
         assert_eq!(surviving, 1);
         // The v1 tables survive the additive migration.
-        let runs: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'runs'",
+        assert!(table_exists(&connection, "runs"));
+    }
+
+    #[test]
+    fn v2_journal_migrates_to_v3_additively() {
+        let connection = open_at(&temp_db()).unwrap();
+        // Seed v2 rows so the additive migration's "no data touched" claim is
+        // asserted for the tables that already existed at v2.
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, conversation_id, operation_id, root_run_id, epoch, state, latest_seq) \
+                 VALUES ('run-1', 'conv-1', 'op-1', 'run-1', 0, 'prepared', 0)",
                 [],
-                |row| row.get(0),
             )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO checkpoints (checkpoint_id, run_id, epoch, seq, schema_version, transport_version, \
+                 model_route, manifest_hash, tool_policy_hash, mcp_hash, payload, pending_effect_ids, payload_hash, \
+                 classification, created_at) \
+                 VALUES ('ckpt-1', 'run-1', 0, 0, 1, 1, 'anthropic:claude', ?1, ?2, ?3, '[]', '[]', ?4, 'private', 1)",
+                params![digest(2), digest(3), digest(4), digest(5)],
+            )
+            .unwrap();
+        // Simulate a file written by the v2 build.
+        connection
+            .execute_batch(
+                "DROP TABLE manifests; DROP TABLE capability_snapshots; PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        migrate(&connection).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
+        assert!(table_exists(&connection, "manifests"));
+        assert!(table_exists(&connection, "capability_snapshots"));
+        // The seeded v2 rows survive the additive migration.
+        let checkpoints: i64 = connection
+            .query_row("SELECT COUNT(*) FROM checkpoints", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(checkpoints, 1);
+        let runs: i64 = connection
+            .query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))
             .unwrap();
         assert_eq!(runs, 1);
     }
