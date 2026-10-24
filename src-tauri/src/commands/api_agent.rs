@@ -4,88 +4,28 @@
 //! execute tool calls, feed results back, repeat until the model
 //! produces a final text response.
 
+use crate::commands::agent_runtime::TauriRuntimeServices;
 use crate::commands::agent_sidecar::{is_sidecar_provider, SidecarManager, SIDECAR_PROVIDERS};
 use crate::commands::api_keys;
 use crate::commands::provider_stats;
+use crate::core::agent_runtime::runner::{error_event, run_turn, ErrorPayload};
+use crate::core::agent_runtime::{RunRequest, RuntimeFlags, RuntimeSession};
 use crate::core::execution::{ExecutionTarget, SshConfig};
-use crate::core::hooks::{self, HookEvent};
 use crate::core::llm_provider::{get_provider, IN_PROCESS_PROVIDERS};
 use crate::core::llm_system_prompt::build_system_prompt;
 use crate::core::llm_types::*;
-use crate::core::tool_runtime;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tauri::Emitter;
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::sync::{oneshot, watch, Mutex};
 use tracing::{info, warn};
 
-/// Maximum number of tool-use loop iterations per turn. Set high so a real
-/// task runs to completion in one turn (like Cursor / Claude Code) instead of
-/// hitting the cap mid-task and forcing the user to hit "Continue". Still
-/// bounded to backstop a genuinely runaway agent.
-const MAX_TOOL_ITERATIONS: usize = 150;
-
-/// Permission modes for risky tool calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionMode {
-    /// Model's implicit authority — no prompts. Must be chosen explicitly;
-    /// it is no longer the default (see `Default`).
-    Auto,
-    /// Prompt the user before running risky tools (bash, write_file,
-    /// edit_file, create_pull_request). The fail-closed default: a session
-    /// that never states a mode asks before every risky tool.
-    AskForRisky,
-    /// Allow all tools without prompts.
-    AllowAll,
-    /// Deny all risky tools.
-    DenyAll,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        Self::AskForRisky
-    }
-}
-
-impl PermissionMode {
-    fn parse(s: &str) -> Option<Self> {
-        match s {
-            "auto" => Some(Self::Auto),
-            "ask_for_risky" => Some(Self::AskForRisky),
-            "allow_all" => Some(Self::AllowAll),
-            "deny_all" => Some(Self::DenyAll),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum PermissionDecision {
-    AllowOnce,
-    AllowAlways,
-    /// Deny-and-continue: `reason`, when present, is the user's steering
-    /// text — folded into the synthetic tool result so the model is
-    /// redirected instead of stalled on a bare refusal.
-    Deny {
-        reason: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum EditDecision {
-    /// Apply the edit. `merged_content`, when set, is the user-merged file
-    /// body (per-hunk acceptance) — the agent loop swaps it in for the
-    /// model's original `content` before invoking the write_file tool.
-    Apply {
-        merged_content: Option<String>,
-    },
-    Reject,
-}
+// Permission/edit policy types live in the R2 seam so the runner can share
+// them with a headless host; re-exported here so existing paths keep working.
+pub use crate::core::agent_runtime::{EditDecision, PermissionDecision, PermissionMode};
 
 /// Shared state for managing active API agent sessions.
 pub struct ApiAgentState {
@@ -248,41 +188,134 @@ impl ApiAgentState {
             let _ = finished.send(true);
         }
     }
+
+    // --- R2b: RuntimeServices accessors. Thin state reads/writes so the
+    // extracted runner (`core::agent_runtime::runner`) can drive this state
+    // through `TauriRuntimeServices` without duplicating gate logic.
+
+    pub(crate) async fn runtime_session(&self, session_id: &str) -> Option<RuntimeSession> {
+        let configs = self.configs.lock().await;
+        let config = configs.get(session_id)?;
+        Some(RuntimeSession {
+            provider: config.provider.clone(),
+            model: config.model.clone(),
+            execution: config.execution.clone(),
+            system_prompt: config.system_prompt.clone(),
+            thinking_enabled: config.thinking_enabled,
+            allowed_tools: config.allowed_tools.clone(),
+            enabled_mcp_server_ids: config.enabled_mcp_server_ids.clone(),
+            mcp_trust_snapshot: config.mcp_trust_snapshot.clone(),
+            custom_agents: Arc::clone(&config.custom_agents),
+            native_mcp_session: Arc::clone(&config.native_mcp_session),
+            tasks: Arc::clone(&config.tasks),
+        })
+    }
+
+    pub(crate) async fn runtime_flags(&self, session_id: &str) -> RuntimeFlags {
+        let configs = self.configs.lock().await;
+        match configs.get(session_id) {
+            Some(cfg) => RuntimeFlags {
+                plan_mode: cfg.plan_mode,
+                permission_mode: cfg.permission_mode,
+                approve_writes: cfg.approve_writes,
+            },
+            // A session whose config vanished mid-turn must not fall back to
+            // unprompted execution.
+            None => RuntimeFlags {
+                plan_mode: false,
+                permission_mode: PermissionMode::default(),
+                approve_writes: false,
+            },
+        }
+    }
+
+    pub(crate) async fn runtime_take_attachments(&self, session_id: &str) -> Vec<ImageAttachment> {
+        let mut configs = self.configs.lock().await;
+        if let Some(cfg) = configs.get_mut(session_id) {
+            std::mem::take(&mut cfg.pending_attachments)
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub(crate) async fn runtime_history(&self, session_id: &str) -> Vec<ChatMessage> {
+        let histories = self.histories.lock().await;
+        histories.get(session_id).cloned().unwrap_or_default()
+    }
+
+    pub(crate) async fn runtime_push_history(&self, session_id: &str, message: ChatMessage) {
+        let mut histories = self.histories.lock().await;
+        if let Some(history) = histories.get_mut(session_id) {
+            history.push(message);
+        }
+    }
+
+    pub(crate) async fn runtime_is_tool_auto_allowed(&self, session_id: &str, tool: &str) -> bool {
+        let configs = self.configs.lock().await;
+        configs
+            .get(session_id)
+            .map(|c| c.auto_allow_tools.contains(tool))
+            .unwrap_or(false)
+    }
+
+    pub(crate) async fn runtime_allow_tool_always(&self, session_id: &str, tool: &str) {
+        let mut configs = self.configs.lock().await;
+        if let Some(cfg) = configs.get_mut(session_id) {
+            cfg.auto_allow_tools.insert(tool.to_string());
+        }
+    }
+
+    pub(crate) async fn runtime_register_permission(
+        &self,
+        session_id: &str,
+        tool_id: &str,
+    ) -> oneshot::Receiver<PermissionDecision> {
+        let (tx, rx) = oneshot::channel::<PermissionDecision>();
+        let mut pending = self.pending_permissions.lock().await;
+        pending.insert((session_id.to_string(), tool_id.to_string()), tx);
+        rx
+    }
+
+    pub(crate) async fn runtime_remove_permission(&self, session_id: &str, tool_id: &str) {
+        let mut pending = self.pending_permissions.lock().await;
+        pending.remove(&(session_id.to_string(), tool_id.to_string()));
+    }
+
+    pub(crate) async fn runtime_register_edit(
+        &self,
+        session_id: &str,
+        tool_id: &str,
+    ) -> oneshot::Receiver<EditDecision> {
+        let (tx, rx) = oneshot::channel::<EditDecision>();
+        let mut pending = self.pending_edits.lock().await;
+        pending.insert((session_id.to_string(), tool_id.to_string()), tx);
+        rx
+    }
+
+    pub(crate) async fn runtime_remove_edit(&self, session_id: &str, tool_id: &str) {
+        let mut pending = self.pending_edits.lock().await;
+        pending.remove(&(session_id.to_string(), tool_id.to_string()));
+    }
+
+    pub(crate) async fn runtime_deny_all_pending(&self, session_id: &str) {
+        let permission_senders = {
+            let mut pending = self.pending_permissions.lock().await;
+            drain_session_pending(&mut pending, session_id)
+        };
+        for sender in permission_senders {
+            let _ = sender.send(PermissionDecision::Deny { reason: None });
+        }
+        let edit_senders = {
+            let mut pending = self.pending_edits.lock().await;
+            drain_session_pending(&mut pending, session_id)
+        };
+        for sender in edit_senders {
+            let _ = sender.send(EditDecision::Reject);
+        }
+    }
 }
 
-// Event name helpers
-fn chunk_event(session_id: &str) -> String {
-    format!("api-agent:chunk:{}", session_id)
-}
-fn tool_start_event(session_id: &str) -> String {
-    format!("api-agent:tool-start:{}", session_id)
-}
-fn tool_result_event(session_id: &str) -> String {
-    format!("api-agent:tool-result:{}", session_id)
-}
-fn done_event(session_id: &str) -> String {
-    format!("api-agent:done:{}", session_id)
-}
-fn error_event(session_id: &str) -> String {
-    format!("api-agent:error:{}", session_id)
-}
-fn thinking_event(session_id: &str) -> String {
-    format!("api-agent:thinking:{}", session_id)
-}
-fn thinking_stop_event(session_id: &str) -> String {
-    format!("api-agent:thinking-stop:{}", session_id)
-}
-fn permission_request_event(session_id: &str) -> String {
-    format!("api-agent:permission-request:{}", session_id)
-}
-fn pending_edit_event(session_id: &str) -> String {
-    format!("api-agent:pending-edit:{}", session_id)
-}
-fn edit_baseline_event(session_id: &str) -> String {
-    format!("api-agent:edit-baseline:{}", session_id)
-}
-
-async fn mark_attempt_reviewing_for_session(session_id: &str) {
+pub(crate) async fn mark_attempt_reviewing_for_session(session_id: &str) {
     let _ = crate::commands::flight_attempts::update_attempt_status_by_session(
         session_id,
         crate::core::flight::AttemptStatus::Reviewing,
@@ -291,72 +324,13 @@ async fn mark_attempt_reviewing_for_session(session_id: &str) {
     .await;
 }
 
-async fn mark_attempt_failed_for_session(session_id: &str, message: String) {
+pub(crate) async fn mark_attempt_failed_for_session(session_id: &str, message: String) {
     let _ = crate::commands::flight_attempts::update_attempt_status_by_session(
         session_id,
         crate::core::flight::AttemptStatus::Failed,
         Some(message),
     )
     .await;
-}
-
-#[derive(Clone, Serialize)]
-struct ToolStartPayload {
-    id: String,
-    name: String,
-}
-
-#[derive(Clone, Serialize)]
-struct PermissionRequestPayload {
-    id: String,
-    name: String,
-    arguments: String,
-}
-
-#[derive(Clone, Serialize)]
-struct PendingEditPayload {
-    id: String,
-    path: String,
-    content: String,
-    /// Prior file content (None for new files) so the frontend can render
-    /// a real before/after diff instead of just the new content.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    before: Option<String>,
-}
-
-/// P1-7: non-blocking pre-edit baseline for auto-applied writes
-/// (approve-writes off). The frontend records it so review surfaces diff
-/// applied edits against the true "before" instead of live disk.
-#[derive(Clone, Serialize)]
-struct EditBaselinePayload {
-    id: String,
-    path: String,
-    /// Pre-edit file content (None when the file did not exist).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    before: Option<String>,
-}
-
-#[derive(Clone, Serialize)]
-struct ThinkingPayload {
-    text: String,
-}
-
-#[derive(Clone, Serialize)]
-struct ToolResultPayload {
-    id: String,
-    name: String,
-    content: String,
-    is_error: bool,
-    input: String,
-}
-
-#[derive(Clone, Serialize)]
-struct DonePayload {
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_input_tokens: u64,
-    cache_creation_input_tokens: u64,
-    cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,95 +414,16 @@ fn build_start_history(
     messages
 }
 
-/// CE6 instrumentation — one line per LLM round trip recording the cache mix.
-///
-/// `hit` = cache reads as a share of all input-side tokens. It is
-/// rate-independent, so it survives a stale pricing table and is the acceptance
-/// signal for prompt caching (see `dev/cost-efficiency-loop.md`). Anthropic's
-/// buckets are disjoint; OpenAI reports `read` as a subset of `input`, which
-/// `pricing::billable_input_tokens` normalises at the cost call site.
-fn log_cache_usage(
-    session_id: &str,
-    model: &str,
-    iteration: usize,
-    input_tokens: u64,
-    cache_read: u64,
-    cache_write: u64,
-) {
-    let denominator = input_tokens
-        .saturating_add(cache_read)
-        .saturating_add(cache_write);
-    if denominator == 0 {
-        return;
-    }
-    let hit = cache_read as f64 / denominator as f64;
-    tracing::info!(
-        target: "packetbench::cache",
-        session_id = %session_id,
-        model = %model,
-        iteration,
-        input_tokens,
-        cache_read,
-        cache_write,
-        hit_rate = format!("{:.3}", hit),
-        "CE6-CACHE: prompt-cache mix for one request"
-    );
-}
-
-fn build_assistant_history_message(
-    text_content: &str,
-    tool_calls: &[ToolCall],
-    provider_reasoning: Option<serde_json::Value>,
-) -> Option<ChatMessage> {
-    // A turn with neither text nor a tool call is skipped even when the
-    // provider sent reasoning: replaying reasoning alone would produce an
-    // assistant message with empty content, which the APIs reject.
-    if tool_calls.is_empty() && text_content.trim().is_empty() {
-        return None;
-    }
-
-    if tool_calls.is_empty() && provider_reasoning.is_none() {
-        return Some(ChatMessage {
-            role: ChatRole::Assistant,
-            content: MessageContent::text(text_content),
-        });
-    }
-
-    let mut blocks = Vec::new();
-    // Reasoning leads the block list so it is replayed ahead of the content it
-    // produced, matching the order the provider streamed it.
-    if let Some(details) = provider_reasoning {
-        blocks.push(ContentBlock::ProviderReasoning { details });
-    }
-    if !text_content.is_empty() {
-        blocks.push(ContentBlock::Text {
-            text: text_content.to_string(),
-        });
-    }
-    for tc in tool_calls {
-        blocks.push(ContentBlock::ToolUse {
-            id: tc.id.clone(),
-            name: tc.name.clone(),
-            arguments: tc.arguments.clone(),
-        });
-    }
-
-    Some(ChatMessage {
-        role: ChatRole::Assistant,
-        content: MessageContent::Blocks(blocks),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
     fn premature_provider_eof_is_incomplete_and_cannot_dispatch_tools_or_success() {
-        assert!(super::require_provider_completion(false, Ok(()))
+        assert!(require_provider_completion(false, Ok(()))
             .unwrap_err()
             .contains("incomplete"));
-        assert!(super::require_provider_completion(true, Ok(())).is_ok());
+        assert!(require_provider_completion(true, Ok(())).is_ok());
         assert_eq!(
-            super::require_provider_completion(true, Err("provider failed after done".into()))
+            require_provider_completion(true, Err("provider failed after done".into()))
                 .unwrap_err(),
             "provider failed after done"
         );
@@ -604,7 +499,13 @@ mod tests {
 
     use super::*;
     use crate::commands::mcp::{McpServerConfig, McpServerEntry};
+    use crate::core::agent_runtime::runner::{
+        build_assistant_history_message, filter_tools_for_execution, require_provider_completion,
+        tool_is_advertised, EDIT_TOOLS, PLAN_MODE_ALLOWED, RISKY_TOOLS,
+    };
+    use crate::core::tool_runtime;
     use std::collections::HashMap;
+    use std::time::Duration;
 
     #[test]
     fn returned_known_tool_must_be_in_the_effective_session_allowlist() {
@@ -1058,22 +959,6 @@ mod tests {
     }
 }
 
-/// Fire all SessionEnd hooks (best-effort; failures logged).
-async fn fire_session_end_hooks(hooks_list: &[crate::core::hooks::HookConfig], session_id: &str) {
-    for hook in hooks_list
-        .iter()
-        .filter(|h| h.event == HookEvent::SessionEnd)
-    {
-        let payload = serde_json::json!({
-            "session_id": session_id,
-            "event": "SessionEnd",
-        });
-        if let Err(e) = hooks::run_hook(hook, payload).await {
-            warn!(session_id = %session_id, error = %e, "SessionEnd hook failed");
-        }
-    }
-}
-
 /// Map a provider name to the usage-log source string.
 fn provider_to_source(provider: &str) -> &'static str {
     match provider {
@@ -1094,11 +979,6 @@ fn provider_to_source(provider: &str) -> &'static str {
 
         _ => "api-claude",
     }
-}
-
-#[derive(Clone, Serialize)]
-struct ErrorPayload {
-    message: String,
 }
 
 /// S8-Phase-B: the remote-owned MCP directive. When a sidecar session targets
@@ -1653,7 +1533,11 @@ async fn start_api_agent_session_inner(
 
     // Spawn the agentic loop
     tokio::spawn(async move {
-        let result = run_agent_loop(&app_handle, &state_clone, &session_id_clone, cancel_rx).await;
+        let services = TauriRuntimeServices::new(app_handle.clone(), Arc::clone(&state_clone));
+        let request = RunRequest {
+            session_id: session_id_clone.clone(),
+        };
+        let result = run_turn(&services, request, cancel_rx).await;
 
         if let Err(e) = &result {
             warn!(session_id = %session_id_clone, error = %e, "Agent loop error");
@@ -1744,7 +1628,11 @@ pub async fn send_api_agent_message(
     let session_id_clone = session_id.clone();
 
     tokio::spawn(async move {
-        let result = run_agent_loop(&app_handle, &state_clone, &session_id_clone, cancel_rx).await;
+        let services = TauriRuntimeServices::new(app_handle.clone(), Arc::clone(&state_clone));
+        let request = RunRequest {
+            session_id: session_id_clone.clone(),
+        };
+        let result = run_turn(&services, request, cancel_rx).await;
 
         if let Err(e) = &result {
             warn!(session_id = %session_id_clone, error = %e, "Agent loop error");
@@ -2049,7 +1937,11 @@ pub async fn retry_last_turn(
     let session_id_clone = session_id.clone();
 
     tokio::spawn(async move {
-        let result = run_agent_loop(&app_handle, &state_clone, &session_id_clone, cancel_rx).await;
+        let services = TauriRuntimeServices::new(app_handle.clone(), Arc::clone(&state_clone));
+        let request = RunRequest {
+            session_id: session_id_clone.clone(),
+        };
+        let result = run_turn(&services, request, cancel_rx).await;
 
         if let Err(e) = &result {
             warn!(session_id = %session_id_clone, error = %e, "Retry loop error");
@@ -2210,7 +2102,7 @@ fn child_usage_entry(
     }
 }
 
-fn record_child_usage(
+pub(crate) fn record_child_usage(
     app: &tauri::AppHandle,
     session_id: &str,
     usage: crate::core::tool_subagent::ChildUsage,
@@ -2218,7 +2110,7 @@ fn record_child_usage(
     record_completed_usage(app, &child_usage_entry(session_id, usage))
 }
 
-fn record_completed_usage(
+pub(crate) fn record_completed_usage(
     app: &tauri::AppHandle,
     entry: &crate::commands::usage::UsageEntry,
 ) -> Result<(), String> {
@@ -2236,17 +2128,7 @@ fn record_completed_usage(
     Ok(())
 }
 
-/// Account each completed provider request before its tools or the next request
-/// can run. Terminal events do not write aggregate rows, preventing duplicates.
-fn require_provider_completion(completed: bool, result: Result<(), String>) -> Result<(), String> {
-    result?;
-    if !completed {
-        return Err("Provider stream ended before its completion and usage marker; this request is incomplete".into());
-    }
-    Ok(())
-}
-
-fn account_native_request_chunk(
+pub(crate) fn account_native_request_chunk(
     session_id: &str,
     provider: &str,
     model: &str,
@@ -2274,1046 +2156,5 @@ fn account_native_request_chunk(
         entry.agent_id = None;
         record(&entry)?;
     }
-    Ok(())
-}
-
-fn tool_is_advertised(name: &str, tools: &[ToolDefinition]) -> bool {
-    tools.iter().any(|tool| tool.name == name)
-}
-
-fn filter_tools_for_execution(tools: &mut Vec<ToolDefinition>, execution: &ExecutionTarget) {
-    if matches!(execution, ExecutionTarget::Ssh { .. }) {
-        // Remote editing has no supported preview/apply implementation. Offer
-        // read_file + write_file, which use the pinned SSH execution target.
-        tools.retain(|tool| tool.name != "edit_file");
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn finish_cancelled_agent_turn(
-    app_handle: &tauri::AppHandle,
-    state: &Arc<ApiAgentState>,
-    session_id: &str,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read: u64,
-    cache_write: u64,
-    hooks_list: &[crate::core::hooks::HookConfig],
-) {
-    let permission_senders = {
-        let mut pending = state.pending_permissions.lock().await;
-        drain_session_pending(&mut pending, session_id)
-    };
-    for sender in permission_senders {
-        let _ = sender.send(PermissionDecision::Deny { reason: None });
-    }
-    let edit_senders = {
-        let mut pending = state.pending_edits.lock().await;
-        drain_session_pending(&mut pending, session_id)
-    };
-    for sender in edit_senders {
-        let _ = sender.send(EditDecision::Reject);
-    }
-
-    if let Err(error) = crate::core::tool_runtime_ssh::drain_session(session_id).await {
-        mark_attempt_failed_for_session(session_id, error.clone()).await;
-        let _ = app_handle.emit(&error_event(session_id), ErrorPayload { message: error });
-        fire_session_end_hooks(hooks_list, session_id).await;
-        return;
-    }
-    if let Err(error) = crate::commands::usage::ensure_usage_accounting_healthy() {
-        mark_attempt_failed_for_session(session_id, error.clone()).await;
-        let _ = app_handle.emit(&error_event(session_id), ErrorPayload { message: error });
-        fire_session_end_hooks(hooks_list, session_id).await;
-        return;
-    }
-    if let Err(error) =
-        crate::commands::flight_attempts::cancel_builder_attempt_for_session(session_id).await
-    {
-        let _ = app_handle.emit(&error_event(session_id), ErrorPayload { message: error });
-        fire_session_end_hooks(hooks_list, session_id).await;
-        return;
-    }
-    let _ = app_handle.emit(
-        &done_event(session_id),
-        DonePayload {
-            input_tokens,
-            output_tokens,
-            cache_read_input_tokens: cache_read,
-            cache_creation_input_tokens: cache_write,
-            cancelled: true,
-        },
-    );
-
-    fire_session_end_hooks(hooks_list, session_id).await;
-}
-
-/// Tools that require user permission in `AskForRisky` mode and are refused
-/// outright in `DenyAll`. `create_pull_request` pushes the branch and opens a
-/// PR under the user's GitHub identity — an outward-facing side effect that
-/// must never run on the model's authority alone.
-const RISKY_TOOLS: &[&str] = &["bash", "write_file", "edit_file", "create_pull_request"];
-/// The only tools allowed while plan mode is active — read-only ones.
-const PLAN_MODE_ALLOWED: &[&str] = &["read_file", "list_directory", "grep"];
-/// Tools that mutate file content and therefore must go through the
-/// pending-edit approval gate (and emit a pre-edit baseline when the gate is
-/// off). Every entry here must also be in [`RISKY_TOOLS`].
-const EDIT_TOOLS: &[&str] = &["write_file", "edit_file"];
-
-async fn run_agent_loop(
-    app_handle: &tauri::AppHandle,
-    state: &Arc<ApiAgentState>,
-    session_id: &str,
-    mut cancel_rx: oneshot::Receiver<()>,
-) -> Result<(), String> {
-    let (
-        provider_name,
-        model,
-        execution,
-        system_prompt,
-        thinking_enabled,
-        allowed_tools,
-        enabled_mcp_server_ids,
-        mcp_trust_snapshot,
-        custom_agents,
-        native_mcp_session,
-        tasks,
-    ) = {
-        let configs = state.configs.lock().await;
-        let config = configs
-            .get(session_id)
-            .ok_or_else(|| format!("No session config: {}", session_id))?;
-        (
-            config.provider.clone(),
-            config.model.clone(),
-            config.execution.clone(),
-            config.system_prompt.clone(),
-            config.thinking_enabled,
-            config.allowed_tools.clone(),
-            config.enabled_mcp_server_ids.clone(),
-            config.mcp_trust_snapshot.clone(),
-            Arc::clone(&config.custom_agents),
-            Arc::clone(&config.native_mcp_session),
-            Arc::clone(&config.tasks),
-        )
-    };
-
-    let _ = get_provider(&provider_name)?;
-    let api_key = api_keys::load_api_key(&provider_name)?;
-    let tools = {
-        let mut all = tool_runtime::tool_definitions_for_session(
-            enabled_mcp_server_ids.as_deref(),
-            mcp_trust_snapshot.as_deref(),
-            &custom_agents,
-        )
-        .await;
-        let mcp_tools = tokio::select! {
-            // A cached discovery has no startup work to cancel. Preserve its
-            // connections; the turn cancellation check below handles Stop.
-            biased;
-            result = native_mcp_session.tool_definitions() => result?,
-            _ = &mut cancel_rx => {
-                native_mcp_session.close().await;
-                finish_cancelled_agent_turn(app_handle, state, session_id, 0, 0, 0, 0, &[]).await;
-                return Ok(());
-            }
-        };
-        all.extend(mcp_tools);
-        filter_tools_for_execution(&mut all, &execution);
-        match allowed_tools.as_ref() {
-            Some(allow) => all
-                .into_iter()
-                .filter(|t| allow.iter().any(|n| n == &t.name))
-                .collect(),
-            None => all,
-        }
-    };
-    let frozen_tools = Arc::new(tools.clone());
-    let mut total_input_tokens: u64 = 0;
-    let mut total_output_tokens: u64 = 0;
-    let mut total_cache_read: u64 = 0;
-    let mut total_cache_write: u64 = 0;
-
-    // Load hooks once per loop (covers global + this session's project).
-    let project_path_for_hooks = match &execution {
-        ExecutionTarget::Local { project_path } => project_path.clone(),
-        _ => String::new(),
-    };
-    let all_hooks = hooks::load_hooks_with_project(&project_path_for_hooks);
-
-    // Fire SessionStart hooks (best-effort, no veto).
-    for hook in all_hooks
-        .iter()
-        .filter(|h| h.event == HookEvent::SessionStart)
-    {
-        let payload = serde_json::json!({
-            "session_id": session_id,
-            "provider": provider_name,
-            "model": model,
-        });
-        if let Err(e) = hooks::run_hook(hook, payload).await {
-            warn!(session_id = %session_id, error = %e, "SessionStart hook failed");
-        }
-    }
-
-    for iteration in 0..MAX_TOOL_ITERATIONS {
-        // Check cancellation
-        if cancel_rx.try_recv().is_ok() {
-            finish_cancelled_agent_turn(
-                app_handle,
-                state,
-                session_id,
-                total_input_tokens,
-                total_output_tokens,
-                total_cache_read,
-                total_cache_write,
-                &all_hooks,
-            )
-            .await;
-            return Ok(());
-        }
-
-        // Get current message history
-        let messages = {
-            let histories = state.histories.lock().await;
-            histories.get(session_id).cloned().unwrap_or_default()
-        };
-
-        // Take pending attachments (only apply to iteration 0 — tool-result iterations don't re-attach).
-        let pending_attachments = if iteration == 0 {
-            let mut configs = state.configs.lock().await;
-            if let Some(cfg) = configs.get_mut(session_id) {
-                std::mem::take(&mut cfg.pending_attachments)
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        let request = LlmRequest {
-            model: model.clone(),
-            messages,
-            tools: tools.clone(),
-            system_prompt: Some(system_prompt.clone()),
-            max_tokens: 16384,
-            temperature: None,
-            attachments: pending_attachments,
-            thinking_enabled,
-            thinking_budget_tokens: 8000,
-            // Stable for the life of the session, so every iteration of this
-            // loop lands on the same OpenAI prompt-cache partition.
-            cache_key: Some(session_id.to_string()),
-        };
-
-        crate::commands::usage::ensure_usage_accounting_healthy()?;
-        // Stream the response
-        let (tx, mut rx) = mpsc::channel::<StreamChunk>(64);
-        let provider_ref = get_provider(&provider_name)?;
-        let api_key_clone = api_key.clone();
-        let request_clone = request;
-
-        let stream_handle = tokio::spawn(async move {
-            provider_ref
-                .stream_chat(&api_key_clone, request_clone, tx)
-                .await
-        });
-
-        let mut text_content = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut current_tool_id = String::new();
-        let mut current_tool_name = String::new();
-        let mut current_tool_args = String::new();
-        let mut got_error = false;
-        let mut request_completed = false;
-        // Provider-owned reasoning payload for this assistant turn (MiniMax M3
-        // `reasoning_details`). Stored verbatim on the history message so the
-        // next iteration replays it and the interleaved-thinking chain holds.
-        let mut provider_reasoning: Option<serde_json::Value> = None;
-
-        // Process stream chunks
-        loop {
-            tokio::select! {
-                _ = &mut cancel_rx => {
-                    // Abort the detached stream task so the provider's
-                    // `stream_chat` stops holding the upstream HTTP connection
-                    // and pushing into the now-dropped mpsc channel.
-                    stream_handle.abort();
-                    finish_cancelled_agent_turn(
-                        app_handle,
-                        state,
-                        session_id,
-                        total_input_tokens,
-                        total_output_tokens,
-                        total_cache_read,
-                        total_cache_write,
-                        &all_hooks,
-                    )
-                    .await;
-                    return Ok(());
-                }
-                chunk = rx.recv() => {
-                    if let Some(chunk) = &chunk {
-                        if let Err(error) = account_native_request_chunk(session_id, &provider_name, &model, chunk,
-                            |entry| record_completed_usage(app_handle, entry)) {
-                            stream_handle.abort();
-                            return Err(error);
-                        }
-                    }
-                    match chunk {
-                        None => break, // Channel closed
-                        Some(StreamChunk::TextDelta { text }) => {
-                            text_content.push_str(&text);
-                            let _ = app_handle.emit(&chunk_event(session_id), &text);
-                        }
-                        Some(StreamChunk::ToolUseStart { id, name }) => {
-                            current_tool_id = id.clone();
-                            current_tool_name = name.clone();
-                            current_tool_args.clear();
-                            let _ = app_handle.emit(
-                                &tool_start_event(session_id),
-                                ToolStartPayload { id, name },
-                            );
-                        }
-                        Some(StreamChunk::ToolUseInputDelta { delta }) => {
-                            current_tool_args.push_str(&delta);
-                        }
-                        Some(StreamChunk::ToolUseEnd { id, name, arguments }) => {
-                            tool_calls.push(ToolCall { id, name, arguments });
-                            current_tool_id.clear();
-                            current_tool_name.clear();
-                            current_tool_args.clear();
-                        }
-                        Some(StreamChunk::Done {
-                            input_tokens,
-                            output_tokens,
-                            cache_read_input_tokens,
-                            cache_creation_input_tokens,
-                        }) => {
-                            request_completed = true;
-                            total_input_tokens += input_tokens;
-                            total_output_tokens += output_tokens;
-                            total_cache_read += cache_read_input_tokens;
-                            total_cache_write += cache_creation_input_tokens;
-                            // CE6 instrumentation. Prompt caching fails
-                            // SILENTLY when the prefix is under the model's
-                            // minimum cacheable length, so the only proof it
-                            // is working is a non-zero cache_read that rises
-                            // from iteration 1 onward. Logged per iteration
-                            // rather than per turn so a mid-turn invalidation
-                            // (attachments, an MCP flap, a rewind) is visible
-                            // as the iteration where reads drop back to zero.
-                            log_cache_usage(
-                                session_id,
-                                &model,
-                                iteration,
-                                input_tokens,
-                                cache_read_input_tokens,
-                                cache_creation_input_tokens,
-                            );
-                            break;
-                        }
-                        Some(StreamChunk::ReasoningDetails { details }) => {
-                            provider_reasoning = Some(details);
-                        }
-                        Some(StreamChunk::ThinkingDelta { text }) => {
-                            let _ = app_handle.emit(
-                                &thinking_event(session_id),
-                                ThinkingPayload { text },
-                            );
-                        }
-                        Some(StreamChunk::ThinkingStop) => {
-                            let _ = app_handle.emit(&thinking_stop_event(session_id), ());
-                        }
-                        Some(StreamChunk::Error { message }) => {
-                            mark_attempt_failed_for_session(session_id, message.clone()).await;
-                            let _ = app_handle.emit(
-                                &error_event(session_id),
-                                ErrorPayload { message },
-                            );
-                            got_error = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Wait for the provider result. Provider-level failures that did not
-        // arrive as a StreamChunk are surfaced by the outer loop exactly once.
-        let stream_result = stream_handle
-            .await
-            .map_err(|e| format!("LLM stream task failed: {}", e))?;
-
-        if got_error {
-            // The detailed StreamChunk::Error was already emitted above.
-            return Ok(());
-        }
-        require_provider_completion(request_completed, stream_result)?;
-
-        if let Some(assistant_msg) =
-            build_assistant_history_message(&text_content, &tool_calls, provider_reasoning)
-        {
-            let mut histories = state.histories.lock().await;
-            if let Some(history) = histories.get_mut(session_id) {
-                history.push(assistant_msg);
-            }
-        }
-
-        // If no tool calls, we're done
-        if tool_calls.is_empty() {
-            mark_attempt_reviewing_for_session(session_id).await;
-
-            let _ = app_handle.emit(
-                &done_event(session_id),
-                DonePayload {
-                    input_tokens: total_input_tokens,
-                    output_tokens: total_output_tokens,
-                    cache_read_input_tokens: total_cache_read,
-                    cache_creation_input_tokens: total_cache_write,
-                    cancelled: false,
-                },
-            );
-
-            fire_session_end_hooks(&all_hooks, session_id).await;
-            return Ok(());
-        }
-
-        // Re-read config for this iteration — plan_mode/permission_mode/approve_writes may flip mid-session.
-        let (plan_mode_active, permission_mode, approve_writes) = {
-            let configs = state.configs.lock().await;
-            if let Some(cfg) = configs.get(session_id) {
-                (cfg.plan_mode, cfg.permission_mode, cfg.approve_writes)
-            } else {
-                // A session whose config vanished mid-turn must not fall back
-                // to unprompted execution.
-                (false, PermissionMode::default(), false)
-            }
-        };
-
-        // Execute tool calls in parallel; each async block handles its own gates.
-        let futures: Vec<_> = tool_calls
-            .iter()
-            .cloned()
-            .map(|mut tc| {
-                let execution = execution.clone();
-                let app_handle = app_handle.clone();
-                let session_id = session_id.to_string();
-                let state = Arc::clone(state);
-                let hooks_for_tool = all_hooks.clone();
-                let enabled_mcp_server_ids = enabled_mcp_server_ids.clone();
-                let mcp_trust_snapshot = mcp_trust_snapshot.clone();
-                // Q2: sub-agent / custom-agent tools inherit the SESSION's
-                // provider through this task-local scope (see
-                // core::tool_subagent::PARENT_LLM).
-                let parent_llm = crate::core::tool_subagent::ParentLlm {
-                    provider: provider_name.clone(),
-                    model: model.clone(),
-                    tools: Arc::clone(&frozen_tools),
-                    custom_agents: Arc::clone(&custom_agents),
-                    enabled_mcp_server_ids: enabled_mcp_server_ids.clone(),
-                    mcp_trust_snapshot: mcp_trust_snapshot.clone(),
-                    native_mcp_session: Arc::clone(&native_mcp_session),
-                    tasks: Arc::clone(&tasks),
-                    record_usage: {
-                        let app = app_handle.clone();
-                        let session = session_id.clone();
-                        Arc::new(move |usage| record_child_usage(&app, &session, usage))
-                    },
-                };
-                async move {
-                    if !tool_is_advertised(&tc.name, &parent_llm.tools) {
-                        let result = ToolResult {
-                            tool_call_id: tc.id.clone(),
-                            content: format!("Tool '{}' is outside this session's allowed tool set.", tc.name),
-                            is_error: true,
-                        };
-                        let _ = app_handle.emit(&tool_result_event(&session_id), ToolResultPayload {
-                            id: tc.id.clone(), name: tc.name.clone(), content: result.content.clone(),
-                            is_error: true, input: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                        });
-                        return (tc.id.clone(), result);
-                    }
-                    // Plan mode gate
-                    if plan_mode_active && !PLAN_MODE_ALLOWED.contains(&tc.name.as_str()) {
-                        let err = ToolResult {
-                            tool_call_id: tc.id.clone(),
-                            content: format!(
-                                "Plan mode is active — '{}' is disabled. Ask the user to exit plan mode first.",
-                                tc.name
-                            ),
-                            is_error: true,
-                        };
-                        let _ = app_handle.emit(
-                            &tool_result_event(&session_id),
-                            ToolResultPayload {
-                                id: tc.id.clone(),
-                                name: tc.name.clone(),
-                                content: err.content.clone(),
-                                is_error: true,
-                                input: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                            },
-                        );
-                        return (tc.id.clone(), err);
-                    }
-
-                    // Permission gate (risky tools only)
-                    if RISKY_TOOLS.contains(&tc.name.as_str()) {
-                        let auto_allowed = {
-                            let configs = state.configs.lock().await;
-                            configs
-                                .get(&session_id)
-                                .map(|c| c.auto_allow_tools.contains(&tc.name))
-                                .unwrap_or(false)
-                        };
-
-                        let should_ask = !auto_allowed
-                            && matches!(permission_mode, PermissionMode::AskForRisky);
-                        let should_deny = matches!(permission_mode, PermissionMode::DenyAll);
-
-                        if should_deny {
-                            let err = ToolResult {
-                                tool_call_id: tc.id.clone(),
-                                content: "Permissions: all risky tools are denied.".to_string(),
-                                is_error: true,
-                            };
-                            let _ = app_handle.emit(
-                                &tool_result_event(&session_id),
-                                ToolResultPayload {
-                                    id: tc.id.clone(),
-                                    name: tc.name.clone(),
-                                    content: err.content.clone(),
-                                    is_error: true,
-                                    input: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                                },
-                            );
-                            return (tc.id.clone(), err);
-                        }
-
-                        if should_ask {
-                            let (tx, rx) = oneshot::channel::<PermissionDecision>();
-                            {
-                                let mut pending = state.pending_permissions.lock().await;
-                                pending.insert((session_id.clone(), tc.id.clone()), tx);
-                            }
-                            let _ = app_handle.emit(
-                                &permission_request_event(&session_id),
-                                PermissionRequestPayload {
-                                    id: tc.id.clone(),
-                                    name: tc.name.clone(),
-                                    arguments: serde_json::to_string(&tc.arguments)
-                                        .unwrap_or_default(),
-                                },
-                            );
-                            // A dropped response channel counts as a plain
-                            // deny so the or-pattern below stays exhaustive.
-                            match tokio::time::timeout(Duration::from_secs(300), rx)
-                                .await
-                                .map(|r| r.unwrap_or(PermissionDecision::Deny { reason: None }))
-                            {
-                                Ok(PermissionDecision::AllowOnce) => {
-                                    // proceed
-                                }
-                                Ok(PermissionDecision::AllowAlways) => {
-                                    let mut configs = state.configs.lock().await;
-                                    if let Some(cfg) = configs.get_mut(&session_id) {
-                                        cfg.auto_allow_tools.insert(tc.name.clone());
-                                    }
-                                }
-                                Ok(PermissionDecision::Deny { reason }) => {
-                                    // Deny-and-continue: the reason steers the
-                                    // model's next step instead of stalling it.
-                                    let content = match reason
-                                        .as_deref()
-                                        .map(str::trim)
-                                        .filter(|r| !r.is_empty())
-                                    {
-                                        Some(r) => format!(
-                                            "User denied permission for this tool call. User's guidance: {}",
-                                            r
-                                        ),
-                                        None => "User denied permission for this tool call."
-                                            .to_string(),
-                                    };
-                                    let err = ToolResult {
-                                        tool_call_id: tc.id.clone(),
-                                        content,
-                                        is_error: true,
-                                    };
-                                    let _ = app_handle.emit(
-                                        &tool_result_event(&session_id),
-                                        ToolResultPayload {
-                                            id: tc.id.clone(),
-                                            name: tc.name.clone(),
-                                            content: err.content.clone(),
-                                            is_error: true,
-                                            input: serde_json::to_string(&tc.arguments)
-                                                .unwrap_or_default(),
-                                        },
-                                    );
-                                    return (tc.id.clone(), err);
-                                }
-                                Err(_) => {
-                                    // Timed out — remove stale entry and deny.
-                                    {
-                                        let mut pending = state.pending_permissions.lock().await;
-                                        pending.remove(&(session_id.clone(), tc.id.clone()));
-                                    }
-                                    let err = ToolResult {
-                                        tool_call_id: tc.id.clone(),
-                                        content: "Permission request timed out.".to_string(),
-                                        is_error: true,
-                                    };
-                                    let _ = app_handle.emit(
-                                        &tool_result_event(&session_id),
-                                        ToolResultPayload {
-                                            id: tc.id.clone(),
-                                            name: tc.name.clone(),
-                                            content: err.content.clone(),
-                                            is_error: true,
-                                            input: serde_json::to_string(&tc.arguments)
-                                                .unwrap_or_default(),
-                                        },
-                                    );
-                                    return (tc.id.clone(), err);
-                                }
-                            }
-                        }
-                    }
-
-                    // The approval gate is the only legitimate writer of the
-                    // reserved merged-content argument — drop anything the
-                    // model tried to smuggle in under that name.
-                    if tc.name == "edit_file" {
-                        if let Some(args) = tc.arguments.as_object_mut() {
-                            args.remove(tool_runtime::APPROVED_CONTENT_ARG);
-                        }
-                    }
-
-                    // Pending edit gate (write_file / edit_file with approve_writes enabled)
-                    let is_edit_tool = EDIT_TOOLS.contains(&tc.name.as_str());
-                    let is_write_file = tc.name == "write_file";
-                    if is_edit_tool && approve_writes {
-                        let path = match tc
-                            .arguments
-                            .get("path")
-                            .and_then(|v| v.as_str())
-                        {
-                            Some(path) => path.to_string(),
-                            None => {
-                                let err = ToolResult {
-                                    tool_call_id: tc.id.clone(),
-                                    content: "Missing 'path' parameter".to_string(),
-                                    is_error: true,
-                                };
-                                let _ = app_handle.emit(
-                                    &tool_result_event(&session_id),
-                                    ToolResultPayload {
-                                        id: tc.id.clone(),
-                                        name: tc.name.clone(),
-                                        content: err.content.clone(),
-                                        is_error: true,
-                                        input: serde_json::to_string(&tc.arguments)
-                                            .unwrap_or_default(),
-                                    },
-                                );
-                                return (tc.id.clone(), err);
-                            }
-                        };
-                        let resolved_local_path = match &execution {
-                            ExecutionTarget::Local { project_path } => {
-                                match tool_runtime::resolve_workspace_path(
-                                    &path,
-                                    project_path,
-                                    false,
-                                ) {
-                                    Ok(path) => Some(path),
-                                    Err(e) => {
-                                        let err = ToolResult {
-                                            tool_call_id: tc.id.clone(),
-                                            content: e,
-                                            is_error: true,
-                                        };
-                                        let _ = app_handle.emit(
-                                            &tool_result_event(&session_id),
-                                            ToolResultPayload {
-                                                id: tc.id.clone(),
-                                                name: tc.name.clone(),
-                                                content: err.content.clone(),
-                                                is_error: true,
-                                                input: serde_json::to_string(&tc.arguments)
-                                                    .unwrap_or_default(),
-                                            },
-                                        );
-                                        return (tc.id.clone(), err);
-                                    }
-                                }
-                            }
-                            ExecutionTarget::Ssh { .. } => None,
-                        };
-                        // Read prior content for before/after diff. None for
-                        // new files, remote targets, or unreadable paths.
-                        let before = match &resolved_local_path {
-                            Some(path) => tokio::fs::read_to_string(path).await.ok(),
-                            None => None,
-                        };
-
-                        // The proposed post-edit file body: write_file carries
-                        // it outright, edit_file materializes it by replaying
-                        // its replacement onto the baseline so the diff the
-                        // user approves is the diff that lands.
-                        let content = if is_write_file {
-                            match tc.arguments.get("content").and_then(|v| v.as_str()) {
-                                Some(content) => content.to_string(),
-                                None => {
-                                    let err = ToolResult {
-                                        tool_call_id: tc.id.clone(),
-                                        content: "Missing 'content' parameter".to_string(),
-                                        is_error: true,
-                                    };
-                                    let _ = app_handle.emit(
-                                        &tool_result_event(&session_id),
-                                        ToolResultPayload {
-                                            id: tc.id.clone(),
-                                            name: tc.name.clone(),
-                                            content: err.content.clone(),
-                                            is_error: true,
-                                            input: serde_json::to_string(&tc.arguments)
-                                                .unwrap_or_default(),
-                                        },
-                                    );
-                                    return (tc.id.clone(), err);
-                                }
-                            }
-                        } else {
-                            let preview = if resolved_local_path.is_none() {
-                                Err(tool_runtime::EDIT_FILE_REMOTE_UNSUPPORTED.to_string())
-                            } else {
-                                tool_runtime::preview_edit_file(&tc.arguments, before.as_deref())
-                            };
-                            match preview {
-                                Ok(after) => after,
-                                Err(e) => {
-                                    let err = ToolResult {
-                                        tool_call_id: tc.id.clone(),
-                                        content: e,
-                                        is_error: true,
-                                    };
-                                    let _ = app_handle.emit(
-                                        &tool_result_event(&session_id),
-                                        ToolResultPayload {
-                                            id: tc.id.clone(),
-                                            name: tc.name.clone(),
-                                            content: err.content.clone(),
-                                            is_error: true,
-                                            input: serde_json::to_string(&tc.arguments)
-                                                .unwrap_or_default(),
-                                        },
-                                    );
-                                    return (tc.id.clone(), err);
-                                }
-                            }
-                        };
-
-                        let (tx, rx) = oneshot::channel::<EditDecision>();
-                        {
-                            let mut pending = state.pending_edits.lock().await;
-                            pending.insert((session_id.clone(), tc.id.clone()), tx);
-                        }
-                        let _ = app_handle.emit(
-                            &pending_edit_event(&session_id),
-                            PendingEditPayload {
-                                id: tc.id.clone(),
-                                path,
-                                content,
-                                before,
-                            },
-                        );
-                        match tokio::time::timeout(Duration::from_secs(600), rx).await {
-                            Ok(Ok(EditDecision::Apply { merged_content })) => {
-                                // F2: per-hunk acceptance — swap in the
-                                // user-merged file body before the tool runs
-                                // so the actual write writes only the hunks
-                                // the user picked, not the model's full
-                                // `after`. edit_file carries it in a reserved
-                                // argument its executor honours in place of
-                                // the search/replace.
-                                if let Some(merged) = merged_content {
-                                    let key = if is_write_file {
-                                        "content"
-                                    } else {
-                                        tool_runtime::APPROVED_CONTENT_ARG
-                                    };
-                                    if let Some(args) =
-                                        tc.arguments.as_object_mut()
-                                    {
-                                        args.insert(
-                                            key.to_string(),
-                                            serde_json::Value::String(merged),
-                                        );
-                                    }
-                                }
-                            }
-                            Ok(Ok(EditDecision::Reject)) | Ok(Err(_)) => {
-                                let err = ToolResult {
-                                    tool_call_id: tc.id.clone(),
-                                    content: "User rejected this edit.".to_string(),
-                                    is_error: true,
-                                };
-                                let _ = app_handle.emit(
-                                    &tool_result_event(&session_id),
-                                    ToolResultPayload {
-                                        id: tc.id.clone(),
-                                        name: tc.name.clone(),
-                                        content: err.content.clone(),
-                                        is_error: true,
-                                        input: serde_json::to_string(&tc.arguments)
-                                            .unwrap_or_default(),
-                                    },
-                                );
-                                return (tc.id.clone(), err);
-                            }
-                            Err(_) => {
-                                {
-                                    let mut pending = state.pending_edits.lock().await;
-                                    pending.remove(&(session_id.clone(), tc.id.clone()));
-                                }
-                                let err = ToolResult {
-                                    tool_call_id: tc.id.clone(),
-                                    content: "Edit approval timed out.".to_string(),
-                                    is_error: true,
-                                };
-                                let _ = app_handle.emit(
-                                    &tool_result_event(&session_id),
-                                    ToolResultPayload {
-                                        id: tc.id.clone(),
-                                        name: tc.name.clone(),
-                                        content: err.content.clone(),
-                                        is_error: true,
-                                        input: serde_json::to_string(&tc.arguments)
-                                            .unwrap_or_default(),
-                                    },
-                                );
-                                return (tc.id.clone(), err);
-                            }
-                        }
-                    } else if is_edit_tool {
-                        // P1-7: no approval gate, but still capture the
-                        // pre-edit baseline so review surfaces can diff the
-                        // applied result against the true "before" instead
-                        // of live disk. Local targets only — a remote read
-                        // here could mislabel an existing file as new.
-                        if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
-                            if let ExecutionTarget::Local { project_path } = &execution {
-                                let before = match tool_runtime::resolve_workspace_path(
-                                    path,
-                                    project_path,
-                                    false,
-                                ) {
-                                    Ok(resolved) => {
-                                        tokio::fs::read_to_string(resolved).await.ok()
-                                    }
-                                    Err(_) => None,
-                                };
-                                let _ = app_handle.emit(
-                                    &edit_baseline_event(&session_id),
-                                    EditBaselinePayload {
-                                        id: tc.id.clone(),
-                                        path: path.to_string(),
-                                        before,
-                                    },
-                                );
-                            }
-                        }
-                    }
-
-                    // PreToolUse hooks — non-zero exit vetoes the tool call.
-                    let mut vetoed_by: Option<String> = None;
-                    for hook in hooks_for_tool
-                        .iter()
-                        .filter(|h| h.event == HookEvent::PreToolUse)
-                    {
-                        if !hooks::matches_tool_call(
-                            hook.matcher.as_deref(),
-                            &tc.name,
-                            &tc.arguments,
-                        ) {
-                            continue;
-                        }
-                        let payload = serde_json::json!({
-                            "session_id": session_id,
-                            "event": "PreToolUse",
-                            "tool_name": tc.name,
-                            "tool_input": tc.arguments,
-                        });
-                        match hooks::run_hook(hook, payload).await {
-                            Ok(res) if res.veto => {
-                                vetoed_by = Some(hook.command.clone());
-                                break;
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                warn!(
-                                    session_id = %session_id,
-                                    tool = %tc.name,
-                                    error = %e,
-                                    "PreToolUse hook failed (treating as allow)"
-                                );
-                            }
-                        }
-                    }
-
-                    if let Some(hook_cmd) = vetoed_by {
-                        let err = ToolResult {
-                            tool_call_id: tc.id.clone(),
-                            content: format!("Blocked by PreToolUse hook: {}", hook_cmd),
-                            is_error: true,
-                        };
-                        let _ = app_handle.emit(
-                            &tool_result_event(&session_id),
-                            ToolResultPayload {
-                                id: tc.id.clone(),
-                                name: tc.name.clone(),
-                                content: err.content.clone(),
-                                is_error: true,
-                                input: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                            },
-                        );
-                        return (tc.id.clone(), err);
-                    }
-
-                    // Execute tool. The PARENT_LLM scope hands sub-agent
-                    // tools the session's provider (Q2); everything else is
-                    // oblivious to it.
-                    let result = crate::core::tool_subagent::PARENT_LLM
-                        .scope(
-                            parent_llm,
-                            crate::core::tool_runtime_ssh::SSH_TOOL_OWNER.scope(
-                                session_id.clone(),
-                                tool_runtime::execute_tool_with_mcp_trust(
-                                    &tc,
-                                    &execution,
-                                    enabled_mcp_server_ids.as_deref(),
-                                    mcp_trust_snapshot.as_deref(),
-                                ),
-                            ),
-                        )
-                        .await;
-                    let _ = app_handle.emit(
-                        &tool_result_event(&session_id),
-                        ToolResultPayload {
-                            id: tc.id.clone(),
-                            name: tc.name.clone(),
-                            content: result.content.clone(),
-                            is_error: result.is_error,
-                            input: serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                        },
-                    );
-
-                    // PostToolUse hooks — best-effort; failures logged.
-                    for hook in hooks_for_tool
-                        .iter()
-                        .filter(|h| h.event == HookEvent::PostToolUse)
-                    {
-                        if !hooks::matches_tool_call(
-                            hook.matcher.as_deref(),
-                            &tc.name,
-                            &tc.arguments,
-                        ) {
-                            continue;
-                        }
-                        let payload = serde_json::json!({
-                            "session_id": session_id,
-                            "event": "PostToolUse",
-                            "tool_name": tc.name,
-                            "tool_input": tc.arguments,
-                            "tool_result": result.content,
-                            "is_error": result.is_error,
-                        });
-                        if let Err(e) = hooks::run_hook(hook, payload).await {
-                            warn!(
-                                session_id = %session_id,
-                                tool = %tc.name,
-                                error = %e,
-                                "PostToolUse hook failed"
-                            );
-                        }
-                    }
-
-                    (tc.id.clone(), result)
-                }
-            })
-            .collect();
-
-        let raw_results = tokio::select! {
-            _ = &mut cancel_rx => {
-                // Dropping join_all drops every in-flight tool future. Child
-                // processes and network requests owned by those futures can
-                // unwind immediately instead of waiting for the next model
-                // iteration to observe cancellation.
-                finish_cancelled_agent_turn(
-                    app_handle,
-                    state,
-                    session_id,
-                    total_input_tokens,
-                    total_output_tokens,
-                    total_cache_read,
-                    total_cache_write,
-                    &all_hooks,
-                )
-                .await;
-                return Ok(());
-            }
-            results = futures::future::join_all(futures) => results,
-        };
-
-        // Rebuild tool_result_blocks in the original tool_calls order (critical for Anthropic pairing).
-        let results_map: HashMap<String, ToolResult> = raw_results.into_iter().collect();
-        let mut tool_result_blocks = Vec::with_capacity(tool_calls.len());
-        for tc in &tool_calls {
-            if let Some(result) = results_map.get(&tc.id) {
-                tool_result_blocks.push(ContentBlock::ToolResult {
-                    tool_call_id: result.tool_call_id.clone(),
-                    content: result.content.clone(),
-                    is_error: result.is_error,
-                });
-            }
-        }
-
-        // Append tool results as a tool message
-        {
-            let mut histories = state.histories.lock().await;
-            if let Some(history) = histories.get_mut(session_id) {
-                history.push(ChatMessage {
-                    role: ChatRole::Tool,
-                    content: MessageContent::Blocks(tool_result_blocks),
-                });
-            }
-        }
-
-        info!(
-            session_id = %session_id,
-            iteration = iteration,
-            tool_count = tool_calls.len(),
-            "Agent loop: executed tools, continuing"
-        );
-    }
-
-    // Hit max iterations
-    warn!(session_id = %session_id, "Agent loop hit max iterations ({})", MAX_TOOL_ITERATIONS);
-    mark_attempt_reviewing_for_session(session_id).await;
-
-    let _ = app_handle.emit(
-        &done_event(session_id),
-        DonePayload {
-            input_tokens: total_input_tokens,
-            output_tokens: total_output_tokens,
-            cache_read_input_tokens: total_cache_read,
-            cache_creation_input_tokens: total_cache_write,
-            cancelled: false,
-        },
-    );
-
-    fire_session_end_hooks(&all_hooks, session_id).await;
     Ok(())
 }
