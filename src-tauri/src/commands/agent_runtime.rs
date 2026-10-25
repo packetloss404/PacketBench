@@ -6,8 +6,9 @@ use crate::core::runtime_capabilities::{self, RuntimeCapabilityView};
 use crate::core::runtime_context::ContextSnapshot;
 use crate::core::runtime_journal as journal;
 use crate::core::runtime_types::{
-    FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeContextProjection,
-    RuntimeContextSummary, RuntimeEventView, RuntimeLaunchView, RuntimeRunSummary,
+    FrozenExecutionBinding, FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult,
+    RuntimeContextProjection, RuntimeContextSummary, RuntimeEventView, RuntimeLaunchView,
+    RuntimeRunSummary,
 };
 
 async fn on_blocking<T: Send + 'static>(
@@ -228,6 +229,7 @@ pub async fn prepare_session_run(
     provider: &str,
     model: &str,
     project_path: &str,
+    execution: &ExecutionTarget,
 ) -> Result<Option<RuntimeRunBinding>, String> {
     if !journal::is_enabled() {
         return Ok(None);
@@ -243,6 +245,22 @@ pub async fn prepare_session_run(
     let model = model.to_string();
     let project_key = format!("local:{}", project_path);
     let base_path = project_path.to_string();
+    // Freeze the immutable execution authority: local carries no host identity;
+    // SSH carries the server id, host and verified host-key pin.
+    let execution_binding = match execution {
+        ExecutionTarget::Local { .. } => FrozenExecutionBinding {
+            kind: "local".to_string(),
+            server_id: None,
+            host: None,
+            host_fingerprint: None,
+        },
+        ExecutionTarget::Ssh { config } => FrozenExecutionBinding {
+            kind: "ssh".to_string(),
+            server_id: config.target_id.clone(),
+            host: Some(config.host.clone()),
+            host_fingerprint: config.host_fingerprint.clone(),
+        },
+    };
     let result = on_blocking(move || {
         journal::with_journal(|connection| {
             // A conversation that already has a durable owner is a restart or a
@@ -270,6 +288,7 @@ pub async fn prepare_session_run(
                     draft_revision: "1".to_string(),
                     project_key,
                     base_path,
+                    execution: Some(execution_binding),
                 },
             };
             journal::prepare_operation(connection, &input)

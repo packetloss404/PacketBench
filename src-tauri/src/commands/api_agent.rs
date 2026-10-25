@@ -1636,9 +1636,14 @@ async fn start_api_agent_session_inner(
     // R3b: when the runtime journal is enabled, prepare a durable run so the
     // runner can persist checkpoints. Disabled (the default), this is a no-op
     // and the path below is byte-identical to today.
-    let runtime_binding =
-        super::agent_runtime::prepare_session_run(&session_id, &provider, &model, &project_path)
-            .await?;
+    let runtime_binding = super::agent_runtime::prepare_session_run(
+        &session_id,
+        &provider,
+        &model,
+        &project_path,
+        &execution,
+    )
+    .await?;
 
     // Claim the session before mutating its config/history. A duplicate start
     // cannot overwrite a live turn and inherit the old task's eventual cleanup.

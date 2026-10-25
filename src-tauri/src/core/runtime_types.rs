@@ -88,6 +88,28 @@ pub struct FrozenRuntimeLaunch {
     pub draft_revision: String,
     pub project_key: String,
     pub base_path: String,
+    /// The immutable execution authority of the run (R1/R3). Absent on rows
+    /// written before this field existed; an existing turn is only refused when
+    /// both sides carry a binding that differs.
+    #[serde(default)]
+    #[ts(optional)]
+    pub execution: Option<FrozenExecutionBinding>,
+}
+
+/// The immutable execution authority of a run. Local carries no host identity;
+/// SSH carries the server id, host and verified host-key pin, so a resumed or
+/// extended run cannot silently target a different host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FrozenExecutionBinding {
+    /// "local" | "ssh"
+    pub kind: String,
+    #[ts(optional)]
+    pub server_id: Option<String>,
+    #[ts(optional)]
+    pub host: Option<String>,
+    #[ts(optional)]
+    pub host_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -467,6 +467,31 @@ pub fn prepare_operation(
                         input.conversation_id, input.launch.project_key
                     ));
                 }
+                // Immutable execution authority: the caller's execution binding
+                // must match the owner's frozen one, so an existing turn cannot
+                // silently target a different host. Only compared when both sides
+                // carry a binding (rows written before the field exist).
+                if let Some(previous_run) = latest {
+                    let previous_operation: String = connection
+                        .query_row(
+                            "SELECT operation_id FROM runs WHERE run_id = ?1",
+                            params![previous_run],
+                            |row| row.get(0),
+                        )
+                        .map_err(|e| format!("Failed to read predecessor run: {e}"))?;
+                    let previous = frozen_launch_for(connection, &previous_operation)?;
+                    if let (Some(previous_exec), Some(caller_exec)) =
+                        (&previous.execution, &input.launch.execution)
+                    {
+                        if previous_exec != caller_exec {
+                            return Err(format!(
+                                "Conversation {} is bound to a different execution target; refusing \
+                                 an existing turn for a changed host or path",
+                                input.conversation_id
+                            ));
+                        }
+                    }
+                }
                 latest.clone()
             }
             _ => unreachable!(),
@@ -1118,6 +1143,7 @@ mod tests {
                 draft_revision: "rev-1".to_string(),
                 project_key: "local:D:/proj".to_string(),
                 base_path: "D:/proj".to_string(),
+                execution: None,
             },
         }
     }
@@ -1872,6 +1898,37 @@ mod tests {
         other.kind = "existing".to_string();
         other.launch.project_key = "local:/other".to_string();
         assert!(prepare_operation(&connection, &other).is_err());
+    }
+
+    #[test]
+    fn existing_turn_rejects_a_changed_execution_target() {
+        use crate::core::runtime_types::FrozenExecutionBinding;
+        let connection = open_at(&temp_db()).unwrap();
+        let ssh = FrozenExecutionBinding {
+            kind: "ssh".to_string(),
+            server_id: Some("srv-1".to_string()),
+            host: Some("a.example".to_string()),
+            host_fingerprint: Some("SHA256:fp".to_string()),
+        };
+        let mut first = input("op-1", &digest(1));
+        first.launch.execution = Some(ssh.clone());
+        prepare_operation(&connection, &first).unwrap();
+
+        // A changed host/pin is refused.
+        let mut changed = input("op-2", &digest(2));
+        changed.kind = "existing".to_string();
+        changed.launch.execution = Some(FrozenExecutionBinding {
+            host: Some("b.example".to_string()),
+            host_fingerprint: Some("SHA256:other".to_string()),
+            ..ssh.clone()
+        });
+        assert!(prepare_operation(&connection, &changed).is_err());
+
+        // The same execution target is admitted.
+        let mut same = input("op-3", &digest(3));
+        same.kind = "existing".to_string();
+        same.launch.execution = Some(ssh);
+        assert!(prepare_operation(&connection, &same).is_ok());
     }
 
     #[test]

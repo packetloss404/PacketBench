@@ -24,7 +24,19 @@ route: string, model: string,
 /**
  * Only "checkout" is accepted by R1a.
  */
-requestedIsolation: string, draftId: string, draftRevision: string, projectKey: string, basePath: string, };
+requestedIsolation: string, draftId: string, draftRevision: string, projectKey: string, basePath: string,
+/**
+ * The immutable execution authority of the run (R1/R3). Absent on rows
+ * written before this field existed; an existing turn is only refused when
+ * both sides carry a binding that differs.
+ */
+execution?: FrozenExecutionBinding, };
+
+export type FrozenExecutionBinding = {
+/**
+ * "local" | "ssh"
+ */
+kind: string, serverId?: string, host?: string, hostFingerprint?: string, };
 
 export type PrepareRuntimeRunInput = { operationId: string, conversationId: string,
 /**
