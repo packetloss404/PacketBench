@@ -17,6 +17,7 @@ The source is committed and pushed; the full agent-experience target and latest 
 
 - [Desktop completion plan](./agent-experience/08-desktop-completion-before-remote-agents.md) and [team dispatch](./agent-experience/05-agent-dispatch-and-acceptance.md) — current implementation and acceptance order.
 - [Remote Agents](./remoteagents/README.md) — follows desktop completion/acceptance; later extend existing PacketRelay through transport/security contracts and internal presence.
+- [October 25 desktop GUI follow-up plan](./bridgemind/feature-gap-plan-2026-10-25.md) — consolidates BridgeMind/Cursor/Codex/Claude gaps with desktop first and Remote Agents next; reuses current owners, then phases workflow/handoff, preview/results and review/PR follow-up. Teammate/background-host/deployment-health work remains design only.
 - [Agents/runtime target specification](./agent-experience/README.md) — committed implementation slices plus the remaining safety, flow and appearance work; Composer excluded.
 - [October 24 verification report](./documentation-audit-2026-10-24.md) — source/commit/installed-payload evidence, per-packet gaps and audit limits.
 - [October 25 advertised-feature acceptance](./advertised-feature-acceptance-2026-10-25.md) — README feature inventory, browser/source/native evidence boundaries and this team's fresh results. It does not promote historical tests to current native acceptance.

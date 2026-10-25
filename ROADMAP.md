@@ -2,6 +2,11 @@
 
 Last reconciled: October 24, 2026, later owner sequencing decision. **Finish the existing desktop/runtime work and acceptance before Remote Agents.**
 
+October 25 planning addendum: the [desktop GUI follow-up plan](dev/bridgemind/feature-gap-plan-2026-10-25.md)
+adds bounded later work without changing desktop-first or Remote Agents' next-program priority.
+It consolidates BridgeMind, Cursor, Codex and Claude findings into existing
+owners plus BM1–BM5/GUI1–GUI5; the backlog remains the only task ledger.
+
 [Current status](dev/current-status.md) records verified facts; [backlog](backlog.md) is the only task ledger. [The documentation hub](dev/README.md) links all programs, operations, evidence and archives.
 
 ## Now — complete the existing desktop/runtime and acceptance
@@ -36,7 +41,22 @@ The [October 24 audit](dev/documentation-audit-2026-10-24.md) verifies committed
 
 ## Later — explicit optional work
 
+- After the existing Remote Agents program, exact CLI conversation recovery,
+  destination-aware issue/prompt delivery and consistent attention across
+  existing surfaces (BM1–BM3). Keep API-agent recovery and current approval
+  defects in their existing desktop-completion scope.
+- Reuse those contracts for explicit conversation/worktree handoff and
+  recoverable cleanup (GUI2), then task-linked result viewers (GUI1), persistent
+  security findings (GUI3) and opt-in bounded PR follow-up (GUI4). Extend current
+  file/review/evidence and Git host surfaces; do not create duplicate runtimes.
 - Evidence-backed quota disclosure, scoped rendered-app verification and supported ChatGPT-plan transport feasibility, after the core safety/experience work.
+- H8's scoped verification investigation includes a docked development preview
+  and opt-in element context capture. Later BM4/BM5 design evaluates persistent
+  teammates/routine supervision and a background PTY host; scheduling/durable
+  execution stay with PacketAgent. These are not daemon or new-mode commitments.
+- H8 also owns later CSS previews and bounded visual verification. GUI5 is a
+  later deployment-health feasibility decision within PacketAgent ownership,
+  separate from existing Monitor UI work; no automatic rollback is committed.
 - Native iOS/TestFlight after the Remote Agents PWA earns its phone/relay/auth/push evidence.
 - Optional bounded improvements already in backlog only when selected; old product sketches are not an approved implementation queue.
 - Packet Control, delayed Global Undo, Monitor/SSH expansion and dictation benchmarks keep their existing boundaries; general Computer Use remains paused. These do not become prerequisites for desktop completion or silently become required feature expansion.

@@ -7,6 +7,22 @@ This is the current restart document. Use `backlog.md` for outstanding work,
 `docs/handoff.md` and `docs/audit-2026-09-04.md` describe the September audit;
 the current contracts below supersede their older protocol and queue details.
 
+## Planning addendum — October 25, 2026
+
+The owner requested worthwhile BridgeMind, Cursor, Codex and Claude GUI gaps
+in the backlog and a phased plan, with desktop completion first and no
+application changes yet. Read [the follow-up plan](dev/bridgemind/feature-gap-plan-2026-10-25.md)
+and BM1–BM5/GUI1–GUI5 in [backlog](backlog.md). N1/F3/H8, BM2 delivery and Remote
+approval work were refined in place; R1/R3, F6, H9, Packet Control and PacketAgent
+retain their existing owners. Side questions and inline diff comments are
+existing features. New gaps cover results, worktree handoff, security findings
+and bounded PR follow-up; deployment-health work is later design only.
+Execution order remains desktop acceptance → existing Remote Agents → local
+workflow/handoff → preview/results → review/PR follow-up → optional teammate/
+PTY-host/deployment-health design.
+The next action is still the existing desktop completion plan. This addendum
+claims no new app implementation, runtime test, build, installation or acceptance.
+
 ## Current restart — October 24, 2026
 
 Read [dev/current-status.md](dev/current-status.md), [the verification report](dev/documentation-audit-2026-10-24.md), ROADMAP and backlog before the older records below.
