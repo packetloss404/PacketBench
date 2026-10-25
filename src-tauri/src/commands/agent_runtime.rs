@@ -943,6 +943,7 @@ impl RuntimeServices for TauriRuntimeServices {
     /// (`ceil(serialized bytes / 3)` input tokens plus the request's `max_tokens`
     /// output), priced through the shared table; an unpriced model is refused
     /// fail-closed rather than treated as free.
+    #[allow(clippy::too_many_arguments)]
     async fn admit_request(
         &self,
         session_id: &str,
@@ -1025,7 +1026,8 @@ fn now_ms() -> i64 {
 
 /// Conservative input-token estimate for one request: the system prompt, the
 /// messages and the tool schemas at `ceil(bytes / 3)`, plus a flat per-image
-/// charge. Not a tokenizer — it must never under-count what a run may cost.
+/// charge. Not a tokenizer — a directional upper-bound heuristic (R6 ceils each
+/// item and adds per-message framing overhead, so the two are not identical).
 fn estimate_request_input_tokens(
     system_prompt: &str,
     messages: &[ChatMessage],
@@ -1061,6 +1063,7 @@ fn estimate_request_input_tokens(
 /// and the queued images — plus the request's `max_tokens` output, priced
 /// through the shared table; an unpriced model is refused fail-closed rather
 /// than treated as free.
+#[allow(clippy::too_many_arguments)]
 async fn admit_session_request(
     state: &ApiAgentState,
     session_id: &str,

@@ -391,6 +391,7 @@ pub trait RuntimeServices:
     /// disabled, this is a no-op returning [`BudgetAdmission::NotConfigured`],
     /// so the disabled path is unchanged. The default is that no-op — a host
     /// that never sets a budget needs no override.
+    #[allow(clippy::too_many_arguments)]
     async fn admit_request(
         &self,
         _session_id: &str,

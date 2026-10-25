@@ -73,6 +73,7 @@ pub trait ChildBudgetHook: Send + Sync {
     /// Reserve for one child request. `Ok(true)` means a durable reservation
     /// now exists and MUST be settled or released; `Ok(false)` means no
     /// reservation was made (journal off / no budget).
+    #[allow(clippy::too_many_arguments)]
     async fn reserve(
         &self,
         request_id: &str,
