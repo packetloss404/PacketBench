@@ -79,7 +79,8 @@ committed and pushed; latest installed-source identity remains unverified.
       context/window readout (`get_runtime_context_summary` with a window-known
       disclosure and a hash-verified latest-snapshot store, commit `88d34a54`)
       and explicit R7 child cancellation (a per-turn cancellation token threaded
-      into the child loop; `SubagentStatus::Cancelled`; commit `6d3498e5`). OPEN:
+      into the child loop; `SubagentStatus::Cancelled`; commits `6d3498e5`,
+      corrected `b2cb653b`). OPEN:
       production manifest identity (R4), conservative window/counting policy for
       non-Anthropic routes (the static table resolves an unknown window that
       never blocks), and SDK hooks/declarations. Retain offline v1 success
@@ -192,11 +193,23 @@ arm, and threaded through `ToolExecContext` into `ParentLlm`; the child loop
 selects on it, drops its provider stream, releases its reservation (a dispatched
 child becomes uncertain liability) and returns the new `SubagentStatus::Cancelled`
 instead of relying on the implicit future-drop. Nested children inherit the
-token. Evidence: full lib suite **1294 passed / 0 failed** (with a deterministic
-blocked-provider cancellation test), runtime-eval **12/12**, fmt clean. Open:
-R1/R3 production transaction/typed resume, R4 production manifest, conservative
-window policy for non-Anthropic routes, and the remaining R8 evidence; the
-journal is still default-off.
+token.
+
+**R7 correction, commit `b2cb653b`.** An independent read-only review found the
+token inert on the production path: tokio's `select!` drops the losing branch's
+futures *before* the winning arm's handler runs, so the tool-round `join_all`
+(and every child in it) was dropped before `child_cancel.cancel()` executed. The
+fix boxes the join, borrows it in the select, and on cancel awaits it under a 5s
+timeout so children observe the token, abort and release; the cancellation test
+now runs the child inline (matching production) and the status-mapping test
+covers `Cancelled`. Residual: cancellation is observed at the child's stream
+boundary, so a long child *tool dispatch* delays it (bounded by the 5s grace),
+and there is no runner-level integration test for the parent select shape.
+
+Evidence: full lib suite **1294 passed / 0 failed**, runtime-eval **12/12**, fmt
+clean. Open: R1/R3 production transaction/typed resume, R4 production manifest,
+conservative window policy for non-Anthropic routes, and the remaining R8
+evidence; the journal is still default-off.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
       rendered, automated Agents navigation timed out, the next capture showed
