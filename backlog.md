@@ -58,9 +58,11 @@ committed and pushed; latest installed-source identity remains unverified.
       not enable merely because a prerequisite commit landed).
 - [~] **P1 — F2 retained assets and delivery failure.** DONE: GC never reclaims
       assets whose v2 envelope is newer/unknown or corrupt (commits `02641d6e`,
-      `764cdbd5`). OPEN: message/submission/checkpoint ownership pins, grace/
-      capacity rules, unreadable-materialization rejection and project-scoped
-      launch drafts.
+      `764cdbd5`); a send is blocked (never silently drops an image) when a
+      staged durable ref's bytes are unreadable (commit `905e574d`); launch
+      drafts are scoped by project identity (commit `354a6e78`). OPEN:
+      message/submission/checkpoint ownership pins and grace/aggregate-capacity
+      rules (the checkpoint pins couple to R1/R3 typed image recovery).
 - [~] **P1 — F4/F5 wrong-target and failed-start behavior.** DONE: contextual New
       preserves SSH server identity via `makeSshUri`, and a rejected backend
       start retains the draft and reports failure instead of claiming Running
@@ -152,6 +154,19 @@ adoption, failure wording, remote URI fallback) were fixed in `43c8d45a`.
 Open: Phase 1 runtime/recovery/spend, the remaining F2/F3/F6/V3–V8 items, N1
 diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
+
+### Plan execution — desktop completion gate
+
+**A2a/A2b (F2B), commits `905e574d`, `354a6e78`, `914f0ea5`.** `stagedToImageAttachments`
+now returns `{ attachments, unreadable }`; the Composer marks unreadable chips
+missing (new `agentDraftStore.markAttachmentUnreadable`), raises a visible
+rejection and blocks both the launch and chat send while keeping the draft (the
+all-in-memory case stays on the synchronous fast path). Launch drafts are scoped
+by project identity via `agentDraftStore.launchDraftKey(projectRef)` so switching
+projects restores that project's own draft; the legacy `__launch__` slot remains
+for a null project. Evidence: full frontend suite 331 files / **3296 tests pass**;
+new `agentDraftAssets` suite, a Composer unreadable-at-send case, a Composer
+project-switch case and a `launchDraftKey` unit test.
 
 ### Phase 1 runtime tranche — R5 uncertain budget liability, commits `d1a92522`, `e8fcb3ae`
 
