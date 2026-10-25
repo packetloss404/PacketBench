@@ -556,8 +556,15 @@ pub async fn run_turn<R: RuntimeServices>(
         // refusal (overflow or budget) never consumes them — R4b's "nothing
         // silently dropped" guarantee holds. It runs BEFORE admission and the
         // dispatch-intent checkpoint, so an overflow blocks before any spend.
+        // Count queued attachments ONCE, non-draining, only when the guard is on
+        // so the disabled path does not probe. The count feeds both the context
+        // projection and the R5 budget estimate.
+        let attachment_count = if services.capability_guard_enabled() {
+            services.pending_attachment_count(session_id).await
+        } else {
+            0
+        };
         if services.capability_guard_enabled() {
-            let attachment_count = services.pending_attachment_count(session_id).await;
             let window_tokens = session
                 .context_window_tokens
                 .filter(|window| *window > 0)
@@ -605,7 +612,10 @@ pub async fn run_turn<R: RuntimeServices>(
                     &request_id,
                     &provider_name,
                     &model,
+                    &system_prompt,
                     &messages,
+                    &tools,
+                    attachment_count,
                     MAX_OUTPUT_TOKENS,
                 )
                 .await?,

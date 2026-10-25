@@ -27,7 +27,7 @@ use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::HookConfig;
 use crate::core::llm_provider::LlmProvider;
 use crate::core::llm_types::{
-    ChatMessage, ImageAttachment, LlmRequest, StreamChunk, ToolCall, ToolResult,
+    ChatMessage, ImageAttachment, LlmRequest, StreamChunk, ToolCall, ToolDefinition, ToolResult,
 };
 use crate::core::mcp_session::NativeMcpSession;
 use crate::core::runtime_context::ContextSnapshot;
@@ -662,7 +662,10 @@ impl RuntimeServices for FakeServices {
         request_id: &str,
         provider: &str,
         model: &str,
+        _system_prompt: &str,
         _messages: &[ChatMessage],
+        _tools: &[ToolDefinition],
+        _attachment_count: usize,
         max_tokens: u64,
     ) -> Result<BudgetAdmission, String> {
         self.admit_calls.lock().expect("admit calls").push((

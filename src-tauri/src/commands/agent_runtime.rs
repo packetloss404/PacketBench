@@ -619,7 +619,9 @@ use crate::core::agent_runtime::{
 use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::{self, HookConfig};
 use crate::core::llm_provider::{get_provider, LlmProvider};
-use crate::core::llm_types::{ChatMessage, ImageAttachment, StreamChunk, ToolCall, ToolResult};
+use crate::core::llm_types::{
+    ChatMessage, ImageAttachment, StreamChunk, ToolCall, ToolDefinition, ToolResult,
+};
 use crate::core::runtime_budget::{
     self, BudgetError, BudgetScope, ReserveRequest, SettlementOutcome,
 };
@@ -947,7 +949,10 @@ impl RuntimeServices for TauriRuntimeServices {
         request_id: &str,
         provider: &str,
         model: &str,
+        system_prompt: &str,
         messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        attachment_count: usize,
         max_tokens: u64,
     ) -> Result<BudgetAdmission, String> {
         admit_session_request(
@@ -956,7 +961,10 @@ impl RuntimeServices for TauriRuntimeServices {
             request_id,
             provider,
             model,
+            system_prompt,
             messages,
+            tools,
+            attachment_count,
             max_tokens,
         )
         .await
@@ -1015,19 +1023,54 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Conservative input-token estimate for one request: the system prompt, the
+/// messages and the tool schemas at `ceil(bytes / 3)`, plus a flat per-image
+/// charge. Not a tokenizer — it must never under-count what a run may cost.
+fn estimate_request_input_tokens(
+    system_prompt: &str,
+    messages: &[ChatMessage],
+    tools: &[ToolDefinition],
+    attachment_count: usize,
+) -> u64 {
+    let text_chars: u64 = system_prompt.len() as u64
+        + messages
+            .iter()
+            .map(|message| {
+                serde_json::to_string(message)
+                    .map(|text| text.len() as u64)
+                    .unwrap_or(0)
+            })
+            .sum::<u64>()
+        + tools
+            .iter()
+            .map(|tool| {
+                serde_json::to_string(tool)
+                    .map(|text| text.len() as u64)
+                    .unwrap_or(0)
+            })
+            .sum::<u64>();
+    text_chars.div_ceil(3).saturating_add(
+        (attachment_count as u64).saturating_mul(runtime_context::IMAGE_TOKEN_ESTIMATE),
+    )
+}
+
 /// R5b admission, shared by the runner's per-request path and R7's child-request
 /// hook. No-op unless the journal is enabled AND the session has a configured
-/// budget. The estimate is a conservative backend heuristic
-/// (`ceil(serialized bytes / 3)` input tokens plus the request's `max_tokens`
-/// output), priced through the shared table; an unpriced model is refused
-/// fail-closed rather than treated as free.
+/// budget. The estimate is a conservative backend heuristic over every input
+/// class the request carries — the system prompt, the messages, the tool schemas
+/// and the queued images — plus the request's `max_tokens` output, priced
+/// through the shared table; an unpriced model is refused fail-closed rather
+/// than treated as free.
 async fn admit_session_request(
     state: &ApiAgentState,
     session_id: &str,
     request_id: &str,
     provider: &str,
     model: &str,
+    system_prompt: &str,
     messages: &[ChatMessage],
+    tools: &[ToolDefinition],
+    attachment_count: usize,
     max_tokens: u64,
 ) -> Result<BudgetAdmission, String> {
     if !journal::is_enabled() {
@@ -1037,15 +1080,8 @@ async fn admit_session_request(
         return Ok(BudgetAdmission::NotConfigured);
     };
 
-    let serialized_chars: u64 = messages
-        .iter()
-        .map(|message| {
-            serde_json::to_string(message)
-                .map(|text| text.len() as u64)
-                .unwrap_or(0)
-        })
-        .sum();
-    let input_tokens = serialized_chars.div_ceil(3);
+    let input_tokens =
+        estimate_request_input_tokens(system_prompt, messages, tools, attachment_count);
     let output_tokens = max_tokens;
 
     if pricing::pricing_for(model).is_none() {
@@ -1249,7 +1285,9 @@ impl ChildBudgetHook for SessionChildBudget {
         request_id: &str,
         provider: &str,
         model: &str,
+        system_prompt: &str,
         messages: &[ChatMessage],
+        tools: &[ToolDefinition],
         max_tokens: u64,
     ) -> Result<bool, String> {
         match admit_session_request(
@@ -1258,7 +1296,10 @@ impl ChildBudgetHook for SessionChildBudget {
             request_id,
             provider,
             model,
+            system_prompt,
             messages,
+            tools,
+            0, // a child carries no attachments
             max_tokens,
         )
         .await?
@@ -1375,6 +1416,44 @@ mod tests {
         );
         // The identity validates and yields a content-addressed manifest.
         assert!(runtime_manifest::RunManifest::new(identity, 1).is_ok());
+    }
+
+    #[test]
+    fn estimate_request_input_tokens_includes_system_tools_and_images() {
+        use crate::core::llm_types::{ChatMessage, ChatRole, MessageContent, ToolDefinition};
+        let message = ChatMessage {
+            role: ChatRole::User,
+            content: MessageContent::text("hi"),
+        };
+        let tool = ToolDefinition {
+            name: "bash".to_string(),
+            description: "run a command".to_string(),
+            parameters: serde_json::json!({ "type": "object" }),
+        };
+        let base = estimate_request_input_tokens("", std::slice::from_ref(&message), &[], 0);
+        assert!(
+            estimate_request_input_tokens(
+                "a long system prompt",
+                std::slice::from_ref(&message),
+                &[],
+                0
+            ) > base,
+            "the system prompt must count toward the estimate"
+        );
+        assert!(
+            estimate_request_input_tokens(
+                "",
+                std::slice::from_ref(&message),
+                std::slice::from_ref(&tool),
+                0
+            ) > base,
+            "tool schemas must count toward the estimate"
+        );
+        assert_eq!(
+            estimate_request_input_tokens("", std::slice::from_ref(&message), &[], 1) - base,
+            runtime_context::IMAGE_TOKEN_ESTIMATE,
+            "each image adds a flat charge"
+        );
     }
 
     #[test]

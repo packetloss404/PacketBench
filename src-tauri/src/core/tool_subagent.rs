@@ -78,7 +78,9 @@ pub trait ChildBudgetHook: Send + Sync {
         request_id: &str,
         provider: &str,
         model: &str,
+        system_prompt: &str,
         messages: &[ChatMessage],
+        tools: &[ToolDefinition],
         max_tokens: u64,
     ) -> Result<bool, String>;
     /// Settle a reservation with the exact actual cost.
@@ -365,7 +367,9 @@ async fn run_agent_loop_inner(
                     &request_id,
                     &parent.provider,
                     &model,
+                    &system_prompt,
                     &messages,
+                    &tools,
                     max_tokens as u64,
                 )
                 .await
@@ -766,7 +770,9 @@ mod tests {
             request_id: &str,
             _provider: &str,
             _model: &str,
+            _system_prompt: &str,
             _messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
             _max_tokens: u64,
         ) -> Result<bool, String> {
             self.reserves
@@ -803,7 +809,9 @@ mod tests {
             _request_id: &str,
             _provider: &str,
             _model: &str,
+            _system_prompt: &str,
             _messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
             _max_tokens: u64,
         ) -> Result<bool, String> {
             Ok(false)
@@ -825,7 +833,9 @@ mod tests {
             _request_id: &str,
             _provider: &str,
             _model: &str,
+            _system_prompt: &str,
             _messages: &[ChatMessage],
+            _tools: &[ToolDefinition],
             _max_tokens: u64,
         ) -> Result<bool, String> {
             Err("budget scope exceeded".to_string())

@@ -397,7 +397,10 @@ pub trait RuntimeServices:
         _request_id: &str,
         _provider: &str,
         _model: &str,
+        _system_prompt: &str,
         _messages: &[ChatMessage],
+        _tools: &[ToolDefinition],
+        _attachment_count: usize,
         _max_tokens: u64,
     ) -> Result<BudgetAdmission, String> {
         Ok(BudgetAdmission::NotConfigured)
