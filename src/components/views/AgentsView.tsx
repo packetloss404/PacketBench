@@ -3,7 +3,8 @@ import { Bot, X } from "lucide-react";
 import { authProbeProvider, useAgentTaskStore, type AgentCli } from "@/stores/agentTaskStore";
 import { useAgentSettingsStore } from "@/stores/agentSettingsStore";
 import { useProfileStore } from "@/stores/profileStore";
-import { launchConversation, type LaunchPhase } from "@/lib/launchConversation";
+import { launchConversation } from "@/lib/launchConversation";
+import { useAgentLaunchStore } from "@/stores/agentLaunchStore";
 import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import { getProviderAuthStatus, type ImageAttachment } from "@/lib/tauri";
 import { makeSshUri } from "@/lib/ssh-uri";
@@ -68,7 +69,9 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
   const [selectedModel, setSelectedModel] = useState(pinnedModel ?? DEFAULT_MODEL);
   const [agentMode, setAgentMode] = useState<AgentMode>("agent");
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const [launchPhase, setLaunchPhase] = useState<LaunchPhase | null>(null);
+  // F4: the launch phase lives in a shared store so it survives a remount and
+  // backs the duplicate-Start guard.
+  const launchPhase = useAgentLaunchStore((state) => state.launch.phase);
   const defaultProfileId = useProfileStore((state) => state.defaultProfileId);
   const getProfile = useProfileStore((state) => state.getProfile);
   const [selectedProfileId, setSelectedProfileId] = useState(defaultProfileId);
@@ -153,12 +156,17 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
   const handleProfileChange = useCallback((profileId: string) => {
     userPickedProfile.current = true;
     userInteractedRef.current = true;
+    useAgentLaunchStore.getState().bumpRevision();
     setSelectedProfileId(profileId);
   }, []);
 
   const handleLaunch = useCallback(
-    (rawText: string, attachments: ImageAttachment[]) =>
-      launchConversation({
+    (rawText: string, attachments: ImageAttachment[]) => {
+      // F4: one operation per draft revision. A duplicate Enter/click — even
+      // after a remount — is refused while this revision is in flight.
+      const launchStore = useAgentLaunchStore.getState();
+      if (!launchStore.begin(launchStore.launch.revision)) return false;
+      const result = launchConversation({
         rawText,
         attachments,
         selectedRepo,
@@ -168,9 +176,21 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
         composerMode,
         profile: getProfile(selectedProfileId),
         setLaunchError,
-        onPhase: setLaunchPhase,
+        onPhase: (phase) => useAgentLaunchStore.getState().setPhase(phase),
         onCreated: () => recordWorkspaceAgentsEvent("agent_started_agents"),
-      }),
+      });
+      // A synchronous refusal is a validation failure, not a start: release the
+      // operation. A dispatched launch releases it only once it settles; a
+      // failed start keeps the "failed" phase so the launcher reports it.
+      if (typeof result === "boolean") {
+        useAgentLaunchStore.getState().reset();
+        return result;
+      }
+      void result.then((ok) => {
+        if (ok) useAgentLaunchStore.getState().reset();
+      });
+      return result;
+    },
     [
       agentMode,
       composerMode,
@@ -222,26 +242,33 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
             selectedAgent={selectedAgent}
             onAgentChange={(agent) => {
               userInteractedRef.current = true;
+              useAgentLaunchStore.getState().bumpRevision();
               setSelectedAgent(agent);
             }}
             onLaunch={handleLaunch}
             selectedModel={selectedModel}
             onModelChange={(model) => {
               userInteractedRef.current = true;
+              useAgentLaunchStore.getState().bumpRevision();
               setSelectedModel(model);
             }}
             agentMode={agentMode}
-            onAgentModeChange={setAgentMode}
+            onAgentModeChange={(mode) => {
+              useAgentLaunchStore.getState().bumpRevision();
+              setAgentMode(mode);
+            }}
             selectedProfileId={selectedProfileId}
             onProfileChange={handleProfileChange}
             composerMode={composerMode}
             onComposerModeChange={setComposerMode}
           />
-          {launchPhase && launchPhase !== "failed" && (
+          {launchPhase !== "idle" && launchPhase !== "failed" && (
             <div role="status" aria-live="polite" className="px-4 pb-3 text-meta text-text-muted">
               {launchPhase === "preparing" && "Preparing…"}
               {launchPhase === "starting" && "Starting agent…"}
               {launchPhase === "running" && "Running…"}
+              {launchPhase === "cancelling" && "Cancelling…"}
+              {launchPhase === "unknown" && "Start outcome unknown — check the conversation."}
             </div>
           )}
         </div>

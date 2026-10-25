@@ -14,7 +14,9 @@ const agentState = vi.hoisted(() => ({
     worktree?: { basePath: string };
   }>,
 }));
-const launchConversation = vi.hoisted(() => vi.fn((_params: unknown) => true));
+const launchConversation = vi.hoisted(() =>
+  vi.fn((_params: unknown): boolean | Promise<boolean> => true),
+);
 const setComposerMode = vi.hoisted(() => vi.fn());
 
 vi.mock("@/stores/agentTaskStore", async (importOriginal) => ({
@@ -93,6 +95,7 @@ import { AgentsView } from "@/components/views/AgentsView";
 import { getProviderAuthStatus } from "@/lib/tauri";
 import { getDefaultModel } from "@/lib/api-models";
 import { makeSshUri } from "@/lib/ssh-uri";
+import { useAgentLaunchStore } from "@/stores/agentLaunchStore";
 
 describe("AgentsView", () => {
   beforeEach(() => {
@@ -101,6 +104,9 @@ describe("AgentsView", () => {
     agentState.selectedRepo = "D:\\projects\\PacketBench";
     agentState.selectedConversationId = null;
     agentState.conversations = [];
+    useAgentLaunchStore.setState({
+      launch: { phase: "idle", revision: 0, activeRevision: null, error: null },
+    });
   });
 
   it("renders the same-window launcher when no conversation is selected", () => {
@@ -108,6 +114,26 @@ describe("AgentsView", () => {
 
     expect(screen.getByText("New agent")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Launch agent" })).toBeInTheDocument();
+  });
+
+  it("refuses a duplicate launch while one is in flight (F4)", async () => {
+    let resolveLaunch!: (value: boolean) => void;
+    launchConversation.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveLaunch = resolve;
+        }),
+    );
+    render(<AgentsView />);
+    const button = screen.getByRole("button", { name: "Launch agent" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    expect(launchConversation).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveLaunch(true);
+    });
   });
 
   it("launches headlessly without a Workspace-placement callback", () => {
