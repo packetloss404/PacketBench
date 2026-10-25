@@ -197,6 +197,26 @@ pub async fn inspect_runtime_resume(
     .await
 }
 
+/// Reconstruct the provider input for a typed resume from a run's latest
+/// checkpoint (R3b). Returns the conversation id and the checkpoint's typed
+/// messages. `None` when there is no checkpoint, or when an unresolved effect
+/// must be reconciled first (it is never replayed blindly).
+fn reconstruct_resume_history(
+    connection: &rusqlite::Connection,
+    run_id: &str,
+) -> Result<Option<(String, Vec<ChatMessage>)>, String> {
+    let Some(checkpoint) = runtime_checkpoint::load_latest_checkpoint(connection, run_id)
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    if !checkpoint.pending_effect_ids.is_empty() {
+        return Ok(None);
+    }
+    let conversation_id = journal::run_conversation_id(connection, run_id)?;
+    Ok(Some((conversation_id, checkpoint.messages)))
+}
+
 #[tauri::command]
 pub async fn resume_runtime_run(
     state: State<'_, Arc<ApiAgentState>>,
@@ -206,11 +226,13 @@ pub async fn resume_runtime_run(
     inspected_revision: Option<String>,
 ) -> Result<RuntimeRunSummary, String> {
     let current = live_compatibility_for_run(state.inner().as_ref(), &run_id).await;
-    on_blocking(move || {
+    let typed = mode == "typed";
+    let run_id_for_resume = run_id.clone();
+    let summary = on_blocking(move || {
         journal::with_journal(|connection| {
             journal::resume_run_with_compatibility(
                 connection,
-                &run_id,
+                &run_id_for_resume,
                 expected_epoch,
                 &mode,
                 inspected_revision.as_deref(),
@@ -218,7 +240,37 @@ pub async fn resume_runtime_run(
             )
         })
     })
-    .await
+    .await?;
+    // A typed resume reconstructs the provider input: seed the live session's
+    // history from the run's latest checkpoint so the next turn continues from
+    // the durable typed history instead of starting fresh. Best-effort — a
+    // reconstruction failure never invalidates the durable resume.
+    if typed {
+        let run_id_for_seed = run_id.clone();
+        let reconstructed = on_blocking(move || {
+            journal::with_journal(|connection| {
+                reconstruct_resume_history(connection, &run_id_for_seed)
+            })
+        })
+        .await;
+        match reconstructed {
+            Ok(Some((conversation_id, messages))) => {
+                state
+                    .inner()
+                    .runtime_seed_history(&conversation_id, messages)
+                    .await;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    run_id = %run_id,
+                    error = %error,
+                    "Typed resume could not reconstruct the provider history"
+                );
+            }
+        }
+    }
+    Ok(summary)
 }
 
 /// Bind a freshly prepared runtime run to a session when the journal is enabled.
@@ -1292,6 +1344,81 @@ mod tests {
         );
         // The identity validates and yields a content-addressed manifest.
         assert!(runtime_manifest::RunManifest::new(identity, 1).is_ok());
+    }
+
+    #[test]
+    fn reconstruct_resume_history_reads_the_latest_checkpoint_and_skips_pending_effects() {
+        use crate::core::llm_types::{ChatMessage, ChatRole, MessageContent};
+        use crate::core::runtime_checkpoint::{
+            encode, insert_checkpoint, Checkpoint, CheckpointClassification, CheckpointLimits,
+            CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_TRANSPORT_VERSION,
+        };
+        use crate::core::runtime_journal::{open_at, prepare_operation};
+        use crate::core::runtime_types::{FrozenRuntimeLaunch, PrepareRuntimeRunInput};
+
+        let dir = tempfile::tempdir().unwrap();
+        let connection = open_at(&dir.path().join("journal.db")).unwrap();
+        let input = PrepareRuntimeRunInput {
+            operation_id: "op-1".to_string(),
+            conversation_id: "conv-1".to_string(),
+            kind: "initial".to_string(),
+            retry_of_operation_id: None,
+            request_digest: format!("sha256:{}", "ab".repeat(32)),
+            launch: FrozenRuntimeLaunch {
+                route: "anthropic".to_string(),
+                model: "claude".to_string(),
+                requested_isolation: "checkout".to_string(),
+                draft_id: "d1".to_string(),
+                draft_revision: "1".to_string(),
+                project_key: "local:/p".to_string(),
+                base_path: "/p".to_string(),
+                execution: None,
+            },
+        };
+        let run = prepare_operation(&connection, &input).unwrap();
+
+        // No checkpoint yet -> nothing to reconstruct.
+        assert!(reconstruct_resume_history(&connection, &run.run_id)
+            .unwrap()
+            .is_none());
+
+        let mut ckpt = Checkpoint {
+            checkpoint_id: "ckpt-1".to_string(),
+            run_id: run.run_id.clone(),
+            epoch: 0,
+            seq: 0,
+            schema_version: CHECKPOINT_SCHEMA_VERSION,
+            transport_version: CHECKPOINT_TRANSPORT_VERSION,
+            model_route: "anthropic".to_string(),
+            manifest_hash: format!("sha256:{}", "aa".repeat(32)),
+            tool_policy_hash: format!("sha256:{}", "bb".repeat(32)),
+            mcp_hash: format!("sha256:{}", "cc".repeat(32)),
+            pending_effect_ids: Vec::new(),
+            classification: CheckpointClassification::Private,
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: MessageContent::text("hello"),
+            }],
+            created_at: 1,
+        };
+        let encoded = encode(&ckpt, &CheckpointLimits::default()).unwrap();
+        insert_checkpoint(&connection, &encoded, &CheckpointLimits::default()).unwrap();
+
+        let (conversation_id, messages) = reconstruct_resume_history(&connection, &run.run_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(conversation_id, "conv-1");
+        assert_eq!(messages.len(), 1);
+
+        // An unresolved effect on the newest checkpoint blocks reconstruction.
+        ckpt.checkpoint_id = "ckpt-2".to_string();
+        ckpt.seq = 1;
+        ckpt.pending_effect_ids = vec!["effect-1".to_string()];
+        let encoded = encode(&ckpt, &CheckpointLimits::default()).unwrap();
+        insert_checkpoint(&connection, &encoded, &CheckpointLimits::default()).unwrap();
+        assert!(reconstruct_resume_history(&connection, &run.run_id)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

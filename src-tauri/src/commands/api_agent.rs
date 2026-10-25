@@ -320,6 +320,16 @@ impl ApiAgentState {
         }
     }
 
+    /// Replace a live session's provider history with a reconstructed typed
+    /// history (R3b). Only seeds a session that already exists, so a stale run
+    /// cannot create a phantom session entry.
+    pub(crate) async fn runtime_seed_history(&self, session_id: &str, messages: Vec<ChatMessage>) {
+        let mut histories = self.histories.lock().await;
+        if histories.contains_key(session_id) {
+            histories.insert(session_id.to_string(), messages);
+        }
+    }
+
     /// Bind a session to a prepared runtime-journal run. Called only when the
     /// journal is enabled; the default path never populates this map.
     pub(crate) async fn bind_runtime_run(&self, session_id: &str, binding: RuntimeRunBinding) {
