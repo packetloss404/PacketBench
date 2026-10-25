@@ -153,6 +153,8 @@ vi.mock("@/lib/tauri", () => ({
   // a test seeds the store.
   getRuntimeGuardStatus: vi.fn(() => Promise.resolve(false)),
   getRuntimeCapabilities: vi.fn(() => Promise.resolve({ vision: { state: "unknown" } })),
+  // Durable draft-asset read; tests set the resolution to model missing bytes.
+  readAgentDraftAsset: vi.fn(),
 }));
 
 function renderLaunch(
@@ -410,6 +412,48 @@ describe("Composer (launch variant) — image attachments", () => {
 
     expect(onLaunch).not.toHaveBeenCalled();
     expect(await screen.findByText(/missing image/)).toBeInTheDocument();
+  });
+
+  it("blocks launch when a ready ref's bytes cannot be read at send time (F2B)", async () => {
+    useAgentDraftStore.setState({
+      stagedAttachments: {
+        [LAUNCH_DRAFT_KEY]: [
+          {
+            id: "u1",
+            name: "unreadable.png",
+            sizeBytes: 1,
+            attachment: { media_type: "image/png", data_base64: "" },
+            // A preview was already loaded (so the mount-time backfill skips it);
+            // the durable bytes are gone by the time the user sends.
+            previewUrl: "blob:preview",
+            ref: {
+              attachmentId: "a1",
+              name: "unreadable.png",
+              mimeType: "image/png",
+              byteLength: 1,
+              sha256: "s",
+              state: "ready",
+            },
+          },
+        ],
+      },
+    });
+    const tauri = await import("@/lib/tauri");
+    vi.mocked(tauri.readAgentDraftAsset).mockRejectedValueOnce(new Error("gone"));
+    const onLaunch = vi.fn(() => true);
+    renderLaunch(onLaunch);
+
+    const launch = await screen.findByRole("button", { name: /launch/i });
+    await waitFor(() => expect(launch).not.toBeDisabled());
+    fireEvent.click(launch);
+
+    // The send is blocked rather than dropping the image, and the chip is now
+    // marked missing so it can be reattached or removed.
+    await waitFor(() => expect(onLaunch).not.toHaveBeenCalled());
+    expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
+    expect(
+      useAgentDraftStore.getState().stagedAttachments[LAUNCH_DRAFT_KEY]?.[0]?.ref?.state,
+    ).toBe("missing");
   });
 
   it("revokes a preview URL when its chip is removed, but retains images across unmount", async () => {

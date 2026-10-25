@@ -107,6 +107,9 @@ interface AgentDraftStore {
     rejection: AttachmentRejection,
   ) => boolean;
   removeStagedAttachment: (conversationId: string, attachmentId: string) => void;
+  /** Mark a durable ref unreadable (bytes missing/corrupt) so its chip offers
+   * reattach and the send path can refuse rather than drop it. */
+  markAttachmentUnreadable: (conversationId: string, attachmentId: string) => void;
   clearStagedAttachments: (conversationId: string) => void;
   dismissAttachmentRejection: (conversationId: string, rejectionId: string) => void;
   /** Re-read a hydrated durable ref and materialize its session preview. */
@@ -318,6 +321,17 @@ export const useAgentDraftStore = create<AgentDraftStore>((set, get) => ({
       persist({ drafts: s.drafts, stagedAttachments });
       return { stagedAttachments };
     });
+  },
+
+  markAttachmentUnreadable: (conversationId, attachmentId) => {
+    set((s) => ({
+      stagedAttachments: {
+        ...s.stagedAttachments,
+        [conversationId]: (s.stagedAttachments[conversationId] ?? []).map((a) =>
+          a.id === attachmentId && a.ref ? { ...a, ref: { ...a.ref, state: "missing" } } : a,
+        ),
+      },
+    }));
   },
 
   clearStagedAttachments: (conversationId) => {

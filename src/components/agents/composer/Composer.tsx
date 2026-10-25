@@ -578,23 +578,43 @@ export function Composer(props: ComposerProps) {
     return true;
   }, [imageAttachmentsEnabled, staged, draftKey]);
 
+  // Async materialization for staged chips that lack in-memory bytes. Returns
+  // null (after marking the affected chips missing and raising a visible
+  // rejection) when any durable ref cannot be read, so the send is blocked
+  // rather than silently dropping an image the user staged. Callers check
+  // `stagedAttachmentsReadySync` first so the all-in-memory case stays
+  // synchronous.
+  const materializeUnreadableAware = useCallback(async (): Promise<ImageAttachment[] | null> => {
+    const { attachments, unreadable } = await stagedToImageAttachments(staged);
+    if (unreadable.length > 0) {
+      const state = useAgentDraftStore.getState();
+      const generation = state.stagingGenerations[draftKey] ?? 0;
+      for (const item of unreadable) {
+        state.markAttachmentUnreadable(draftKey, item.id);
+        state.addAttachmentRejection(draftKey, generation, {
+          id: `rej_${Date.now()}_${item.id}`,
+          name: item.name,
+          message: `${item.name}: image could not be read — reattach or remove it before sending.`,
+        });
+      }
+      return null;
+    }
+    return attachments;
+  }, [staged, draftKey]);
+
   const submitLaunch = useCallback(async () => {
     if (!launch || !launchReady) return;
     if (submitInFlightRef.current) return;
     if (blockMissingAttachments()) return;
     if (blockGuardBlockedAttachments()) return;
     submitInFlightRef.current = true;
-    const syncToSend = stagedAttachmentsReadySync(staged);
-    let toSend: ImageAttachment[];
-    if (syncToSend) {
-      toSend = syncToSend;
-    } else {
-      try {
-        toSend = await stagedToImageAttachments(staged);
-      } catch {
-        submitInFlightRef.current = false;
-        return;
-      }
+    // Synchronous when every chip carries in-memory bytes (the common case);
+    // otherwise materialize durably and block on an unreadable ref.
+    const toSend =
+      stagedAttachmentsReadySync(staged) ?? (await materializeUnreadableAware());
+    if (!toSend) {
+      submitInFlightRef.current = false;
+      return;
     }
     const accepted = launch.onLaunch(input, toSend);
     if (typeof accepted === "boolean") {
@@ -615,7 +635,7 @@ export function Composer(props: ComposerProps) {
   }, [
     launch,
     launchReady,
-    staged,
+    materializeUnreadableAware,
     input,
     clearStaged,
     blockMissingAttachments,
@@ -633,12 +653,14 @@ export function Composer(props: ComposerProps) {
     // While a turn is streaming the store QUEUES the text (protected
     // queued-send-while-streaming behavior) — queued messages carry no
     // attachments, so keep any staged images for the next live send
-    // instead of silently dropping them.
+    // instead of silently dropping them. A live send must materialize every
+    // staged image or block on an unreadable one.
     const streaming =
       conversation.status === "active" && conversation.messages.some((m) => m.isStreaming);
-    const syncAttachments = streaming ? null : stagedAttachmentsReadySync(staged);
-    const attachments =
-      syncAttachments ?? (streaming ? null : await stagedToImageAttachments(staged));
+    const attachments = streaming
+      ? null
+      : (stagedAttachmentsReadySync(staged) ?? (await materializeUnreadableAware()));
+    if (!streaming && !attachments) return;
     setInput("");
     mention.close();
     slash.close();
@@ -654,7 +676,7 @@ export function Composer(props: ComposerProps) {
     isChat,
     conversation,
     input,
-    staged,
+    materializeUnreadableAware,
     setInput,
     mention,
     slash,
