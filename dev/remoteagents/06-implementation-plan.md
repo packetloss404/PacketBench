@@ -1,5 +1,53 @@
 # 06 - Implementation Plan
 
+## Current checkpoint — 2026-10-24
+
+Remote Agents is the owner's **top product priority**. Use
+[current status](../current-status.md), the
+[documentation audit](../documentation-audit-2026-10-24.md) and
+[backlog](../../backlog.md) for live ordering; the sprints below are the
+accepted design/checkpoint structure, not a fresh gate run or deployment claim.
+
+PacketBench `922ddcc9` still has a static PWA and a desktop gate with all eleven
+private-beta requirements unmet. Sprint 0 foundations were committed in
+`d6238633`; the later fail-closed gate and close-code contract are in
+`f7200bfb` and `bf32f2b5`. Sibling `packetrelay@74ffc10` includes the Sprint 1
+identity/ACL/columnar-audit persistence foundation from `522687a`, but its
+feature-gated HTTP/socket routes still return 501 rather than serving auth or
+presence. Thus **Sprint 1 data substrate is partial; transport, host presence
+and product auth are not implemented**. Do not erase that substrate or call
+the whole Sprint 1 slice complete.
+
+The September Railway/PostgreSQL evidence is historical. Later pre-existing
+dirty/untracked sibling operator records describe a datacenter deployment and
+deletion of the former Railway/database; current live topology, database and
+backup readiness were not checked. See the dated note in
+[02-architecture.md](./02-architecture.md#deployment-target-railway).
+
+Resume in this order:
+
+1. Accept the bounded replay/ACK/high-water recovery, ticket reserve/finalize,
+   signed hello and endpoint-to-endpoint E2EE contracts in
+   [11](./11-transport-contract-decisions.md), with cross-runtime negative
+   fixtures. Keep auth lifecycle/retention migrations behind their own review.
+2. Reuse the committed persistence foundation and implement one internal-only
+   dev-auth ticket → desktop connect → PWA host-online → revoke/offline slice.
+   Respect terminal close codes, Origin/ACL checks and bounded reconnect. Any
+   internal prototype path must be separate from the production gate; do not
+   mark unmet beta requirements met merely to test it.
+3. Add capability snapshots and a backend-owned remote conversation service
+   through the existing runtime/authority/persistence seams, then mobile
+   stream/approval/reconnect. Do not build another executor or a generic Tauri
+   proxy because the phone cannot own a React store.
+4. Complete owned product auth/recovery, E2EE, the required security review,
+   trust/revocation, redacted audit, push/artifacts and tested datastore
+   durability before external beta.
+   Reconcile the deployment record and prove the selected environment rather
+   than carrying forward September health/backup assumptions.
+
+No source, tests, builds, provider calls, remote accounts or deployments were
+changed or exercised for this documentation reconciliation.
+
 ## Sprint Structure
 
 The work is sized for a six-agent implementation team. Sprints are written as checkpoints rather than calendar promises. If the team starts tomorrow, Sprint 0 and Sprint 1 can run in parallel after a kickoff.
@@ -52,9 +100,9 @@ Checkpoint:
 
 - [x] Shared protocol package builds.
 - [x] `packet-relay` starts locally with its existing protocols intact and the
-  PacketBench routes feature-gated.
+      PacketBench routes feature-gated.
 - [x] `packet-relay` deploys to Railway from `.railway/railway.ts` and passes an
-  HTTPS health check plus a real WSS upgrade.
+      HTTPS health check plus a real WSS upgrade.
 - [x] PWA dev server starts.
 - [x] Desktop compiles with remote feature flag off.
 - [x] Six-agent ownership map is posted in `07-six-agent-runbook.md`.
@@ -288,6 +336,16 @@ Risk: relay sees prompts/code before encryption.
 Mitigation: internal-only plaintext allowed, encrypted payloads required for external beta.
 
 ### Sidecar Provider SSH Gap
+
+**Dated correction 2026-10-24:** The risk wording below predates the existing
+SSH sidecar implementation. Current `commands/api_agent.rs` routes sidecar
+sessions through its SSH path, and the AGENTS/sidecar contract requires pinned
+host identity and the compatible remote handshake. The surviving real-provider
+and packaged SSH matrix is in
+[sidecar-over-ssh-verification.md](../sidecar-over-ssh-verification.md).
+Project capability/host/auth checks and the recorded proof boundary still
+matter; do not disable all sidecar SSH options based on this old blanket claim.
+The following paragraph is retained as the original risk record.
 
 Risk: sidecar providers cannot run SSH execution today.
 

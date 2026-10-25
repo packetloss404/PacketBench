@@ -1,15 +1,91 @@
 # PacketBench Backlog
 
+## Current completion order — reconciled October 24, 2026
+
+**Remote Agents is the highest product implementation priority.** This is the
+single live task ledger. [Current status](dev/current-status.md) gives verified
+facts; [the source/deployment audit](dev/documentation-audit-2026-10-24.md) maps
+committed slices to missing target contracts. Checked historical source slices
+below do not close these residuals or prove deployment. Source `922ddcc9` is
+committed and pushed; latest installed-source identity remains unverified.
+
+1. **Remote Agents:** close transport/replay/ACK/ticket/hello/E2EE contracts,
+   then prove internal authenticated presence, backend-owned conversations and
+   PWA approvals/reconnect. Product auth, encrypted payloads, revocation,
+   datastore recovery, phone/push/security/load acceptance gate external beta.
+   Start [the canonical Remote Agents plan](dev/remoteagents/README.md). Its
+   detailed section below owns the same program; do not create another queue.
+2. **Runtime/desktop safety supporting that surface:** complete the actual
+   backend launch/turn/recovery transaction, uncertain spend retention and
+   typed policy/image recovery. Preserve host identity, drafts and approvals.
+3. **Complete source residuals and acceptance:** finish scale/control migration
+   and run source-identified native local/SSH, Windows/Mac/provider matrices;
+   bind final installers to source and payload before readiness claims.
+4. **Existing feature/release proof:** provider/SDK/MCP/Memory/Flight/inbox/YOLO,
+   dictation/Monitor hardware and platform/distribution work remain within
+   their named scopes and existing owner decisions.
+5. **Later integrations:** quota disclosure, scoped app verification and
+   supported-plan feasibility; native iOS follows the PWA. Composer research
+   remains separately owned and excluded.
+
+### Verified agent-experience residuals
+
+- [ ] **P1 — R1/R3 production transaction and recovery.** Enforce immutable
+      execution/SSH authority, owner/revision/predecessor validation, one root
+      run per turn, terminal projection and actual prepare/start/cancel/resume/
+      reconcile use. Public typed resume currently refuses; epoch changes alone
+      do not continue the provider. Full run manifests and typed image pins are
+      not production-complete. Keep native/SDK strength explicit.
+- [ ] **P1 — R5 uncertain liability and truthful budget strength.** Dispatched
+      cancellation and startup missing-ledger rows can release reservations
+      without proving zero billing. Preserve/reconcile unknown liability, include
+      system/tool/image input and required scope ownership, then earn activation
+      and cap claims. Current journal is default-off and budgets are conditional;
+      do not enable it merely because a prerequisite commit landed.
+- [ ] **P1 — F2 retained assets and delivery failure.** Guard future/unknown
+      envelopes during GC; pin message/submission/checkpoint owners and apply
+      grace/capacity rules. Reject unreadable materialization instead of silently
+      sending fewer images. Split launch drafts by project identity.
+- [ ] **P1 — F4/F5 wrong-target and failed-start behavior.** Contextual New must
+      preserve SSH server identity, not a plain remote path. Failed start must
+      retain the draft and report failure; phase labels do not substitute for
+      canonical backend preparation/cancellation acknowledgment.
+- [ ] **P1 — F3/F6 authoritative history and attention.** Enforce Flight mutation
+      restrictions in store/backend boundaries, not UI alone. Reveal the exact
+      permission above review from all global/header routes; preserve return
+      position and revalidate the target.
+- [ ] **P2 — V3–V8 final migration.** One rendered sidebar-width/reset owner,
+      transient terminal font updates, legacy typography/geometry scaling,
+      primary Send/Stop/mic/sidebar targets and accessible names, narrow header/
+      drawer/action lane and actual composited contrast remain. The source
+      token/control slices below are retained as completed partial work.
+- [ ] **P2 — R4/R6/R7/R8 remaining contract/evidence.** Wire production manifest
+      identity, context readout and conservative window/counting policy; complete
+      child cancellation and SDK hooks/declarations. Retain offline v1 success
+      separately from unimplemented live/repeated/isolated task evidence. No
+      model-training or Composer research is included.
+- [ ] **P1 — Installed-source and native verification.** The October 23 installed
+      executable matches its available NSIS payload, but no source manifest
+      binds it to `922ddcc9`. N1 navigation diagnosis, native IME/appearance/
+      restart and local/SSH whole-flow acceptance remain. The current process
+      responding at rest does not close these cases.
+
 ## Agent harness and experience review — October 19
 
-The [fresh review](dev/agent-harness-and-experience-review-2026-10-19.md) is
-research/source evidence, with one unresolved native observation. These are
-proposed follow-ups, not authorized implementation or completed app changes.
+This section is the dated incremental implementation log for October 19–24.
+Its checked rows mean the named source slice landed. Earlier residual sentences
+and test counts describe those checkpoints; the reconciled residuals above and
+current audit supersede stale "uncommitted", "not started" or full-completion
+interpretations. Full target specs remain in `dev/agent-experience/`.
+
+The [original review](dev/agent-harness-and-experience-review-2026-10-19.md) is
+dated research/source evidence with one unresolved native observation. Checked
+rows now record committed slices; current residuals above govern completion.
 Finding IDs below resolve to detailed source references and acceptance criteria.
 The subsequent [future-team implementation handoff](dev/agent-experience/README.md)
 adds researched contracts, packets, dependencies/file leases, migrations,
-fault tests and dispatch prompts. It is documentation only; all implementation
-statuses below remain open. Composer research is in a separate thread and
+fault tests and dispatch prompts. The target remains incomplete despite the
+committed slices below. Composer research is in a separate thread and
 excluded from that team. H1 evaluation applies to the existing production runtime.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
@@ -100,10 +176,10 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       against the selected conversation's base project. Focused sidebar/Agents
       tests, TypeScript and ESLint pass.
 - [ ] **P2 — Preparation phase surface and cancel tombstones (F4 residual).**
-      Expose Preparing → Starting → Running and reconcile cancelled/unknown
-      preparations at the backend. (Exact attention F6 and search/reader
-      continuity F7 are done; reader anchors are now persisted per conversation
-      under `packetbench:agent-reading-anchors`.)
+      Phase labels landed in `581cd5c2`; connect them to authoritative backend
+      prepare/start/cancel outcomes. Failed startup can still return an ID and
+      clear the draft/show Running. F6 has a helper/header slice but approval
+      reveal over review and global routing remain; F7 anchors are persisted.
 - [x] **P2 — Shared GUI accessibility and layout (V4–V8).** Theme-aware code
       (V4), 32/36px targets (V5), accessible names + opaque focus ring (V6),
       resizable 240–480px sidebar with full-title disclosure (V7) and narrow
@@ -502,14 +578,25 @@ Priority: **P1** = release blocker, real bug, or major user-facing gap;
 
 ## Owner decisions
 
-**Current direction, 2026-09-24:** no feature expansion. Stabilize and finish
+Owner decisions below preserve their dated record. Hosting/topology references
+are not a current deployment-health claim; the October 24 audit found later
+local operator records that differ from the historical Railway design. Keep
+auth/confidentiality requirements while verifying actual infrastructure.
+
+**Historical direction, 2026-09-24:** no feature expansion. Stabilize and finish
 the existing product paths identified below before resuming expansion plans.
-The owner pinned PacketBench to the desktop; the October 19 local 0.14.9 Flight rebuild is installed and its payload/UI/state checks passed. The October 6 tagged build and October 15 Sugar rebuild are historical. Broader Workspace dogfooding remains incomplete.
+That checkpoint prepared the October 19 local 0.14.9 Flight rebuild and its
+scoped payload/UI/state checks. The current executable/source relationship is
+recorded in the October 24 audit; do not treat the older hash as current.
+Broader Workspace dogfooding remains incomplete.
 On October 6 the owner confirmed they have not dogfooded enough yet. Resume
 with reported defects, prioritizing Workspaces; no feature expansion or
 deployment is requested by the pre-tag review.
 
-These are the only current product decisions blocking implementation.
+The October 24 Remote Agents priority supersedes the old ordering above.
+Resolved choices below remain dated owner decisions; unresolved implementation
+and evidence work belongs in the current ledger sections, not this old pre-tag
+instruction.
 
 1. **RESOLVED 2026-08-28 - Remote Agents authentication.** **Build it
    ourselves:** passkey/magic-link auth in the Rust relay backed by
@@ -590,7 +677,7 @@ These are the only current product decisions blocking implementation.
    environment-gated proof matrices). The owner **rejected** that definition on
    2026-08-16; PacketBench continues the 0.x cadence with no 1.0
    milestone. See
-   [`docs/reports/fable5-review-2026-08-05.md`](./docs/reports/fable5-review-2026-08-05.md).
+   [`docs/reports/fable5-review-2026-08-05.md`](https://docs.ianlan.dev/reports/fable5-review-2026-08-05.md).
 
 5. **RECONCILED 2026-09-24 - Former PacketCode ACP leftovers.** ACP was
    removed on September 1. Keep `src/agents/packetcode.ts`: it serves the
@@ -660,12 +747,24 @@ The per-ID implementation and validation record is
 
 ## Remote Agents implementation
 
+**Top priority as of October 24.** Sprint 0 acceptance below is historical.
+Committed relay identity/ACL/audit/PostgreSQL repository substrate exists, but
+auth sessions/tickets/replay/outbox, working routes and PWA sockets are not a
+completed Sprint 1. The desktop's eleven readiness gates remain unmet. Later
+local PacketRelay operator notes describe datacenter deployment and deletion
+of former Railway/PostgreSQL resources; those notes are partly uncommitted and
+live infrastructure was not verified. Confirm actual topology/datastore before
+rollout; preserve prior owner decisions as dated history. See the current note
+in [the Remote Agents index](dev/remoteagents/README.md).
+
 - **CLOSED 2026-09-01 - Sprint 0 foundations.** Shared protocol/PWA/workspace
   foundations, feature-gated PacketRelay skeleton, fail-off desktop flag,
   ownership map, managed PostgreSQL, and the feature-off production deployment
   are verified. Both services run in `us-west2`; live health and legacy WSS
   smoke pass; the final IaC plan is clean.
-- **P1 - Sprint 1 relay and host presence. NOT STARTED.** First close the
+- **P1 - Sprint 1 relay and host presence. INCOMPLETE.** Reuse the committed
+  identity/ACL/persistence substrate without treating it as finished auth or
+  presence. First close the
   replay/ACK recovery, ticket reserve/finalize, and endpoint-to-endpoint
   hello/E2EE security gates in
   the transport decision record. Then implement the approved dev-auth ticket
@@ -1256,7 +1355,7 @@ is reachable today. Workspace daily workflow is now the first P1 roadmap track.
 
 Verified findings from the six-team deep review; full evidence with file:line
 citations is in
-[`docs/reports/fable5-review-2026-08-05.md`](./docs/reports/fable5-review-2026-08-05.md).
+[`docs/reports/fable5-review-2026-08-05.md`](https://docs.ianlan.dev/reports/fable5-review-2026-08-05.md).
 
 **This section is a review snapshot, not a task list that maintains itself.**
 It was reconciled against source on 2026-08-27 and eleven findings were closed;
@@ -1751,7 +1850,8 @@ Do not reopen these from historical plans:
   pinned SSH bootstrap, and encrypted PacketRelay frames all lived at
   `d87fb125`. Do not rebuild it here; the controller protocol continues in
   Syndicate's own repos. **PacketRelay does not** — per Owner decision 6 it
-  stayed with PacketBench (`D:\projects\packetrelay`, deploying to Railway).
+  stayed with PacketBench (`D:\projects\packetrelay`, with Railway the historical
+  target; current deployment requires the October 24 reconciliation).
   The boundary that closed is the Syndicate _execution target_, not the relay.
 
 - Workspace/Agents restructuring and WA0-WA4 are complete: Workspaces are
@@ -1775,8 +1875,10 @@ Do not reopen these from historical plans:
 
 - Product direction: [`ROADMAP.md`](./ROADMAP.md)
 - Restart state and exact artifacts: [`HANDOFF.md`](./HANDOFF.md)
-- Current audit summary: [`docs/reports/state-of-the-ade-2026-07-30.md`](./docs/reports/state-of-the-ade-2026-07-30.md), Section 0
-- Current build/install record: [`dev/existing-code-stabilization-2026-09-24.md`](./dev/existing-code-stabilization-2026-09-24.md)
+- Current verification/status: [`dev/current-status.md`](./dev/current-status.md)
+- Source/deployment audit: [`dev/documentation-audit-2026-10-24.md`](./dev/documentation-audit-2026-10-24.md)
+- Complete documentation catalog: [`dev/documentation-map.md`](./dev/documentation-map.md)
+- Historical September build/install record: [`dev/existing-code-stabilization-2026-09-24.md`](./dev/existing-code-stabilization-2026-09-24.md)
 - Historical tagged release: [`dev/release-v0.10.3.md`](./dev/release-v0.10.3.md)
 - Remote Agents: [`dev/remoteagents/README.md`](./dev/remoteagents/README.md)
 - Syndicate execution target (removed 2026-08-27; historical): [`dev/archive/syndicate/syndicate-execution-target.md`](./dev/archive/syndicate/syndicate-execution-target.md)

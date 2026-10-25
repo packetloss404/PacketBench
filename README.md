@@ -1,39 +1,18 @@
 # PacketBench
 
-[Product website](https://packetloss404.github.io/PacketBench/) | [Documentation](https://docs.ianlan.dev/packetbench/)
+[Product website](https://packetloss404.github.io/PacketBench/) | [Public documentation](https://docs.ianlan.dev/packetbench/) | [Repository documentation hub](./dev/README.md)
 
 **A local-first desktop ADE (Agent Development Environment) for orchestrating AI software work.**
 
-PacketBench is a Tauri v2 desktop app that brings AI coding agents, planning, issue tracking, memory, and workspace management into a single native environment. It is built for running real development workflows across multiple agent CLIs without leaving the app.
+PacketBench brings CLI Workspaces, structured API-agent conversations, Flights, review, issues, memory and local/SSH execution into one Tauri desktop application.
 
-The local Windows **0.14.9 Flight overhaul** installed October 19 completed
-disposable local and pinned Docker SSH Stop/restart/Resume, review/repair,
-fresh review, delivery and archive/restore walkthroughs. The installed build
-passed payload, sidecar, UI and persisted-state smoke checks and was prepared for
-workstation dogfooding, subject to the later responsiveness finding below.
-Exact source identity, installation hash and proof limits
-are in the [current handoff](./HANDOFF.md#workstation-dogfood-handoff--october-19-2026).
-This is a local rebuild; it does not replace the existing `v0.14.9` release tag.
+**Current priority: Remote Agents.** The source contains substantial committed Agents/runtime/readability work, but the complete target and native deployment evidence remain partial. See [current status](./dev/current-status.md), [ROADMAP](./ROADMAP.md) and [the task ledger](./backlog.md).
 
-A later [agent and experience review](./dev/agent-harness-and-experience-review-2026-10-19.md)
-found a nonresponding condition during Windows navigation, whose cause remains
-unisolated, plus source-level Agents/readability gaps. The earlier smoke passed
-its scope; whole-app daily-use readiness now needs that responsiveness follow-up.
+As of October 24, main `922ddcc9` is committed and matches GitHub main. The installed 0.14.9 executable matches an available October 23 NSIS payload; no source/payload manifest proves that it includes the October 24 source. The process responds at rest, which is not a complete native walkthrough or resolution of the earlier navigation-stall observation. Exact hashes and evidence limits are in [HANDOFF](./HANDOFF.md) and [the audit](./dev/documentation-audit-2026-10-24.md).
 
-The configured default remains **Sugar** and
-its `sugar/conduit` routing alias as the default for new API chats and workflow
-executors. Sugar is preferred when connected; other providers stay selectable.
-Its authenticated live catalog, streaming replies, follow-up memory and tool
-round-trip passed through PacketBench's native adapter. The local auxiliary
-routes are also pinned to Sugar, including Insights chat and issue investigation.
-Both retain read-only project file tools and configurable provider/model choices
-in Settings → Automation → Task Role Defaults. Source, installation hashes and acceptance
-scope are recorded in [`HANDOFF.md`](./HANDOFF.md#sugar-default-activation--october-15-2026).
+The journal/capability/context/budget paths remain opt-in; request-budget admission also needs a configured budget. Typed public recovery and uncertain billing handling are incomplete. Do not interpret a committed module, larger test count or the version string as a universal safety or deployment guarantee.
 
-Local Ollama also passed provider checks. Direct MiniMax remains blocked by an
-account-balance response. The other cloud providers still need account-level
-acceptance. Full native Workspace dogfooding remains open in [`backlog.md`](./backlog.md).
-[`CHANGELOG.md`](./CHANGELOG.md) records published build history.
+Sugar/Conduit remains the configured source default; its October 15 native acceptance and other provider/account limits are historical evidence in the handoff. This audit made no live provider or account checks. Composer research is separately owned.
 
 ![PacketBench Workspace running Claude Code and PacketCode side by side](./docs/screenshots/workspace-claude-packetcode.png)
 
@@ -41,10 +20,10 @@ _An actual native PacketBench capture: PacketCode and Claude Code running their 
 
 ## Documentation Map
 
-**Start here: [docs.ianlan.dev/packetbench](https://docs.ianlan.dev/packetbench/)** — 30 pages
-covering every surface, a settings reference, an operations section, a deep
-developer section, and an orientation briefing written for coding agents working
-in this repository.
+**Repository entry point: [dev/README.md](./dev/README.md)** — current status,
+roadmap, the one task ledger, track specifications, runbooks and the complete
+Markdown catalog. The [published user manual](https://docs.ianlan.dev/packetbench/)
+is maintained separately; this audit does not republish or verify that site.
 
 The documentation lives in its own repository,
 [packetloss404/ianlan-docs](https://github.com/packetloss404/ianlan-docs), which
@@ -59,8 +38,8 @@ there — not here, and never the generated HTML.
   current owner questions, build evidence, and guardrails.
 - [`ROADMAP.md`](./ROADMAP.md) — current product direction and release path.
 - [`backlog.md`](./backlog.md) — master ledger for outstanding work.
-- [Agent harness and experience review](./dev/agent-harness-and-experience-review-2026-10-19.md) — current Cursor/Composer/Codex research, Agents source review and proposed readability/reliability priorities; recommendations remain unimplemented.
-- [Future-team implementation handoff](./dev/agent-experience/README.md) — technical contracts, work order, agent ownership/prompts, migrations and acceptance for the review findings; Composer research is separate.
+- [Agent harness and experience review](./dev/agent-harness-and-experience-review-2026-10-19.md) — current Cursor/Composer/Codex research, Agents source review and readability/reliability target; the October 24 audit records committed partial implementation.
+- [Future-team implementation handoff](./dev/agent-experience/README.md) — target contracts, committed source boundaries, remaining work and agent dispatch/acceptance; Composer research is separate.
 - [`dev/provider-release-0.14.9.md`](./dev/provider-release-0.14.9.md) — the
   October 6 tagged release. The installed October 19 local rebuild is recorded
   in [`dev/flight-overhaul-review-2026-10-19.md`](./dev/flight-overhaul-review-2026-10-19.md).
@@ -81,8 +60,8 @@ feature is committed, packaged, and command-probed on Windows; remaining shell
 work is the explicit interactive packaged matrix, MS4 responsive proof, and the smaller residue in
 [`backlog.md`](./backlog.md). Remote Agents resumed on 2026-08-27 and completed
 Sprint 0 on 2026-09-01 against the PacketBench-owned Rust `packet-relay`
-service. The feature remains disabled and fail-closed; Sprint 1 and product auth
-have not started. Auth direction is resolved in-house (passkey/magic-link on
+service. The feature remains disabled and fail-closed. Identity/ACL/persistence substrate
+is committed, while working auth/presence/conversation/PWA delivery is incomplete. Auth direction is resolved in-house (passkey/magic-link on
 PostgreSQL), and encrypted agent, approval, and file payloads remain a hard gate
 before any external beta.
 
@@ -127,7 +106,7 @@ before any external beta.
 These captures show the rendered UI using PacketBench's deterministic
 web-mode fixture. The full viewport set, method, and environment limitations
 are documented in the
-[`2026-07-30 visual audit`](./docs/reports/visual-audit-2026-07-30/findings.md).
+[`2026-07-30 visual audit` — unavailable historical local report](./dev/documentation-map.md#unavailable-historical-references).
 
 ## Supported Agents
 
@@ -590,13 +569,15 @@ PacketBench is developed on Windows but is designed to ship on macOS and Linux a
 
 ### Beta Distribution Status
 
-**The October 19 Flight overhaul is installed as a local 0.14.9 rebuild.** Its
-exact source contents were committed as `0b6dbf52`; both Windows installers were
-built, and the NSIS update verified all 8,683 installed payload files. Packaged
-sidecar, normal launch, Flight UI and persisted-state smoke checks passed.
+**October 24 verification: source `922ddcc9` is committed/pushed, while current
+installed-source identity is incomplete.** The installed 0.14.9 executable
+hash `b91c617d…cfaa1f9` matches the available October 23 NSIS payload; no matching
+source/payload manifest proves it includes the latest source.
+The October 19 `0b6dbf52` rebuild's 8,683-file, packaged-sidecar and installed
+UI/state checks are historical proof of that earlier package.
 The October 6 `v0.14.9` tag still identifies the published baseline; no new tag
 or public installer release is implied. Broader acceptance remains open.
-See the [current handoff](./HANDOFF.md#workstation-dogfood-handoff--october-19-2026)
+See the [current handoff](./HANDOFF.md), [verified status](./dev/current-status.md)
 and [Flight evidence](./dev/flight-overhaul-review-2026-10-19.md).
 
 Windows Authenticode signing, macOS Developer ID signing/notarization, and the
@@ -628,12 +609,14 @@ Windows release workstation redirects it to `packetbench-build`).
 
 ### Quality Checks
 
-The two composite ladders are the real gates — run these before claiming green:
+Use the concurrent local runner for the relevant source changes before claiming
+green. It coordinates Cargo/schema/sidecar/CPU contention and does not stop at
+the first failure:
 
 ```bash
-pnpm preflight       # format check + lint + unit tests + web build
-pnpm check           # preflight + e2e + sidecar:check + Tauri schema + Rust check/tests
-pnpm sidecar:check   # 14 chained sidecar build/protocol/provider smoke gates
+pnpm gates:fast      # format, lint, typecheck, unit tests
+pnpm gates:changed   # conservative affected-surface full tier
+pnpm gates:full      # complete local gate set, including typecheck
 ```
 
 The documentation site is no longer built from this repository. It lives in

@@ -1,5 +1,11 @@
 # Appearance and accessibility implementation design
 
+> October 24 source verification: semantic tokens, preferences and selected
+> controls are committed. Complete scaling, terminal-dialog/sidebar ownership,
+> primary targets/names, composed contrast and native proof remain. This is the
+> target design; use [the audit](../documentation-audit-2026-10-24.md) and
+> [current status](../current-status.md) for actual coverage.
+
 Date: October 19, 2026. Source baseline: `e5d31084e5d2c4861723dca4d4c2931a64b0f732`.
 Status: implementation-ready proposal; no product implementation or validation is claimed.
 Scope: V1–V8 in the [current review](../agent-harness-and-experience-review-2026-10-19.md#typography-and-gui-findings).

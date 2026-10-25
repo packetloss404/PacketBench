@@ -1,6 +1,6 @@
 # Deferred work — tile composer / conversation tiles
 
-> Canonical ledger: [`backlog.md`](../backlog.md). This file is a scoped
+> Canonical ledger: [`backlog.md`](../../backlog.md). This file is a scoped
 > resume-cold reference for the tile-composer/conversation-tile deferrals only;
 > anything that becomes actionable belongs in the backlog.
 
@@ -10,7 +10,7 @@ predates the 2026-07-29 Workspace/Agents restructuring: new GUI-agent work now
 starts in the first-class Agents view, while existing and explicitly attached
 Workspace conversation tiles remain compatible. Ordered roughly by value. The
 full 314-finding review that seeded the waves is archived in
-[`agents-tab-modernization-plan.md`](../dev/archive/agents-tab-modernization-plan.md).
+[`agents-tab-modernization-plan.md`](agents-tab-modernization-plan.md).
 
 Re-verified against the code on 2026-07-30; the line-ending normalization item
 shipped and was removed. All six deferrals below were confirmed still open in

@@ -1,12 +1,16 @@
 # Agents and runtime implementation handoff
 
 Prepared October 19, 2026 (America/Chicago; research also retrieved October 20
-UTC). Design baseline: `e5d31084e5d2c4861723dca4d4c2931a64b0f732`, with the
-uncommitted review/documentation changes present in this conversation.
+UTC). Original design baseline: `e5d31084e5d2c4861723dca4d4c2931a64b0f732`,
+with review/documentation changes that were uncommitted at preparation time.
 
-**Status: proposed design, ready for a future implementation team to assess
-and execute when assigned. No application changes are implemented by this
-handoff.** [backlog.md](../../backlog.md) remains the sole status/task ledger.
+**October 24 verification: substantial implementation slices are committed and
+pushed through `922ddcc9`; the full target remains partial and latest installed
+source is not verified.** Read [current status](../current-status.md) and the
+[packet-by-packet audit](../documentation-audit-2026-10-24.md) before executing
+the remaining work. Remote Agents is now the highest product implementation
+priority. This document preserves the target design; it is not proof that all
+contracts are implemented/enabled. [backlog.md](../../backlog.md) is the task ledger.
 Packet definitions here specify the work; they are not another checked backlog.
 
 ## Start here
@@ -26,11 +30,18 @@ Then read the track you own and the cross-track acceptance contract:
   ChatGPT-plan feasibility boundaries.
 - [Agent dispatch and acceptance](./05-agent-dispatch-and-acceptance.md): role
   prompts, file leases, gates, native scenarios and delivery requirements.
+- [R2b decision record](./06-r2b-decisions-and-plan.md): historical extraction
+  decisions; the source extraction is committed.
+- [Current transport limitations](./07-sdk-limitations.md): actual opt-in and
+  native/SDK evidence boundaries.
+- [Historical implementation notes](./09-implementation-notes-through-2026-10-24.md):
+  former HANDOFF narrative; current audit/status supersedes stale claims.
 
-The current installed package is the local 0.14.9 rebuild whose application
-contents match `0b6dbf52`; `HANDOFF.md` gives its hash and earlier proof. A later
-Windows nonresponding observation is unresolved. Do not infer that the existing
-installer is healthy today or reuse its earlier gate counts as new evidence.
+The installed 0.14.9 executable now has hash `b91c617d…cfaa1f9` and matches the
+available October 23 NSIS payload, but no source/payload manifest ties it to
+October 24 HEAD. The October 19 `0b6dbf52` package is historical. The current
+process responds at rest; navigation/restart/native acceptance and N1 diagnosis
+remain unverified. See HANDOFF/current status for exact evidence.
 
 ## Scope and exclusions
 
@@ -181,7 +192,7 @@ See the dispatch document for the lease schedule.
 ### Wave 0: Rebase the plan onto reality
 
 Inventory current source, local modifications, installed source identity and
-active user sessions. Preserve the uncommitted docs from this handoff. Reconcile
+active user sessions. Preserve unrelated local edits, including separate Composer research. Reconcile
 source changes and contract names before implementation; never assume the old
 PID/window or an earlier snapshot is still current. Capture an isolated backup
 of relevant state before migration tests. Run focused baseline tests without

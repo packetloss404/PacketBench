@@ -1,5 +1,10 @@
 # Responsiveness, usage and supported integration design
 
+> October 24 verification: these are still target experiments/evidence packets,
+> not delivered integrations. The current process responds at rest; N1 navigation
+> diagnosis remains open. Read [current status](../current-status.md) and
+> [the audit](../documentation-audit-2026-10-24.md). Remote Agents takes priority.
+
 Proposed design, October 19, 2026; primary docs retrieved October 20 UTC.
 Read the [package entry point](./README.md) and
 [full review](../agent-harness-and-experience-review-2026-10-19.md).

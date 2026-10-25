@@ -1,66 +1,36 @@
-# Declared SDK limitations (R8 / H1)
+# Current transport limitations
 
-Status: declaration for the R8 rollout. It states what the shipped runtime
-actually guarantees per transport. It does not claim a capability the code has
-not verified against a locked dependency version. Native claims are enforced by
-the journal/capability/budget/context modules in `src-tauri/src/core/`; SDK
-claims are the strongest the sidecar path can make today.
+Reconciled October 24, 2026 against committed source `922ddcc9`. This states actual source behavior and limitations, not the target guarantees in `01-runtime.md` or proof of an installed deployment. See [the audit](../documentation-audit-2026-10-24.md), [current status](../current-status.md) and the backlog.
 
-Source of truth: `01-runtime.md` §7.1. This file is the operational restatement;
-if the two disagree, §7.1 wins.
+## Activation boundary
 
-## What is proven (native, in-process)
+PACKETBENCH_RUNTIME_JOURNAL=1 is required; it still defaults off. Native request-budget admission additionally requires a configured budget. The current process environment was not inspected. Source readiness prerequisites do not prove the current app enables these paths, and no setting was changed in this audit.
 
-The native route runs the production `run_turn` behind `RuntimeServices`, so the
-journal, capability, budget and context guards are all visible and enforced:
+## Native in-process source
 
-| Contract                     | Native guarantee                                                                                                                                                                          |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Typed provider input         | `ChatMessage`/`ContentBlock` history is journaled; checkpoints are typed and versioned.                                                                                                   |
-| Tool mutation intent/receipt | The existing executor + approval broker are wrapped; intent is durable before the effect.                                                                                                 |
-| Request budget               | A reservation is written before every native model request **and** every child subagent request (R5b/R7), settled on the provider `Done` with the exact actual, released on error/cancel. |
-| Context fit                  | The native serializer/accounting is visible; overflow enters `blocked_context` before spend (R6).                                                                                         |
-| Capability guard             | An image on a route whose vision is `unsupported`/`unknown` is refused before dispatch (R4b).                                                                                             |
-| Cancellation                 | The existing local/SSH guards plus journal drain.                                                                                                                                         |
-| Crash recovery               | A crash between the ledger append and the journal settle is reconciled at startup (single-instance guaranteed), settling from the ledger or releasing a genuinely orphaned reservation.   |
+| Contract                   | Current implementation and limit                                                                                                                                                                                              |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production executor        | The live app and offline fixtures use run_turn through RuntimeServices. R2 extraction is committed.                                                                                                                           |
+| Typed history              | Opt-in typed/versioned checkpoint storage and boundary writes exist. Public inspect/resume lacks policy-compatible provider continuation and deliberately refuses typed replay. Epoch advancement is not recovery completion. |
+| Tool effects               | Native boundary records exist when enabled. Full immutable authority, reconciliation/start bridge and durable image pins remain incomplete. No exactly-once claim.                                                            |
+| Request budget             | Opt-in/configured single-scope estimated reservations cover native/child calls. Estimates omit some system/tool/image input; hierarchy and unknown-liability handling are incomplete. Not a proven hard dollar bound.         |
+| Missing usage/cancellation | Current cancellation/startup logic can release reservations without proving zero billing. Preserve this as a repair item, not a guarantee that absent ledger rows are unbilled.                                               |
+| Context fit                | Opt-in estimates/snapshots can block detected overflow. Heuristic/catalog windows and unknown-window dispatch do not guarantee fit; full projection/compaction/readout is incomplete.                                         |
+| Capabilities               | Opt-in tri-state metadata/image preflight plus UI guard exist. Static/unknown metadata and production manifest identity remain limited.                                                                                       |
+| Cancellation               | Existing native local/SSH cancellation is separate from full journal/child/SDK drain and ambiguous-effect reconciliation. Native evidence has its own recorded scope.                                                         |
 
-## What is declared, not proven (SDK / Node sidecar)
+## SDK / Node sidecar source
 
-The sidecar transports (`claude-oauth`, `openai-agents`) own their own request
-loop. Until a versioned before-request/mutation hook handshake is shipped and
-verified against the locked SDK versions, the SDK route makes the **weaker**
-claim for each contract:
+The Claude Agent SDK and OpenAI Agents SDK own hidden internal loops. Current source exposes frontend turn preflight and usage reporting; no verified SDK before-request admission hook or implemented SDK-enforced soft-turn limit was found. The target soft_turn label is a desired disclosure category, not evidence that such a limit is enforced today.
 
-| Contract                     | SDK route at this rollout                                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Typed provider input         | Only a tested, versioned adapter export/resume format qualifies. A token or text seed is not equivalent.                                                      |
-| Tool mutation intent/receipt | Journal before SDK-owned mutation requires a tested hook; absent it, interrupted work is **semantic/unknown** and must not auto-resume.                       |
-| Request budget               | **soft_turn** — the SDK enforces a turn-level soft limit, not a per-request reservation, unless a real before-request hook with required bounds is verified.  |
-| Context fit                  | No fit is claimed where the SDK owns hidden context/compaction; only the SDK's declared evidence and limits are exposed.                                      |
-| Cancellation                 | Requires SDK cancellation and remote supervisor acknowledgement; state may remain `stopping`/`unknown` on disconnect.                                         |
-| Capability guard             | The image guard runs in the Rust sidecar branch before dispatch (R4b) for the sidecar providers, but the SDK's own input handling beyond that is not claimed. |
+No per-request reservation, hidden-context fit, durable mutation receipt or exact typed-recovery parity is claimed. A versioned tested hook/export contract is required before strengthening any guarantee. Rust can preflight images when the guard is enabled, but that does not establish all SDK input/tool behavior. SDK cancellation and remote acknowledgement must be proved separately; a disconnected remote process may have an unknown outcome.
 
-### Protocol floor
+## Protocol
 
-The sidecar protocol is **v12** (`PROTOCOL_VERSION` /
-`MINIMUM_PROTOCOL_VERSION` in `src-tauri/src/commands/agent_sidecar/mod.rs`). No
-journaled tool/admission handshake exists yet; the proposed v13 messages
-(`runId`/`epoch`/`requestId`, `before_effect`, `effect_admission`,
-`effect_receipt`, optional `before_model_request`/reservation response) are not
-shipped. An older sidecar may continue only through explicitly supported legacy
-semantics; it cannot ignore required safety fields for a journaled run. The
-global minimum protocol floor is **not** raised until the security contract ships
-across bundled and SSH sidecars. The v12 trust floor is never weakened.
+The sidecar wire version/minimum floor remains 12. Runtime admission/effect/checkpoint handshake fields from the target design are not shipped. Preserve the existing trust floor; a future security contract must ship across both peers before changing its required floor. Older SDK paths cannot silently ignore required safety fields and still claim stronger guarantees.
 
-No claim is made that any particular installed SDK exposes all proposed hooks.
+## Evaluation
 
-## Evaluation-lane policy
+The feature-gated offline runtime-eval lane uses the production runner with FakeServices and scripted fixtures. It avoids real providers/keyrings/ambient MCP/projects; live mode refuses. The archived October 25UTC manifest records 12/12 at dirty `22d1cbd6`, not fresh clean `922ddcc9` or live-model proof. Repeated held-out tasks, real executor isolation, native/SSH/SDK evaluation and remaining fault cases are open. Composer research is excluded.
 
-The offline evaluation lane (`src-tauri/src/bin/runtime-eval.rs`) runs the
-**same** `run_turn` against the deterministic `FakeServices`/`ScriptedProvider`
-lane. It is offline by default and must never touch network/keyring/ambient MCP.
-`--live` hard-refuses: live evaluation requires an explicit provider/account/
-target selection **and** a predeclared spend policy, and never runs as part of
-routine tests or against a developer's real project/profile. The 20–30 held-out
-live tasks × 3 trials and OS/container isolation are deferred; the offline lane
-does not constitute live-model proof.
+No product tests, live provider calls, builds or installations were performed to write this declaration.

@@ -1,5 +1,13 @@
 # 02 - Architecture
 
+> **Source reconciliation 2026-10-24:** Remote Agents is the owner's top
+> priority, but the implementation remains gated. Use the
+> [current-status map](../current-status.md),
+> [documentation audit](../documentation-audit-2026-10-24.md), and
+> [backlog](../../backlog.md) for current sequencing. The Railway deployment
+> and live-PostgreSQL statements below record the August/September environment;
+> they are not current health or deployment assertions.
+
 ## High-Level Shape
 
 ```mermaid
@@ -77,6 +85,18 @@ model. Public deployments expose only HTTPS/WSS.
 
 ### Deployment target: Railway
 
+**October 24 evidence boundary:** This is the historical owner-selected target
+and its dated proof. The local sibling repository at `packetrelay@74ffc10`
+contains pre-existing modified `README.md` and untracked `deploy/README.md`
+records describing a subsequent datacenter/Caddy/systemd deployment and
+September 14 deletion of the old Railway project and PostgreSQL volume. Those
+records explicitly say that the default relay does not use PostgreSQL and
+Remote Agents remains disabled. They were read, not reproduced; no live
+infrastructure/account checks occurred. Current topology, datastore, backup
+and restore readiness are unverified. Preserve the August decision as history
+and reconcile the later operational record before any deployment work; this
+note does not authorize a target change.
+
 **Resolved 2026-08-27** (see `09-open-decisions.md` § Relay Deployment Target).
 The relay deploys to Railway, replacing the Google Cloud Run deployment it ran
 while it served Syndicate. Its repository configuration migrated locally from
@@ -90,7 +110,7 @@ canonicalizes default-equivalent restart fields out of the desired graph; the
 live manifest retains `ON_FAILURE` with ten retries. The Cloud Run path
 (`cloudbuild.yaml`, `deploy.sh`) was deleted on 2026-08-28. This does not reopen
 the 2026-08-02 decision to use the Rust relay and reject Cloudflare — Railway
-answers only *where that relay runs*.
+answers only _where that relay runs_.
 
 **DEPLOYED 2026-08-28.** The relay is live on Railway in workspace
 `FIFTY ELEVEN AI`, project `packet-relay`, environment `production`. The initial
@@ -183,6 +203,17 @@ the verified default overlap of `0`; revisit database-backed coordination before
 changing that setting or scaling beyond one replica.
 
 ### PostgreSQL
+
+**October 24 source boundary:** PostgreSQL remains the proposed durable
+metadata technology. Committed sibling source `522687a`, present at
+`packetrelay@74ffc10`, contains only the initial identity/host/device/ACL and
+redacted audit migration/repository. It deliberately excludes auth sessions,
+WebAuthn/magic links, tickets, replay, revocation retention, rate limits and
+notification outbox. It is not wired into the feature-off server. The broader
+schema below is planned scope, and the paragraph describing a live Railway
+database is the September checkpoint only. The later local operator record
+reports its deletion; do not assume a current database or backups from that
+old paragraph.
 
 Relational metadata:
 

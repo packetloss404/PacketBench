@@ -1,5 +1,27 @@
 # 08 - Testing Plan
 
+## Evidence boundary — 2026-10-24
+
+This is the target test plan, not a record that its matrices have passed. Start
+with [current status](../current-status.md), the
+[documentation audit](../documentation-audit-2026-10-24.md), and
+[backlog](../../backlog.md). No tests/builds, sockets, phones, providers or
+infrastructure were exercised for this documentation reconciliation.
+
+At PacketBench `922ddcc9`, `pnpm remoteagents:check` runs the shared envelope
+tests and builds the shared/PWA packages. The PWA is a static foundation shell;
+its package currently exposes build/dev scripts, not an implemented mobile
+auth/socket/approval test suite. Passing that command would not prove a relay
+connection, E2EE, product auth, phone backgrounding, push or PostgreSQL.
+
+The sibling committed relay `74ffc10` defaults to no `remote-agents` feature.
+Its feature-on routes return 501; the feature-off namespace is closed. Its
+identity/ACL/redacted-audit PostgreSQL substrate exists, but
+`tests/postgres_persistence.rs` explicitly skips when `TEST_DATABASE_URL` is
+absent. Neither a default-feature test run nor a skipped database test proves
+the remote feature. Later dirty/untracked deployment records and older
+Railway acceptance remain separately scoped evidence, not current live checks.
+
 ## Test Philosophy
 
 Remote Agents has three failure classes:
@@ -217,6 +239,10 @@ Metrics:
 
 ## Build Checks
 
+These checks describe future implementation acceptance. Record exact source,
+feature set, commands, environment and passed/failed/skipped results; do not
+promote schema/build or fake-transport checks into native/mobile proof.
+
 Desktop:
 
 - `pnpm lint`
@@ -239,13 +265,34 @@ Rust relay (`D:\projects\packetrelay`):
 - `cargo fmt --all -- --check`
 - `cargo clippy --locked --all-targets -- -D warnings`
 - `cargo test --locked`
+- `cargo clippy --locked --features remote-agents --all-targets -- -D warnings`
+- `cargo test --locked --features remote-agents`
+- `cargo test --locked --features remote-agents --test postgres_persistence`
+  against an explicitly authorized disposable PostgreSQL instance; treat a
+  missing test URL as **skipped**, never database acceptance
 - PostgreSQL migration and restart/replay integration tests
 - Docker build and container smoke test
 - deployment dry run
 
+The current PostgreSQL test covers the identity-foundation migration and
+repository boundaries, not an implemented ticket/replay/auth/outbox lifecycle.
+Add the missing lifecycle/fault tests as those features land. A feature-enabled
+test executable or container must report its actual build feature set; the
+default relay image is not evidence that the remote routes work.
+
+Keep distinct evidence for: cross-runtime envelope compatibility; approved
+crypto golden/negative vectors; real database restart/replay and restore;
+fake-relay desktop/PWA command flows; actual socket auth/Origin/revocation;
+and installed iOS/Android approval/background/reopen/push flows. Desktop browser
+emulation cannot establish installed-phone behavior. Restore/backup readiness
+and the required auth/security review must be recorded independently of the
+eleven desktop feature gates.
+
 ## Beta Exit Criteria
 
 - all private beta launch gates in `04-security.md` pass
+- owned-auth/recovery and accepted E2EE/transport security review completed
+  before any external beta, plus proven datastore backup/restore readiness
 - no known P1/P2 security issues
 - 30-minute remote active session passes
 - iOS and Android manual matrix complete

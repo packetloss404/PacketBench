@@ -1,5 +1,28 @@
 # 04 - Security
 
+## Current gate clarification — 2026-10-24
+
+Use [current status](../current-status.md), the
+[documentation audit](../documentation-audit-2026-10-24.md), and
+[backlog](../../backlog.md) for sequencing. Remote Agents is the owner's top
+priority; it remains disabled/fail-closed in the inspected source.
+
+The ratified in-house-auth decision in
+[09-open-decisions.md](./09-open-decisions.md#auth-provider--resolved-2026-08-28)
+requires security review **before any external beta**, including an external
+private beta. The later Public beta list below does not postpone that review.
+Pre-beta E2EE is also mandatory; owning the relay/auth code or using TLS is not
+a substitute. Transport/crypto details remain gated by
+[document 11](./11-transport-contract-decisions.md).
+
+The eleven requirements encoded in `src/lib/remoteAgentsGate.ts` are a
+necessary production feature guard, not a complete release-readiness
+checklist. Their all-green state would not establish auth-review completion,
+datastore backup/PITR and restore readiness, full retention/recovery policy,
+or the mobile/operational proof below. Keep those as independent release
+requirements with dated evidence. No gate was marked met and no security,
+infrastructure or test verification was performed in this reconciliation.
+
 ## Security Position
 
 Remote Agents is remote control over an agent that can read, write, run commands, use API credentials, access local files, and call MCP tools. Treat it as high-risk infrastructure from day one.
@@ -396,6 +419,17 @@ Private beta gate:
 - cloud logs are scanned for prompt/tool content and pass redaction checks
 - documented incident kill switch
 
+Additional requirements before **any external beta**, whether or not they are
+represented in the eleven desktop gates:
+
+- complete the security review of owned auth, recovery/device-loss paths and
+  the accepted endpoint-to-endpoint encryption/transport contracts
+- establish the actual datastore/deployment configuration and prove the
+  required PITR/backup and offsite restore-drill guarantees; the September
+  Railway observations do not establish a database exists today
+- exercise durable restart/replay, revocation, redaction, retention and the
+  applicable phone approval/reconnect matrix with recorded evidence
+
 Public beta gate:
 
 - passkey/magic-link production auth
@@ -403,4 +437,5 @@ Public beta gate:
 - abuse monitoring
 - push notification controls
 - retention policy
-- security review
+- security review refreshed for the public scope; the initial owned-auth
+  review is already required before external private beta

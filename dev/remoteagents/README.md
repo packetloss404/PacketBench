@@ -1,5 +1,49 @@
 # PacketBench Remote Agents
 
+## Current status — source reconciliation 2026-10-24
+
+**Remote Agents is the owner's top product priority.** Start with the
+[current-status map](../current-status.md), the
+[documentation audit](../documentation-audit-2026-10-24.md), and the authoritative
+[backlog](../../backlog.md). The dated checkpoint below remains evidence for
+its own source and environment, not proof of current infrastructure health.
+
+- **PacketBench source `922ddcc9`: foundation only, fail-closed.** The desktop
+  gate in `src/lib/remoteAgentsGate.ts` has all eleven requirements unmet;
+  user opt-in cannot bypass it. `remoteagents/pwa/src/App.tsx` is a static
+  Sprint 0 shell. Shared v1 envelope validation and the 64 KiB inline ceiling
+  exist; account sign-in, host sockets/presence and the remote conversation
+  loop do not.
+- **Sibling committed source `packetrelay@74ffc10`: some Sprint 1 data
+  substrate exists.** Commit `522687a` (2026-09-02) adds the PostgreSQL
+  identity/host/device/ACL and columnar audit migration/repository. Its
+  `tests/postgres_persistence.rs` test requires `TEST_DATABASE_URL` and skips
+  when absent. Auth sessions, tickets, replay and push/outbox are deliberately
+  excluded. The `remote-agents` feature is off by default; reserved routes
+  return 404 without it and 501 with it. This is not a working transport/auth
+  slice and no tests were rerun in this audit.
+- **Deployment discrepancy remains to reconcile.** The September Railway/
+  PostgreSQL observations below are historical. The sibling checkout has
+  pre-existing modified `README.md` and untracked `deploy/` operator records
+  describing a September datacenter deployment, September 14 deletion of the
+  former Railway project/database, and an October domain update. Those records
+  state that the default relay uses no PostgreSQL and Remote Agents stays off.
+  They are later local operational evidence, not committed source or a new
+  live verification. No endpoint, host, account or deployment was inspected
+  here; current infrastructure/database/backup health is **unverified**.
+
+Next: close the implementation/security contracts in
+[11-transport-contract-decisions.md](./11-transport-contract-decisions.md),
+then build and prove the internal-only authenticated host-presence slice on
+the accepted Rust relay. Preserve the in-house passkey/magic-link decision,
+PWA/API-agent scope, desktop-owned execution, mandatory pre-beta E2EE and the
+owned-auth security review required before external beta.
+Reconcile the deployment record before choosing a rollout procedure or
+claiming that a database/backup system exists. Do not silently reinterpret
+the August Railway decision as a newly approved datacenter target.
+
+## Historical September 1 checkpoint
+
 Status: **ACTIVE — Sprint 0 completed 2026-09-01** (resumed by owner decision
 2026-08-27 after an eleven-day pause). Read
 [`10-pause-record.md`](./10-pause-record.md) for the historical pause and
@@ -47,7 +91,8 @@ The remote feature should project that desktop capability to mobile without dupl
 
 ## Documentation Map
 
-- [remote-agents-plan.html](./remote-agents-plan.html) - single-page HTML5 war-room brief for kickoff and review
+- [remote-agents-plan.html](./remote-agents-plan.html) - historical visual kickoff brief; current status/contract qualifications are in this README and document 11
+- [remote-agents-master-plan.html](./remote-agents-master-plan.html) - retained visual planning snapshot, not deployment or completion evidence
 - [01-product-scope.md](./01-product-scope.md) - feature definition, MVP, non-goals, user journeys
 - [02-architecture.md](./02-architecture.md) - cloud, desktop, PWA, and data-flow architecture
 - [03-protocol.md](./03-protocol.md) - relay envelopes, commands, events, sequencing, idempotency

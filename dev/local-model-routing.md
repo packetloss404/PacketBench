@@ -118,7 +118,7 @@ it is not a signature change.
    ungated**: `ProviderPicker` / the model dropdown still offer tool-incapable
    models for an agent tile. That gating is the remaining LM1 item, tracked as
    **F-2.3-15** in
-   [`docs/reports/state-of-the-ade-2026-07-30.md`](../docs/reports/state-of-the-ade-2026-07-30.md).
+   [`docs/reports/state-of-the-ade-2026-07-30.md`](https://docs.ianlan.dev/reports/state-of-the-ade-2026-07-30.md).
 
    The obstacle is that `list_ollama_models` reads `/api/tags`, which returns
    **no capability data at all** — name, size, digest, modified date, and a

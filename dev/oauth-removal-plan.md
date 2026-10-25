@@ -813,7 +813,7 @@ stays in `apiAgentProvider` so historical spend is not mis-billed. What does
 **not** exist is the action that moves such a conversation onto
 `api-openai-agents` — a user who wants to continue one starts a new
 conversation and loses the thread. Tracked as **F-2.3-16** in
-[`docs/reports/state-of-the-ade-2026-07-30.md`](../docs/reports/state-of-the-ade-2026-07-30.md).
+[`docs/reports/state-of-the-ade-2026-07-30.md`](https://docs.ianlan.dev/reports/state-of-the-ade-2026-07-30.md).
 Still worth doing. Original text:
 
 Files: `src/stores/agentTaskStore.ts` (new action rewriting `agent` + `provider`,

@@ -3,6 +3,38 @@
 Program status: **ACTIVE — resumed by owner decision 2026-08-27** (paused
 2026-08-16 to 2026-08-27). See [`10-pause-record.md`](./10-pause-record.md).
 
+## Current reconciliation — 2026-10-24
+
+Remote Agents is now the owner's top product priority. The
+[current-status map](../current-status.md),
+[documentation audit](../documentation-audit-2026-10-24.md) and
+[backlog](../../backlog.md) own current ordering/status. The decision log below
+is retained; a dated observation is not proof of the environment today.
+
+**Auth and product scope are unchanged:** owned passkey/magic-link auth,
+mandatory pre-beta E2EE, PWA first, API-agent-only control, desktop execution,
+and the sibling Rust relay remain the recorded owner decisions. Do not reopen
+them merely because implementation resumed.
+
+**Deployment record requires reconciliation, not a silent decision change.**
+The August Railway target and September managed-PostgreSQL verifications below
+are historical. A read-only source audit found the sibling at committed
+`74ffc10`, with pre-existing dirty `README.md` and untracked `deploy/`
+operator records describing a later datacenter deployment and September 14
+deletion of the old Railway project/database. They say the default relay uses
+no PostgreSQL and Remote Agents stays off. These are later local records,
+not a verified live topology or a newly ratified deployment decision. Current
+service/database/backups/cost remain unverified; reconcile that evidence before
+the next infrastructure task. The Rust relay choice is independent of hosting.
+
+**Implementation status is more precise than “Sprint 1 not started.”**
+Sibling commit `522687a` (2026-09-02), present at `74ffc10`, implements the
+initial identity/ACL/redacted-audit repository and migration. It excludes
+auth/tickets/replay/outbox, and the feature-on server still returns 501.
+Desktop transport/PWA presence/product auth remain unimplemented in the
+PacketBench `922ddcc9` source. Existing test files were inspected, not rerun;
+the real-PostgreSQL repository test skips without its explicit test URL.
+
 ## Locked Decisions
 
 ### Primary UX
@@ -82,6 +114,10 @@ The Google Cloud Run deployment path went with it — `cloudbuild.yaml`,
 section.
 
 ### Relay Deployment Target — RESOLVED 2026-08-27
+
+Read this section as the dated decision/verification record. The October 24
+note above qualifies all present-tense deployment/database claims below; it
+does not rewrite or silently supersede the owner decision.
 
 **Railway.** This replaces the Google Cloud Run deployment the relay ran while
 it served Syndicate. The relay's repository configuration migrated locally

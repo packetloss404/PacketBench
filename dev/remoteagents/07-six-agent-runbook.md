@@ -1,5 +1,17 @@
 # 07 - Six-Agent Runbook
 
+> **Historical Sprint 0 ownership map; clarified 2026-10-24.** Its publication
+> completed a Sprint 0 planning checkpoint, not the later implementation or
+> deployment gates. Use [current status](../current-status.md), the
+> [documentation audit](../documentation-audit-2026-10-24.md), and
+> [backlog](../../backlog.md) before assigning work. Roles remain useful, but
+> refresh file ownership and dependencies against current source. Auth was
+> resolved in favor of owned passkey/magic-link on August 28; choosing an auth
+> provider is not new work. Railway observations are historical and later
+> local sibling operator records require reconciliation; this runbook does
+> not prove or choose a current deployment. The security review is required
+> before any external beta, not only public beta.
+
 This is the kickoff plan and posted Sprint 0 ownership map for a six-agent team.
 Each agent owns a separate write area to reduce conflicts. Its publication
 satisfies the ownership-map item in the Sprint 0 checkpoint.
@@ -12,7 +24,12 @@ satisfies the ownership-map item in the Sprint 0 checkpoint.
 - Keep protocol changes in shared schemas first.
 - Every mutating remote command needs idempotency.
 - Every relay route/message needs auth and object-level authorization.
-- Feature flag everything behind `remoteAgents.enabled`.
+- Route production Remote Agents operations through the fail-closed
+  `remoteAgentsGate` authority (`assertRemoteAgentsEnabled` at effectful
+  boundaries). Persisted `remoteAgents.enabled` is user intent only and cannot
+  bypass its eleven unmet requirements. Any separate internal prototype path
+  must remain compile/runtime-isolated from external builds; do not mark beta
+  gates met merely to test a prototype.
 - Keep MVP API-agent only.
 
 ## Agent 1 - Rust Relay And Data
@@ -124,7 +141,9 @@ Owns:
 
 Tasks:
 
-- passkey/magic-link provider decision.
+- implement the resolved owned passkey/magic-link auth lifecycle, including
+  recovery and its required pre-external-beta security review; do not reopen
+  the resolved provider decision implicitly
 - PKCE desktop sign-in.
 - trusted device ACL.
 - revocation.

@@ -15,7 +15,7 @@ hardened runtime, `notarytool`, and stapling.
 ## 0. Why this exists
 
 The 2026-08-05 Fable 5 review scoped macOS out of v1.0.0
-([`docs/reports/fable5-review-2026-08-05.md`](../docs/reports/fable5-review-2026-08-05.md) §2)
+([`docs/reports/fable5-review-2026-08-05.md`](https://docs.ianlan.dev/reports/fable5-review-2026-08-05.md) §2)
 on the stated grounds that no Apple hardware was documented as available and that
 `multi-platform-build.md` says macOS cannot be cross-compiled from anywhere else.
 
@@ -821,5 +821,5 @@ to test against.
   (`darwin-aarch64`, and `darwin-x86_64` if that arch ships).
 - [`spike-macos-keychain-namespacing.md`](./spike-macos-keychain-namespacing.md) —
   the _why_ and the _what we do about it_ for §6.
-- [`../docs/reports/fable5-review-2026-08-05.md`](../docs/reports/fable5-review-2026-08-05.md)
+- [`../docs/reports/fable5-review-2026-08-05.md`](https://docs.ianlan.dev/reports/fable5-review-2026-08-05.md)
   §2 — the v1.0.0 definition this plan works alongside.

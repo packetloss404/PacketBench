@@ -1,5 +1,10 @@
 # Agent harness, Cursor and desktop experience review
 
+> Historical October 19 review. Later implementation slices are committed;
+> [the October 24 audit](./documentation-audit-2026-10-24.md) and
+> [current status](./current-status.md) supersede its unimplemented/current-state
+> interpretations. Original findings and evidence retain their dated scope.
+
 Date: October 19, 2026, America/Chicago. Research retrieved through October 20 UTC.
 Source baseline: `e5d31084e5d2c4861723dca4d4c2931a64b0f732`.
 Installed Windows runtime: local 0.14.9 rebuild, source contents `0b6dbf52`;

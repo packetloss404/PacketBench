@@ -13,8 +13,8 @@ Everything cites a file; verify the file before acting on the sentence.
 Companion documents: `docs/audit-2026-09-04.md` (the full audit: findings,
 patches, unresolved items), `docs/runbooks.md` (operate it),
 `docs/dependency-snapshot-2026-09-04.md` (CVEs and pins), `HANDOFF.md` at the
-repo root (the older product-history restart doc; still accurate for history,
-superseded by this file for security invariants), `CLAUDE.md`/`AGENTS.md`
+repo root (the current restart document; this file preserves only its September
+audit snapshot and does not supersede current security contracts), `CLAUDE.md`/`AGENTS.md`
 (coding conventions; both are git-ignored, edit both).
 
 ## 1. What this is, in one screen

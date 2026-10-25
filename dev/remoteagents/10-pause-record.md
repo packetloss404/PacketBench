@@ -5,6 +5,20 @@ The owner resumed the program on 2026-08-27 after an eleven-day pause. For live
 status, start with `README.md` and `09-open-decisions.md`; use this document for
 the pause/resumption history, invariants, and pickup context.
 
+**October 24 annotation:** The owner now puts Remote Agents first. Start with
+the [current-status map](../current-status.md),
+[documentation audit](../documentation-audit-2026-10-24.md), and
+[backlog](../../backlog.md). All pause/resumption decisions, Sprint 0 checks,
+Railway health/region/database observations and associated numbers below keep
+their original dates. Later sibling committed source includes the partial
+Sprint 1 persistence foundation (`522687a`, present at `74ffc10`); later
+pre-existing dirty/untracked sibling operator records describe a datacenter
+deployment and deletion of the old Railway/database. Neither record proves
+current infrastructure health. No live deployment check or owner auth/hosting
+decision was made in this audit. The prior pause is not a new blocker, and
+“Sprint 1/auth not started” below must be read with the partial data-substrate
+qualification in the current Remote Agents README.
+
 The pause is preserved below as history, not as noise: it was a deliberate
 sequencing decision made during a blocker review, not neglect, and the reasons
 recorded in §3 are still the reasons — they were overtaken, not refuted.
@@ -40,7 +54,7 @@ the same day:
 - **The relay's deployment target is Railway.** This replaces the Google
   Cloud Run deployment the relay ran while it served Syndicate. It does not
   reopen the 2026-08-02 relay-architecture decision (Rust service, Cloudflare
-  rejected); Railway is the answer to *where the chosen relay runs*, which
+  rejected); Railway is the answer to _where the chosen relay runs_, which
   that decision never fixed. The relay's repository configuration migrated
   locally from deprecated `railway.json` to `.railway/railway.ts` on 2026-09-01
   with a validated service graph; production cleared the legacy Config File
@@ -105,26 +119,26 @@ Release). V1 capacity targets: 1 desktop socket per host, ≤5 mobile clients,
 ≤20 active conversations, 1,000-event/24h replay buffer, 64 KiB inline
 envelope ceiling.
 
-### Decision ledger (current)
+### Decision ledger at the September 1 checkpoint
 
-| Decision | State |
-| --- | --- |
-| Primary UX: cloud sign-in, QR not primary | **Locked** |
-| Desktop owns execution; relay never calls providers/tools | **Locked** |
-| PWA first; native iOS deferred until after PWA beta | **Locked** |
-| MVP runtime scope: API agents only, no remote PTY | **Locked** |
-| Transport: WS relay for control, Web Push wake-only | **Locked** |
-| Relay: extend `D:\projects\packetrelay` (Rust/Tokio + PostgreSQL); Cloudflare rejected | **Resolved 2026-08-02** — must not be reopened implicitly |
-| Code location: relay stays sibling repo; shared schemas + PWA under PacketBench `remoteagents/` | **Resolved 2026-08-02** |
-| **Relay ownership** | **Resolved 2026-08-27** — PacketRelay is PacketBench's infrastructure; Remote Agents is its only consumer. Not shared with Syndicate. |
-| **Relay deployment target** | **Resolved 2026-08-27** — Railway (replaces Cloud Run). Does not reopen the 2026-08-02 architecture decision. |
-| Payload-encryption launch gate | **Resolved 2026-08-16** — plaintext (TLS-only) for local/internal dev only; encrypted agent/approval/file payloads are a hard gate before any external private beta. Unchanged by the resumption. |
-| **Auth provider** | **Resolved 2026-08-28** — build passkey/magic-link auth into the relay (Rust on PostgreSQL), fully owned. The owner accepted the ownership burden explicitly. No blocking owner decision remains. See §2 and `09-open-decisions.md` § Auth Provider. |
+| Decision                                                                                                                        | State                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Primary UX: cloud sign-in, QR not primary                                                                                       | **Locked**                                                                                                                                                                                                                                                                                              |
+| Desktop owns execution; relay never calls providers/tools                                                                       | **Locked**                                                                                                                                                                                                                                                                                              |
+| PWA first; native iOS deferred until after PWA beta                                                                             | **Locked**                                                                                                                                                                                                                                                                                              |
+| MVP runtime scope: API agents only, no remote PTY                                                                               | **Locked**                                                                                                                                                                                                                                                                                              |
+| Transport: WS relay for control, Web Push wake-only                                                                             | **Locked**                                                                                                                                                                                                                                                                                              |
+| Relay: extend `D:\projects\packetrelay` (Rust/Tokio + PostgreSQL); Cloudflare rejected                                          | **Resolved 2026-08-02** — must not be reopened implicitly                                                                                                                                                                                                                                               |
+| Code location: relay stays sibling repo; shared schemas + PWA under PacketBench `remoteagents/`                                 | **Resolved 2026-08-02**                                                                                                                                                                                                                                                                                 |
+| **Relay ownership**                                                                                                             | **Resolved 2026-08-27** — PacketRelay is PacketBench's infrastructure; Remote Agents is its only consumer. Not shared with Syndicate.                                                                                                                                                                   |
+| **Relay deployment target**                                                                                                     | **Resolved 2026-08-27** — Railway (replaces Cloud Run). Does not reopen the 2026-08-02 architecture decision.                                                                                                                                                                                           |
+| Payload-encryption launch gate                                                                                                  | **Resolved 2026-08-16** — plaintext (TLS-only) for local/internal dev only; encrypted agent/approval/file payloads are a hard gate before any external private beta. Unchanged by the resumption.                                                                                                       |
+| **Auth provider**                                                                                                               | **Resolved 2026-08-28** — build passkey/magic-link auth into the relay (Rust on PostgreSQL), fully owned. The owner accepted the ownership burden explicitly. No blocking owner decision remains. See §2 and `09-open-decisions.md` § Auth Provider.                                                    |
 | Railway deployment questions (edge WS connection lifetime, deploy-time instance overlap, managed-PostgreSQL durability, region) | **Verified 2026-09-01** — WSS indefinite even idle; overlap defaults to `0`; relay and PostgreSQL in `us-west2`; PostgreSQL is live privately but PITR-off single-node durability is internal-only until PITR, scheduled volume backups, and an offsite logical restore drill. See `02-architecture.md` |
-| Relay `/v1/product-route` disposition after the Syndicate separation | **Resolved and DONE 2026-08-28** — cut, executed in the relay repo as `b2bcff5`. Bridge/broadcast/room were explicitly *not* cut; they are a separate inherited lineage. |
-| Backend conversation persistence shape | Open, non-blocking (recommendation written: minimal Rust DTO for MVP) |
-| Native iOS strategy | Deferred until after PWA beta |
-| Team/org model, cloud runner, billing, WebRTC/LAN, remote PTY, file browser depth, transcript retention | Deferred |
+| Relay `/v1/product-route` disposition after the Syndicate separation                                                            | **Resolved and DONE 2026-08-28** — cut, executed in the relay repo as `b2bcff5`. Bridge/broadcast/room were explicitly _not_ cut; they are a separate inherited lineage.                                                                                                                                |
+| Backend conversation persistence shape                                                                                          | Open, non-blocking (recommendation written: minimal Rust DTO for MVP)                                                                                                                                                                                                                                   |
+| Native iOS strategy                                                                                                             | Deferred until after PWA beta                                                                                                                                                                                                                                                                           |
+| Team/org model, cloud runner, billing, WebRTC/LAN, remote PTY, file browser depth, transcript retention                         | Deferred                                                                                                                                                                                                                                                                                                |
 
 ### The auth decision — RESOLVED 2026-08-28
 
@@ -142,7 +156,7 @@ what was weighed:
 1. **Hosted SaaS IdP** (Clerk / Auth0 / Stytch class) — vendor runs sign-in,
    passkeys, magic links, recovery; the relay only validates tokens. Least
    owned surface; free tiers cover a private beta, then per-active-user
-   pricing. *This was the 2026-08-16 session's recommendation.*
+   pricing. _This was the 2026-08-16 session's recommendation._
 2. **Self-hosted open-source IdP** (Keycloak / Zitadel / Ory class) —
    standard OIDC, no vendor or per-user fees, but one more service to deploy,
    patch, and secure next to the relay.
@@ -162,7 +176,7 @@ reusing the 2026-06 comparison: pricing and passkey support move fast. Option
 
 - **The `packet-relay` path bug is fixed.** Every planning doc previously
   cited the relay repo as `D:\projects\packet-relay`; the real directory is
-  `D:\projects\packetrelay` (the *crate* is named `packet-relay`, which is how
+  `D:\projects\packetrelay` (the _crate_ is named `packet-relay`, which is how
   the error propagated). Corrected 2026-08-16 in: `backlog.md`,
   `dev/mobile/README.md`, all `dev/remoteagents/*.md`, and both HTML briefs.
   Left intact as dated evidence: `docs/reports/state-of-the-ade-2026-07-30.md`
@@ -192,14 +206,14 @@ happened, not as a live objection to the program running now.
 
 Read this table before trusting any doc.
 
-| Artifact | Trust at resume |
-| --- | --- |
-| `09-open-decisions.md` | **Authoritative** — the live decision ledger. |
-| `01-product-scope.md`, `04-security.md`, `05-pwa.md`, `06-implementation-plan.md`, `07-six-agent-runbook.md`, `08-testing.md` | Design of record; sound unless a resume step below invalidates a specific assumption. `06`'s sprint sizing predates the cost reweighting in §1.3. |
-| `02-architecture.md`, `03-protocol.md` | Design of record, re-baselined against `D:\projects\packetrelay` after `/v1/product-route` was removed at `b2bcff5`. `02` carries the answered Sprint 0 Railway deployment verifications and the remaining external-beta durability gate. |
-| `research-brief.md` | **Background only.** Dated 2026-05-26 — three months older than the rest and predates the Cloudflare→Rust reversal. Re-verify its platform facts before consuming: iOS PWA Web Push behavior, WebAuthn/passkey support matrices, WS connection limits, push-provider choices. |
-| The two HTML briefs | Presentation snapshots of the plan; never authoritative over the markdown. They never carried the pause status and they predate the 2026-08-27 decisions, so they say nothing about relay ownership or Railway. Regenerate them only if they are used for a kickoff. |
-| Market baseline | Refresh now. As of 2026-08-16 the first parties ship phone supervision (Claude Remote Control, Codex mobile QR pairing, GitHub mission control mobile); the "Ten Empty Lanes" strategy report (artifact, 2026-08-16) argues the differentiated version of this surface is **the attention-budget's remote endpoint, not a desktop mirror** — Lane 10: urgency-typed interruptions, decision windows, batched approvals, voice triage via Dictation. |
+| Artifact                                                                                                                      | Trust at resume                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `09-open-decisions.md`                                                                                                        | **Authoritative** — the live decision ledger.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `01-product-scope.md`, `04-security.md`, `05-pwa.md`, `06-implementation-plan.md`, `07-six-agent-runbook.md`, `08-testing.md` | Design of record; sound unless a resume step below invalidates a specific assumption. `06`'s sprint sizing predates the cost reweighting in §1.3.                                                                                                                                                                                                                                                                                                   |
+| `02-architecture.md`, `03-protocol.md`                                                                                        | Design of record, re-baselined against `D:\projects\packetrelay` after `/v1/product-route` was removed at `b2bcff5`. `02` carries the answered Sprint 0 Railway deployment verifications and the remaining external-beta durability gate.                                                                                                                                                                                                           |
+| `research-brief.md`                                                                                                           | **Background only.** Dated 2026-05-26 — three months older than the rest and predates the Cloudflare→Rust reversal. Re-verify its platform facts before consuming: iOS PWA Web Push behavior, WebAuthn/passkey support matrices, WS connection limits, push-provider choices.                                                                                                                                                                       |
+| The two HTML briefs                                                                                                           | Presentation snapshots of the plan; never authoritative over the markdown. They never carried the pause status and they predate the 2026-08-27 decisions, so they say nothing about relay ownership or Railway. Regenerate them only if they are used for a kickoff.                                                                                                                                                                                |
+| Market baseline                                                                                                               | Refresh now. As of 2026-08-16 the first parties ship phone supervision (Claude Remote Control, Codex mobile QR pairing, GitHub mission control mobile); the "Ten Empty Lanes" strategy report (artifact, 2026-08-16) argues the differentiated version of this surface is **the attention-budget's remote endpoint, not a desktop mirror** — Lane 10: urgency-typed interruptions, decision windows, batched approvals, voice triage via Dictation. |
 
 ## 5. Invariants
 
@@ -235,11 +249,12 @@ Do not violate these without an explicit new owner decision:
    not about tracking Syndicate drift — that premise is dead (§1.3):
 
    a. **The inherited surface was removed.** `/v1/product-route`, its dedicated
-      crypto/protocol modules and document, and the retired Cloud Run artifacts
-      came out. Bridge/broadcast/room remain as a separate lineage and were
-      explicitly outside the cut.
+   crypto/protocol modules and document, and the retired Cloud Run artifacts
+   came out. Bridge/broadcast/room remain as a separate lineage and were
+   explicitly outside the cut.
    b. **The plan was re-baselined** against the remaining relay surface in
-      `02-architecture.md`, `03-protocol.md`, and `09-open-decisions.md`.
+   `02-architecture.md`, `03-protocol.md`, and `09-open-decisions.md`.
+
 4. ~~**Complete Railway deployment verification.**~~ **Done 2026-09-01.** The
    IaC migration is applied with a clean final plan; managed PostgreSQL is live
    over private `DATABASE_URL`; both services are in `us-west2`; WSS is

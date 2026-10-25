@@ -1,5 +1,11 @@
 # Future agent dispatch and acceptance
 
+> Before reusing these original prompts, read [current status](../current-status.md)
+> and [the committed-source audit](../documentation-audit-2026-10-24.md).
+> Implement the remaining assigned tranche, not already-landed R/F/V slices.
+> Remote Agents is now the highest product implementation priority; these
+> desktop/runtime repairs support that program or follow its critical path.
+
 Design only, October 19, 2026. Read [the package entry point](./README.md) and
 the assigned track before editing product code. [backlog.md](../../backlog.md)
 owns live status. Composer research, model training and competitor-agent
@@ -11,6 +17,10 @@ development are excluded from every prompt below.
 Implement the assigned tranche of PacketBench's Agents/runtime plan at
 D:\projects\PacketBench. Read AGENTS.md, HANDOFF.md, backlog.md and
 dev/agent-experience/README.md, then every affected track specification.
+Also read dev/current-status.md and dev/documentation-audit-2026-10-24.md.
+Remote Agents is the top product priority; this prompt is for a specifically
+assigned supporting desktop/runtime tranche. Verify already-committed slices
+and implement only the current residual, not the whole original plan again.
 
 You are not alone in the codebase. Preserve the existing uncommitted review
 and planning documents and other agents' edits. Inventory current HEAD,

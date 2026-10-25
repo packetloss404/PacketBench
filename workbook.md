@@ -1,5 +1,11 @@
 # PacketBench QA Workbook
 
+> Historical September 5, 2026 workbook for the commits listed below. It is not
+> the current release checklist or status ledger. Start at
+> [the documentation hub](dev/README.md), [current status](dev/current-status.md)
+> and the [current quality gates](dev/local-quality-gates.md). Preserve old rows
+> as evidence; do not promote their checks to the October 24 source/package.
+
 | Field | Value |
 |---|---|
 | Repository | packetloss404/PacketBench |

@@ -1,6 +1,10 @@
 # R2b plan and decision record
 
-Status: **proposed — Step 0 for approval before any R2b code.** This document
+Status reconciled October 24: **historical decision record; R2b extraction and
+R2c fake-provider parity are committed** (`476dd6fd`, `6d1f5848`). The following
+proposal records the original reasoning, not an outstanding approval request.
+Read [current verification](../documentation-audit-2026-10-24.md) and the backlog
+for remaining runtime work. This document
 records the decisions R2b depends on and the concrete extraction plan. It is a
 planning artifact; `backlog.md` remains the sole status ledger. Source baseline
 for the checks below: `codex/agent-experience` (2026-10-23).

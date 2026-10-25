@@ -1,10 +1,14 @@
 # Agents flow: implementation specification
 
-Status: **Proposed design; implementation has not started.**
+Status reconciled October 24: **committed partial implementation.** F1–F8
+source slices exist; launch/SSH/asset/attention/history residuals and native
+proof remain. This is the target specification. Read
+[the packet audit](../documentation-audit-2026-10-24.md),
+[current status](../current-status.md) and backlog before the original design.
 
 Date: 2026-10-19, America/Chicago. Source baseline: `e5d31084`.
 
-Parent evidence: [Agent harness and experience review](../agent-harness-and-experience-review-2026-10-19.md), findings F1–F8. This document defines their behavior and future work boundaries. The parent plan and `backlog.md` remain the work ledger. It excludes Composer model/harness comparisons, provider-account integration research, typography decisions and a new scheduler.
+Parent evidence: [Agent harness and experience review](../agent-harness-and-experience-review-2026-10-19.md), findings F1–F8. This document defines their behavior and future work boundaries. The parent plan defines the target; `backlog.md` is the sole work ledger. It excludes Composer model/harness comparisons, provider-account integration research, typography decisions and a new scheduler.
 
 The audit is source-only. In particular, attachment carryover and navigation races are predictions from component/store lifetime, not reproduced native bugs. The parent review records a Windows Agents-navigation timeout followed by a nonresponding process; its cause is unisolated and may involve native/accessibility automation. This document neither diagnoses that hang nor claims a successful native Agents walkthrough. Native Mac behavior remains unverified. No app source, tests, builds, providers, accounts or desktop controls were exercised in producing this specification.
 

@@ -7,6 +7,11 @@ For current direction, use [`ROADMAP.md`](./ROADMAP.md). For planning briefs and
 runbooks, use [`dev/README.md`](./dev/README.md). This file is history, not a
 task list.
 
+For later committed source slices and current installed-source limits, use
+[the current verification](dev/current-status.md). Those source changes do not
+create another release tag or prove a new deployment; this file retains shipped
+build history.
+
 ## 2026-10-19 — Flight overhaul (local 0.14.9 rebuild)
 
 - Made one-agent Assisted the default Flight flow, with contextual briefs,

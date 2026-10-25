@@ -1,5 +1,10 @@
 # PacketBench ops runbooks
 
+> September 2026 operational snapshot. Check current script/command contracts
+> and [installed-source evidence](../dev/current-status.md) before execution.
+> Start at [the documentation hub](../dev/README.md); Remote Agents deployment
+> and its current topology are a separate, unverified scope.
+
 Written from the scripts, config, and Rust source in this repository at
 `main` after the 2026-09-04 audit commits. Nothing here is invented: every
 command names a script in `package.json`, a file the app reads, or a path the
