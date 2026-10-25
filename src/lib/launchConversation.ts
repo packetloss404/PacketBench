@@ -227,8 +227,8 @@ export function launchConversation({
         // instead of claiming a turn is running.
         if (backendStartFailed(convId)) {
           setLaunchError(
-            "The agent session failed to start. Your draft and attachments are " +
-              "preserved — retry, or check the provider configuration.",
+            "The launch failed before the agent produced a response. Your draft " +
+              "and attachments are preserved — retry, or check the provider configuration.",
           );
           onPhase?.("failed");
           return false;
@@ -327,8 +327,8 @@ export function launchConversation({
         // instead of claiming a turn is running.
         if (backendStartFailed(convId)) {
           setLaunchError(
-            "The agent session failed to start. Your draft and attachments are " +
-              "preserved — retry, or check the provider configuration.",
+            "The launch failed before the agent produced a response. Your draft " +
+              "and attachments are preserved — retry, or check the provider configuration.",
           );
           onPhase?.("failed");
           return false;

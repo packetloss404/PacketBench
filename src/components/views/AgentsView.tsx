@@ -143,7 +143,7 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
       // instead of silently launching locally against a path that only exists
       // on the remote host.
       const repoRef = current.sshTarget
-        ? makeSshUri(current.sshTarget.id, current.sshTarget.remotePath || base)
+        ? makeSshUri(current.sshTarget.id, current.sshTarget.remotePath || current.projectPath)
         : base;
       useAgentTaskStore.getState().setSelectedRepo(repoRef);
     }

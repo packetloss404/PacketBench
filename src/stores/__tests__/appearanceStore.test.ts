@@ -75,4 +75,29 @@ describe("appearanceStore", () => {
     const { useAppearanceStore: fresh } = await import("@/stores/appearanceStore");
     expect(fresh.getState().preferences.agentSidebarWidthPx).toBe(260);
   });
+
+  it("adopts the legacy width while saved appearance prefs still use the default", async () => {
+    localStorage.setItem(
+      "packetbench:agent-sidebar-prefs",
+      JSON.stringify({ prefs: {}, width: 420 }),
+    );
+    // Appearance prefs exist but the width is untouched (nothing could set it
+    // before this build), so the legacy custom width must win.
+    localStorage.setItem(KEY, JSON.stringify(DEFAULT_APPEARANCE_PREFERENCES));
+    vi.resetModules();
+    const { useAppearanceStore: fresh } = await import("@/stores/appearanceStore");
+    expect(fresh.getState().preferences.agentSidebarWidthPx).toBe(420);
+  });
+
+  it("consumes the legacy width so it cannot be re-adopted later", async () => {
+    localStorage.setItem(
+      "packetbench:agent-sidebar-prefs",
+      JSON.stringify({ prefs: { "conv-1": { pinned: true } }, width: 420 }),
+    );
+    vi.resetModules();
+    await import("@/stores/appearanceStore");
+    const legacy = JSON.parse(localStorage.getItem("packetbench:agent-sidebar-prefs") ?? "{}");
+    expect(legacy.width).toBeUndefined();
+    expect(legacy.prefs).toEqual({ "conv-1": { pinned: true } });
+  });
 });

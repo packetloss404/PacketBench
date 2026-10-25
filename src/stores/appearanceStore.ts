@@ -23,27 +23,46 @@ function readLegacySidebarWidth(): number | undefined {
   try {
     const raw = localStorage.getItem(LEGACY_SIDEBAR_PREFS_KEY);
     if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as { width?: unknown };
-    if (typeof parsed?.width === "number" && Number.isFinite(parsed.width)) {
-      return parsed.width;
+    const parsed = JSON.parse(raw) as { prefs?: unknown; width?: unknown };
+    if (typeof parsed?.width !== "number" || !Number.isFinite(parsed.width)) {
+      return undefined;
     }
+    // Consume the legacy width so a later boot can never re-adopt a stale value
+    // over a width the user has since chosen in Appearance.
+    try {
+      localStorage.setItem(
+        LEGACY_SIDEBAR_PREFS_KEY,
+        JSON.stringify({ prefs: parsed.prefs ?? {} }),
+      );
+    } catch {
+      /* best effort — the adopt-once guard below still holds for this boot */
+    }
+    return parsed.width;
   } catch {
-    /* ignore — defaults apply */
+    return undefined;
   }
-  return undefined;
 }
 
 function read(): AppearancePreferencesV1 {
   let raw: unknown = DEFAULT_APPEARANCE_PREFERENCES;
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
+    const legacyWidth = readLegacySidebarWidth();
     if (saved) {
-      raw = JSON.parse(saved);
-    } else {
-      const legacyWidth = readLegacySidebarWidth();
-      if (legacyWidth !== undefined) {
-        raw = { ...DEFAULT_APPEARANCE_PREFERENCES, agentSidebarWidthPx: legacyWidth };
+      const savedPrefs = JSON.parse(saved) as Partial<AppearancePreferencesV1>;
+      raw = savedPrefs;
+      // Adopt the legacy width only while the saved appearance width is still
+      // the untouched default (or absent) — nothing could set it before this
+      // build, so a non-default value is a deliberate choice that must win.
+      if (
+        legacyWidth !== undefined &&
+        (savedPrefs.agentSidebarWidthPx === undefined ||
+          savedPrefs.agentSidebarWidthPx === DEFAULT_APPEARANCE_PREFERENCES.agentSidebarWidthPx)
+      ) {
+        raw = { ...savedPrefs, agentSidebarWidthPx: legacyWidth };
       }
+    } else if (legacyWidth !== undefined) {
+      raw = { ...DEFAULT_APPEARANCE_PREFERENCES, agentSidebarWidthPx: legacyWidth };
     }
   } catch {
     /* fall through to defaults */

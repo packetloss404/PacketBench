@@ -578,7 +578,10 @@ describe("launchConversation — failed backend start (F4)", () => {
 
     const message = setLaunchError.mock.calls
       .map(([arg]) => arg)
-      .find((arg): arg is string => typeof arg === "string" && arg.includes("failed to start"));
+      .find(
+        (arg): arg is string =>
+          typeof arg === "string" && arg.includes("failed before the agent produced a response"),
+      );
     expect(message).toBeDefined();
 
     // The failed conversation record still exists so the failure is inspectable…
