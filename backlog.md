@@ -45,10 +45,12 @@ committed and pushed; latest installed-source identity remains unverified.
       its terminal run state (epoch-CAS, `finished` event) from all three
       api_agent spawn sites (commit `63b44dfa`); a UI Stop now also cancels the
       journalled launch operation so the operation phase and run state agree
-      (commit `c3c239d5`). OPEN: the full prepare/start/cancel/reconcile bridge
-      (epoch changes still do not continue the provider), immutable execution/SSH
-      authority, owner/revision/predecessor validation, one root run per turn and
-      typed image pins. Keep native/SDK strength explicit.
+      (commit `c3c239d5`); startup now reconciles crash-stranded non-terminal runs
+      to `needs_reconciliation` and an existing turn is refused for an unrelated
+      project owner (commit `8f74d19c`). OPEN: the full prepare/start/reconcile
+      bridge (epoch changes still do not continue the provider), immutable
+      execution/SSH authority, one root run per turn, typed image pins and the
+      §4.2 crash-injection matrix. Keep native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -159,6 +161,17 @@ diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
 
 ### Plan execution — desktop completion gate
+
+**A1 startup reconciliation + owner validation (R1/R3), commit `8f74d19c`.**
+`runtime_journal::reconcile_runs_on_startup` marks every non-terminal run
+`needs_reconciliation` (with a `reconciled` event) — the journal is
+single-instance, so such runs belong to a dead process — and is idempotent;
+`agent_runtime::reconcile_runs_on_startup` wraps it and `lib.rs` calls it beside
+the budget reconcile. `prepare_operation` now also refuses an existing turn whose
+`project_key` differs from the conversation owner's (unrelated-owner guard).
+Evidence: full lib suite **1302 passed / 0 failed**, runtime-eval **12/12**, fmt
+clean. (One unrelated Windows process-timing test flaked under concurrent CPU
+load and passed in isolation and on rerun.)
 
 **A1 cancel unification (R1/R3), commit `c3c239d5`.** A UI Stop only signalled
 the running turn, leaving the journalled launch operation in its prepared phase
