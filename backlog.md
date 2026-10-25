@@ -41,11 +41,13 @@ committed and pushed; latest installed-source identity remains unverified.
 - [~] **P1 — R1/R3 production transaction and recovery.** DONE: the public
       resume path now derives and verifies the live policy context, so a
       compatible checkpoint offers `typed` (commit `f6cc73ae`); the run manifest
-      is recorded in production (commit `8187c8a3`). OPEN: the full
+      is recorded in production (commit `8187c8a3`); a finished turn now records
+      its terminal run state (epoch-CAS, `finished` event) from all three
+      api_agent spawn sites (commit `63b44dfa`). OPEN: the full
       prepare/start/cancel/reconcile bridge (epoch changes still do not continue
       the provider), immutable execution/SSH authority, owner/revision/
-      predecessor validation, one root run per turn, terminal projection and
-      typed image pins. Keep native/SDK strength explicit.
+      predecessor validation, one root run per turn and typed image pins. Keep
+      native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -156,6 +158,19 @@ diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
 
 ### Plan execution — desktop completion gate
+
+**A1 first slice (R1/R3 terminal projection), commit `63b44dfa`.** The journalled
+run stayed `prepared` after a turn ended, so its durable projection was
+untruthful. `runtime_journal::finish_run` adds an epoch-CAS terminal transition
+(`completed`/`cancelled`/`failed`) with a `finished` event (idempotent and
+stale-epoch-safe); `agent_runtime::finish_session_run` is the host helper (no-op
+unless the journal is enabled and the session is bound); all three api_agent
+`run_turn` spawn sites (start, follow-up, retry) record it. Behind the
+default-off journal. Evidence: full lib suite **1300 passed / 0 failed**, 3 new
+`finish_run` tests, runtime-eval **12/12**, fmt clean. Remaining A1 slices: the
+actual prepare/start/cancel/reconcile bridge, immutable execution/SSH authority,
+owner/revision/predecessor validation, one root run per turn, typed image pins,
+and the §4.2 crash-injection matrix.
 
 **A2a/A2b (F2B), commits `905e574d`, `354a6e78`, `914f0ea5`.** `stagedToImageAttachments`
 now returns `{ attachments, unreadable }`; the Composer marks unreadable chips
