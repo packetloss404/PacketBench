@@ -9,6 +9,27 @@ use crate::commands::agent_sidecar::{is_sidecar_provider, SidecarManager, SIDECA
 use crate::commands::api_keys;
 use crate::commands::provider_stats;
 use crate::core::agent_runtime::runner::{error_event, run_turn, ErrorPayload};
+use crate::core::agent_runtime::RunOutcome;
+
+/// Record a finished turn's terminal run state in the journal (R1/R3). No-op
+/// unless the journal is enabled and the session is bound to a prepared run, so
+/// the disabled path is unchanged. A stale-epoch or already-terminal run is left
+/// untouched by `finish_session_run`.
+async fn record_terminal_run_state(
+    state: &ApiAgentState,
+    session_id: &str,
+    result: &Result<RunOutcome, String>,
+) {
+    let terminal = match result {
+        Ok(RunOutcome::Completed { .. }) => "completed",
+        Ok(RunOutcome::Cancelled) => "cancelled",
+        Ok(RunOutcome::Failed(_)) | Err(_) => "failed",
+    };
+    if let Err(error) = super::agent_runtime::finish_session_run(state, session_id, terminal).await
+    {
+        warn!(session_id = %session_id, error = %error, "Failed to record terminal run state");
+    }
+}
 use crate::core::agent_runtime::{RunRequest, RuntimeFlags, RuntimeRunBinding, RuntimeSession};
 use crate::core::execution::{ExecutionTarget, SshConfig};
 use crate::core::llm_provider::{get_provider, IN_PROCESS_PROVIDERS};
@@ -1719,6 +1740,7 @@ async fn start_api_agent_session_inner(
             );
         }
 
+        record_terminal_run_state(&state_clone, &session_id_clone, &result).await;
         state_clone.finish_turn(&session_id_clone, turn_id).await;
     });
 
@@ -1850,6 +1872,7 @@ pub async fn send_api_agent_message(
             );
         }
 
+        record_terminal_run_state(&state_clone, &session_id_clone, &result).await;
         state_clone.finish_turn(&session_id_clone, turn_id).await;
     });
 
@@ -2159,6 +2182,7 @@ pub async fn retry_last_turn(
             );
         }
 
+        record_terminal_run_state(&state_clone, &session_id_clone, &result).await;
         state_clone.finish_turn(&session_id_clone, turn_id).await;
     });
 

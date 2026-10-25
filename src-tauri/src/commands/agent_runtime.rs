@@ -282,6 +282,30 @@ pub async fn prepare_session_run(
     }))
 }
 
+/// Transition a session's journalled run to a terminal state (`completed` |
+/// `cancelled` | `failed`) when its turn ends. No-op unless the journal is
+/// enabled and the session is bound to a prepared run; a stale-epoch or
+/// already-terminal run is left untouched.
+pub async fn finish_session_run(
+    state: &ApiAgentState,
+    session_id: &str,
+    terminal: &str,
+) -> Result<(), String> {
+    if !journal::is_enabled() {
+        return Ok(());
+    }
+    let Some(binding) = state.runtime_run_binding(session_id).await else {
+        return Ok(());
+    };
+    let terminal = terminal.to_string();
+    on_blocking(move || {
+        journal::with_journal(|connection| {
+            journal::finish_run(connection, &binding.run_id, binding.epoch, &terminal)
+        })
+    })
+    .await
+}
+
 /// Derive the checkpoint compatibility identity from a frozen session binding.
 ///
 /// The policy hashes are computed here and *stored* in each checkpoint at write

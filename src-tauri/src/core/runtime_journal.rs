@@ -688,6 +688,52 @@ pub fn mark_run_needs_reconciliation(connection: &Connection, run_id: &str) -> R
     Ok(())
 }
 
+/// Transition a run to a terminal state (`completed` | `cancelled` | `failed`)
+/// via epoch CAS when its turn ends. Only a non-terminal run at the expected
+/// epoch is transitioned; an already-terminal or stale-epoch run is left
+/// untouched (returns `Ok`, so a late writer cannot clobber a newer run). A
+/// `finished` event is appended on the transition.
+pub fn finish_run(
+    connection: &Connection,
+    run_id: &str,
+    expected_epoch: i64,
+    terminal: &str,
+) -> Result<(), String> {
+    validate_id("runId", run_id)?;
+    if !matches!(terminal, "completed" | "cancelled" | "failed") {
+        return Err(format!("Unknown terminal run state: {terminal}"));
+    }
+    let (state, epoch): (String, i64) = connection
+        .query_row(
+            "SELECT state, epoch FROM runs WHERE run_id = ?1",
+            params![run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read run: {e}"))?
+        .ok_or_else(|| format!("Unknown run: {run_id}"))?;
+    if matches!(state.as_str(), "cancelled" | "completed" | "failed") || epoch != expected_epoch {
+        return Ok(());
+    }
+    let changed = connection
+        .execute(
+            "UPDATE runs SET state = ?1 WHERE run_id = ?2 AND epoch = ?3 \
+             AND state NOT IN ('cancelled','completed','failed')",
+            params![terminal, run_id, expected_epoch],
+        )
+        .map_err(|e| format!("Failed to finish run: {e}"))?;
+    if changed == 1 {
+        insert_event(
+            connection,
+            run_id,
+            expected_epoch,
+            "finished",
+            &format!("{{\"state\":\"{terminal}\"}}"),
+        )?;
+    }
+    Ok(())
+}
+
 /// What `inspect_runtime_resume` reports: the permitted resume modes plus every
 /// incompatibility found. This is a read-only projection — it never dispatches
 /// a provider, executes a tool or mutates the run.
@@ -1677,6 +1723,50 @@ mod tests {
             "conv-1"
         );
         assert!(run_conversation_id(&connection, "does-not-exist").is_err());
+    }
+
+    #[test]
+    fn finish_run_transitions_to_terminal_and_records_an_event() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        finish_run(&connection, &prepared.run_id, 0, "completed").unwrap();
+
+        assert_eq!(
+            get_run(&connection, &prepared.run_id).unwrap().state,
+            "completed"
+        );
+        let events = list_events(&connection, &prepared.run_id, -1, 10).unwrap();
+        assert!(
+            events.iter().any(|event| event.kind == "finished"),
+            "a terminal transition must append a finished event"
+        );
+    }
+
+    #[test]
+    fn finish_run_is_idempotent_and_ignores_a_stale_epoch() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        finish_run(&connection, &prepared.run_id, 0, "completed").unwrap();
+        // A second terminal transition is a no-op (first outcome wins).
+        finish_run(&connection, &prepared.run_id, 0, "failed").unwrap();
+        assert_eq!(
+            get_run(&connection, &prepared.run_id).unwrap().state,
+            "completed"
+        );
+        // A stale epoch (the run is at 0) is ignored.
+        finish_run(&connection, &prepared.run_id, 5, "failed").unwrap();
+        assert_eq!(
+            get_run(&connection, &prepared.run_id).unwrap().state,
+            "completed"
+        );
+    }
+
+    #[test]
+    fn finish_run_rejects_an_unknown_state_and_unknown_run() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        assert!(finish_run(&connection, &prepared.run_id, 0, "nonsense").is_err());
+        assert!(finish_run(&connection, "missing", 0, "completed").is_err());
     }
 
     #[test]
