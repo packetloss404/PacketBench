@@ -639,6 +639,7 @@ export function Composer(props: ComposerProps) {
   }, [
     launch,
     launchReady,
+    staged,
     materializeUnreadableAware,
     input,
     clearStaged,
@@ -680,6 +681,7 @@ export function Composer(props: ComposerProps) {
     isChat,
     conversation,
     input,
+    staged,
     materializeUnreadableAware,
     setInput,
     mention,
