@@ -29,6 +29,7 @@ import {
   AGENT_SIDEBAR_MAX_WIDTH,
 } from "@/stores/agentSidebarPrefsStore";
 import { useReviewStore } from "@/stores/reviewStore";
+import { useAppearanceStore } from "@/stores/appearanceStore";
 import {
   searchAgentConversations,
   type AgentSearchConversationResult,
@@ -208,8 +209,11 @@ export function AgentSidebar({ selectedId, onSelect, onNewAgent }: AgentSidebarP
   const prefs = useAgentSidebarPrefsStore((state) => state.prefs);
   const togglePinned = useAgentSidebarPrefsStore((state) => state.togglePinned);
   const projectLabels = useAgentSidebarPrefsStore((state) => state.projectLabels);
-  const width = useAgentSidebarPrefsStore((state) => state.width);
-  const setWidth = useAgentSidebarPrefsStore((state) => state.setWidth);
+  // V3/V7: the sidebar width has ONE owner — `appearanceStore` — so the drag
+  // separator and the Appearance "Reset text & layout" action write the same
+  // field the aside actually renders.
+  const width = useAppearanceStore((state) => state.preferences.agentSidebarWidthPx);
+  const setWidth = useAppearanceStore((state) => state.setAgentSidebarWidthPx);
 
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");

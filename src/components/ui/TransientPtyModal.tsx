@@ -10,6 +10,7 @@ import {
   type PtyExitOutcome,
 } from "@/lib/tauri";
 import { useTransientPty } from "@/hooks/useTransientPty";
+import { useTerminalSettingsStore } from "@/stores/terminalSettingsStore";
 import "@xterm/xterm/css/xterm.css";
 
 interface TransientPtyModalProps {
@@ -77,6 +78,9 @@ export function TransientPtyModal({
   const sessionIdRef = useRef<string | null>(null);
   const [exitState, setExitState] = useState<"running" | "done" | "error">("running");
   const [exitOutcome, setExitOutcome] = useState<PtyExitOutcome | null>(null);
+  // V3: the transient terminal shares the one terminal text-size preference
+  // instead of pinning 13px, and updates live without recreating the PTY.
+  const terminalFontSizePx = useTerminalSettingsStore((s) => s.terminalFontSizePx);
 
   const { start, kill, sessionId } = useTransientPty({
     command,
@@ -128,7 +132,7 @@ export function TransientPtyModal({
     const term = new Terminal({
       cursorBlink: interactive,
       disableStdin: !interactive,
-      fontSize: 13,
+      fontSize: terminalFontSizePx,
       lineHeight: 1.15,
       fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
       theme: {
@@ -205,6 +209,22 @@ export function TransientPtyModal({
     // start/kill identities are stable; run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // V3: apply a terminal text-size change live — update xterm's own option and
+  // refit, without recreating the Terminal or restarting the PTY.
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term || !term.options) return;
+    term.options.fontSize = terminalFontSizePx;
+    const fit = fitAddonRef.current;
+    if (fit) {
+      try {
+        fit.fit();
+      } catch {
+        // Container may not be sized yet; the ResizeObserver will refit.
+      }
+    }
+  }, [terminalFontSizePx]);
 
   const handleClose = () => {
     if (exitState === "running") kill();

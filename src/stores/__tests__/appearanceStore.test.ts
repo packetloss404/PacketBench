@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE_PREFERENCES } from "@/lib/appearance";
 import { useAppearanceStore } from "@/stores/appearanceStore";
 
@@ -50,5 +50,29 @@ describe("appearanceStore", () => {
     useAppearanceStore.getState().resetTextAndLayout();
 
     expect(useAppearanceStore.getState().preferences).toEqual(DEFAULT_APPEARANCE_PREFERENCES);
+  });
+
+  it("adopts the legacy sidebar width once when no appearance prefs exist yet", async () => {
+    localStorage.setItem(
+      "packetbench:agent-sidebar-prefs",
+      JSON.stringify({ prefs: {}, width: 420 }),
+    );
+    vi.resetModules();
+    const { useAppearanceStore: fresh } = await import("@/stores/appearanceStore");
+    expect(fresh.getState().preferences.agentSidebarWidthPx).toBe(420);
+  });
+
+  it("never lets the legacy width override saved appearance preferences", async () => {
+    localStorage.setItem(
+      "packetbench:agent-sidebar-prefs",
+      JSON.stringify({ prefs: {}, width: 420 }),
+    );
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ ...DEFAULT_APPEARANCE_PREFERENCES, agentSidebarWidthPx: 260 }),
+    );
+    vi.resetModules();
+    const { useAppearanceStore: fresh } = await import("@/stores/appearanceStore");
+    expect(fresh.getState().preferences.agentSidebarWidthPx).toBe(260);
   });
 });

@@ -12,6 +12,8 @@ import {
   AGENT_SIDEBAR_DEFAULT_WIDTH,
 } from "@/stores/agentSidebarPrefsStore";
 import { useReviewStore } from "@/stores/reviewStore";
+import { useAppearanceStore } from "@/stores/appearanceStore";
+import { DEFAULT_APPEARANCE_PREFERENCES } from "@/lib/appearance";
 import type { AgentConversation } from "@/types/agent-conversation";
 
 const agentStore = vi.hoisted(() => ({
@@ -78,7 +80,10 @@ describe("AgentSidebar", () => {
     useAgentSidebarPrefsStore.setState({
       prefs: {},
       projectLabels: {},
-      width: AGENT_SIDEBAR_DEFAULT_WIDTH,
+    });
+    useAppearanceStore.setState({
+      preferences: DEFAULT_APPEARANCE_PREFERENCES,
+      saveFailed: false,
     });
     useReviewStore.setState({
       searchNavigation: null,
@@ -289,20 +294,24 @@ describe("AgentSidebar", () => {
     expect(separator).toHaveAttribute("aria-valuenow", "300");
 
     fireEvent.keyDown(separator, { key: "ArrowRight" });
-    expect(useAgentSidebarPrefsStore.getState().width).toBe(308);
+    expect(useAppearanceStore.getState().preferences.agentSidebarWidthPx).toBe(308);
 
     fireEvent.keyDown(separator, { key: "ArrowLeft" });
-    expect(useAgentSidebarPrefsStore.getState().width).toBe(300);
+    expect(useAppearanceStore.getState().preferences.agentSidebarWidthPx).toBe(300);
 
     fireEvent.keyDown(separator, { key: "End" });
-    expect(useAgentSidebarPrefsStore.getState().width).toBe(AGENT_SIDEBAR_MAX_WIDTH);
+    expect(useAppearanceStore.getState().preferences.agentSidebarWidthPx).toBe(
+      AGENT_SIDEBAR_MAX_WIDTH,
+    );
 
     fireEvent.keyDown(separator, { key: "Home" });
-    expect(useAgentSidebarPrefsStore.getState().width).toBe(AGENT_SIDEBAR_MIN_WIDTH);
+    expect(useAppearanceStore.getState().preferences.agentSidebarWidthPx).toBe(
+      AGENT_SIDEBAR_MIN_WIDTH,
+    );
   });
 
   it("double-click on the separator resets width to the default", () => {
-    useAgentSidebarPrefsStore.getState().setWidth(450);
+    useAppearanceStore.getState().setAgentSidebarWidthPx(450);
     render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
     const separator = screen.getByRole("separator", {
       name: "Resize conversations sidebar",
@@ -310,7 +319,28 @@ describe("AgentSidebar", () => {
 
     fireEvent.doubleClick(separator);
 
-    expect(useAgentSidebarPrefsStore.getState().width).toBe(AGENT_SIDEBAR_DEFAULT_WIDTH);
+    expect(useAppearanceStore.getState().preferences.agentSidebarWidthPx).toBe(
+      AGENT_SIDEBAR_DEFAULT_WIDTH,
+    );
+  });
+
+  it("Appearance reset restores the rendered sidebar width to the default (V3/V7)", () => {
+    render(<AgentSidebar selectedId={null} onSelect={vi.fn()} onNewAgent={vi.fn()} />);
+    const separator = screen.getByRole("separator", { name: "Resize conversations sidebar" });
+    fireEvent.keyDown(separator, { key: "End" });
+    expect(separator).toHaveAttribute("aria-valuenow", String(AGENT_SIDEBAR_MAX_WIDTH));
+
+    act(() => {
+      useAppearanceStore.getState().resetTextAndLayout();
+    });
+
+    expect(useAppearanceStore.getState().preferences.agentSidebarWidthPx).toBe(
+      AGENT_SIDEBAR_DEFAULT_WIDTH,
+    );
+    // The one rendered owner now reflects the reset — no second width field.
+    expect(
+      screen.getByRole("separator", { name: "Resize conversations sidebar" }),
+    ).toHaveAttribute("aria-valuenow", String(AGENT_SIDEBAR_DEFAULT_WIDTH));
   });
 });
 

@@ -13,6 +13,13 @@
  * localStorage key is unchanged (`packetbench:project-labels`, with the same
  * one-shot legacy migration), so existing user renames carry over untouched.
  *
+ * V3/V7: the rendered sidebar WIDTH is owned by `appearanceStore`
+ * (`preferences.agentSidebarWidthPx`), so the Appearance "Reset text & layout"
+ * action and the drag/keyboard separator write the same field. This store keeps
+ * only the geometry constants and `clampSidebarWidth`, plus the row prefs and
+ * project labels; a legacy `width` persisted here is migrated once by
+ * `appearanceStore`.
+ *
  * This store is explicitly exempt from the P1 store-isolation import ban — it is
  * UI-prefs, not an engine store, and both sidebars read it directly.
  */
@@ -54,8 +61,6 @@ export function clampSidebarWidth(value: unknown): number {
 interface PersistedState {
   /** rowId (conversationId or workspaceId) -> { pinned? } */
   prefs: Record<string, ConversationPrefs>;
-  /** Sidebar width in CSS pixels (240..480). */
-  width: number;
 }
 
 interface AgentSidebarPrefsStore extends PersistedState {
@@ -65,8 +70,6 @@ interface AgentSidebarPrefsStore extends PersistedState {
   /** Fleet sidebar: expand/collapse a workspace row's children + FILES tree. */
   toggleExpanded: (rowId: string) => void;
   setProjectLabel: (projectPath: string, label: string) => void;
-  /** V7: set + persist the sidebar width (clamped to 240..480). */
-  setWidth: (width: number) => void;
 }
 
 function load(): PersistedState {
@@ -85,11 +88,11 @@ function load(): PersistedState {
     // indistinguishable from absent and would grow the blob forever.
     if (next.pinned || next.expanded) prefs[id] = next;
   }
-  return { prefs, width: clampSidebarWidth(raw?.width) };
+  return { prefs };
 }
 
 function persist(state: PersistedState) {
-  saveToStorage(STORAGE_KEY, { prefs: state.prefs, width: state.width });
+  saveToStorage(STORAGE_KEY, { prefs: state.prefs });
 }
 
 /**
@@ -122,7 +125,6 @@ function loadProjectLabels(): Record<string, string> {
  */
 function setFlag(
   current: Record<string, ConversationPrefs>,
-  width: number,
   rowId: string,
   flag: keyof ConversationPrefs,
   value: boolean,
@@ -133,34 +135,24 @@ function setFlag(
   else delete next[flag];
   if (next.pinned || next.expanded) prefs[rowId] = next;
   else delete prefs[rowId];
-  persist({ prefs, width });
-  return { prefs, width };
+  persist({ prefs });
+  return { prefs };
 }
 
 const initial = load();
 
 export const useAgentSidebarPrefsStore = create<AgentSidebarPrefsStore>((set) => ({
   prefs: initial.prefs,
-  width: initial.width,
   projectLabels: loadProjectLabels(),
 
   togglePinned: (rowId) => {
     if (!rowId) return;
-    set((s) => setFlag(s.prefs, s.width, rowId, "pinned", !s.prefs[rowId]?.pinned));
+    set((s) => setFlag(s.prefs, rowId, "pinned", !s.prefs[rowId]?.pinned));
   },
 
   toggleExpanded: (rowId) => {
     if (!rowId) return;
-    set((s) => setFlag(s.prefs, s.width, rowId, "expanded", !s.prefs[rowId]?.expanded));
-  },
-
-  setWidth: (width) => {
-    set((s) => {
-      const next = clampSidebarWidth(width);
-      if (next === s.width) return s;
-      persist({ prefs: s.prefs, width: next });
-      return { width: next };
-    });
+    set((s) => setFlag(s.prefs, rowId, "expanded", !s.prefs[rowId]?.expanded));
   },
 
   setProjectLabel: (projectPath, label) => {

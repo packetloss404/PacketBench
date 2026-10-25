@@ -11,12 +11,40 @@ import {
 } from "@/lib/appearance";
 
 const STORAGE_KEY = storageKey("appearance");
+const LEGACY_SIDEBAR_PREFS_KEY = storageKey("agent-sidebar-prefs");
+
+/**
+ * V3/V7: the rendered sidebar width used to live in
+ * `packetbench:agent-sidebar-prefs.width` while the Appearance reset touched a
+ * different field. Read that legacy value once so an existing user's sidebar
+ * keeps its size when this store becomes the single width owner.
+ */
+function readLegacySidebarWidth(): number | undefined {
+  try {
+    const raw = localStorage.getItem(LEGACY_SIDEBAR_PREFS_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { width?: unknown };
+    if (typeof parsed?.width === "number" && Number.isFinite(parsed.width)) {
+      return parsed.width;
+    }
+  } catch {
+    /* ignore — defaults apply */
+  }
+  return undefined;
+}
 
 function read(): AppearancePreferencesV1 {
   let raw: unknown = DEFAULT_APPEARANCE_PREFERENCES;
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) raw = JSON.parse(saved);
+    if (saved) {
+      raw = JSON.parse(saved);
+    } else {
+      const legacyWidth = readLegacySidebarWidth();
+      if (legacyWidth !== undefined) {
+        raw = { ...DEFAULT_APPEARANCE_PREFERENCES, agentSidebarWidthPx: legacyWidth };
+      }
+    }
   } catch {
     /* fall through to defaults */
   }
