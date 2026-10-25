@@ -192,17 +192,28 @@ function persist(state: {
  */
 export async function gcOrphanDraftAssets(): Promise<number> {
   try {
-    const envelope = loadFromStorage<DraftsV2Envelope | null>(V2_STORAGE_KEY, null);
-    // F2: a newer/unknown envelope schema owns its assets under retention rules
-    // this build does not know. Parsing it with the v2 reader yields an empty
-    // keep set, so running GC would delete every image that envelope still
-    // references. Never reclaim bytes we cannot attribute — skip the pass and
-    // leave the orphan cleanup to the build that owns the schema.
-    if (envelope && typeof envelope.version === "number" && envelope.version !== 2) {
-      return 0;
-    }
+    // Read the raw string rather than `loadFromStorage` so a CORRUPT envelope is
+    // distinguishable from an ABSENT one — the helper swallows a parse error and
+    // returns the fallback, which would make the keep set empty and delete every
+    // image the (unreadable) envelope still references.
+    const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(V2_STORAGE_KEY);
     const keep: string[] = [];
-    if (envelope && envelope.version === 2) {
+    if (raw !== null) {
+      let envelope: DraftsV2Envelope;
+      try {
+        envelope = JSON.parse(raw) as DraftsV2Envelope;
+      } catch {
+        // Unreadable envelope: ownership is unknown — never reclaim.
+        return 0;
+      }
+      // F2: a newer/older envelope schema owns its assets under retention rules
+      // this build does not know. Parsing it with the v2 reader yields an empty
+      // keep set, so running GC would delete every image that envelope still
+      // references. Never reclaim bytes we cannot attribute — skip the pass and
+      // leave the orphan cleanup to the build that owns the schema.
+      if (!envelope || typeof envelope.version !== "number" || envelope.version !== 2) {
+        return 0;
+      }
       for (const refs of Object.values(envelope.attachments ?? {})) {
         if (!Array.isArray(refs)) continue;
         for (const ref of refs) {

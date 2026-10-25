@@ -343,4 +343,16 @@ describe("agentDraftStore", () => {
     expect(removed).toBe(0);
     expect(tauri.gcAgentDraftAssets).not.toHaveBeenCalled();
   });
+
+  it("skips GC when the envelope is present but corrupt", async () => {
+    localStorage.setItem(V2_STORAGE_KEY, "{ this is not json");
+    const tauri = await import("@/lib/tauri");
+    vi.mocked(tauri.gcAgentDraftAssets).mockClear();
+
+    const removed = await gcOrphanDraftAssets();
+
+    // An unreadable envelope still owns assets we cannot attribute; never wipe.
+    expect(removed).toBe(0);
+    expect(tauri.gcAgentDraftAssets).not.toHaveBeenCalled();
+  });
 });
