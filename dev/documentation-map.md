@@ -95,7 +95,7 @@ Root AGENTS.md and CLAUDE.md are intentionally ignored local instructions, not p
 - [BridgeMind / BridgeSpace — Competitive Brief](bridgemind/bridgespace-competitive-brief.md) — `dev/bridgemind/bridgespace-competitive-brief.md`.
 - [BridgeSwarm — Orchestration Teardown](bridgemind/bridgeswarm-teardown.md) — `dev/bridgemind/bridgeswarm-teardown.md`.
 - [PacketBench — Competitor Landscape](competitors.md) — `dev/competitors.md`.
-- [Should PacketBench develop a Composer-like coding agent?](composer-research-2026-10-19.md) — `dev/composer-research-2026-10-19.md`.
+- [Should PacketBench develop a Composer-like coding agent?](composer-research-2026-10-19.md) — `dev/composer-research-2026-10-19.md`. Historical research; the active plan and progress belong to the separate [packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md), at `D:/projects/packetbench-model-lab`.
 - [Loop and graph engineering alignment for PacketBench](loop-and-graph-engineering-alignment-2026-10-19.md) — `dev/loop-and-graph-engineering-alignment-2026-10-19.md`.
 
 ## Dated acceptance and audit evidence

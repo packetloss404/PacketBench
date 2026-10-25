@@ -23,7 +23,7 @@ The source is committed and pushed; the full agent-experience target and latest 
 - [Operations runbook](../docs/runbooks.md) — September 2026 source snapshot; verify commands against current source before operating.
 - [SDK limitations](./agent-experience/07-sdk-limitations.md) — actual current transport limits, distinct from the target design.
 - [Archived programs](./archive/README.md) — historical decisions/evidence; do not resume retired products.
-- Composer research remains separately owned; its existing research entry is preserved below.
+- Composer research/model development now belongs to the separate [packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md), at `D:/projects/packetbench-model-lab`; the historical research entry is preserved below.
 
 ## How documentation is consolidated
 
@@ -139,7 +139,7 @@ All document links in this file resolve as of 2026-08-27.
   turns the October 19 review into proposed technical contracts, work packets,
   ownership/dependencies, migrations, failure tests, future agent prompts and
   local/SSH/native acceptance. It is documentation only. Composer research is
-  owned by a separate thread and excluded; existing-runtime evaluation remains.
+  owned by the separate packetbench-model-lab project and excluded; existing-runtime evaluation remains.
 - [Composer research and experimental path](./composer-research-2026-10-19.md)
   assesses current Composer 2.5 evidence, PacketBench's existing executor,
   open-weight adaptation, evaluation/data requirements and operating economics.

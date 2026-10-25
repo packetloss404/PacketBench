@@ -52,7 +52,7 @@ Implement repairs and design improvements to the existing application. Preserve
 the daily CLI Workspace, structured Agents conversations, and explicit Flight
 review/delivery workflow. They remain distinct surfaces using shared contracts.
 
-**Composer research has moved to another thread.** This package excludes model
+**Composer research now belongs to the separate [packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md), at `D:/projects/packetbench-model-lab`.** Its active plan and progress live there. This package excludes model
 training, open-weight adaptation, Composer comparisons, a branded competitor
 agent and a new commercial harness product. Existing-runtime evaluation is
 included to verify correctness and reliability; it is not a Composer program.

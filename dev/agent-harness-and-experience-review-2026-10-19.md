@@ -15,7 +15,9 @@ approved for execution. Open work belongs in [backlog.md](../backlog.md).
 It follows the [loop/graph assessment](./loop-and-graph-engineering-alignment-2026-10-19.md)
 and [completed Flight overhaul evidence](./flight-overhaul-review-2026-10-19.md).
 
-Follow-up ownership: the owner moved Composer research to a separate thread.
+Follow-up ownership: Composer research now belongs to the separate
+[packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md),
+at `D:/projects/packetbench-model-lab`; its active plan and progress live there.
 The [implementation handoff](./agent-experience/README.md) develops the remaining
 runtime, Agents, appearance and validation findings for a future team. Its
 existing-runtime evaluation work does not include a Composer/model program.

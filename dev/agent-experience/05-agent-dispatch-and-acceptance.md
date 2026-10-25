@@ -9,8 +9,10 @@
 
 Design only, October 19, 2026. Read [the package entry point](./README.md) and
 the assigned track before editing product code. [backlog.md](../../backlog.md)
-owns live status. Composer research, model training and competitor-agent
-development are excluded from every prompt below.
+owns live status. Composer research/model development now belongs to the separate
+[packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md),
+at `D:/projects/packetbench-model-lab`. Model training and competitor-agent
+development remain excluded from every prompt below.
 
 ## Coordinator bootstrap prompt
 
@@ -39,7 +41,8 @@ Leave Composer and other unrelated edits in place; never stage everything.
 Scope: existing-runtime safety/recovery, Agents/Workspace/Flight reliability,
 readability/accessibility, applicable older bounded defects, existing feature
 integration proof and source-bound installed/platform acceptance. Composer research
-is in another thread. Do not add model training, a competitor harness product,
+and model development belong to the separate D:\projects\packetbench-model-lab
+project. Do not modify that project or add model training, a competitor harness product,
 a graph editor, billing dashboard, autonomous Flight planner or unrelated work.
 
 Assign one runtime agent, one flow agent, one appearance agent and yourself

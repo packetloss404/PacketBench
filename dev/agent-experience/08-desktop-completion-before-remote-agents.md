@@ -26,7 +26,10 @@ stores, DTOs, IPC registration, schema generation and overlapping UI edits.
 Do not run competing full gates, destructive sidecar installs or native-control
 sessions. Each worker must preserve others' edits.
 
-Preserve Composer research and its pre-existing summary edits in `dev/README.md`.
+Composer research/model development now belongs to the separate
+[packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md),
+at `D:/projects/packetbench-model-lab`; its active plan and progress live there.
+Preserve that project, historical Composer research and unrelated summary edits in `dev/README.md`.
 Do not modify, format, stage or commit them. Leave unrelated sibling repository
 changes intact. This desktop task does not start Remote Agents implementation.
 
@@ -138,5 +141,5 @@ Quota disclosure, rendered-app verification, supported-plan feasibility,
 Packet Control, Global Undo, Monitor expansion, Windows-OpenSSH/larger-transfer
 expansion and dictation-engine benchmarks retain their optional/deferred status.
 General Computer Use remains paused; native iOS follows the Remote Agents PWA.
-Composer research/model training remains a separate program. None silently
+Composer research/model training belongs to its separate packetbench-model-lab project. None silently
 becomes a prerequisite for finishing the existing desktop.
