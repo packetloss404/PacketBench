@@ -1020,6 +1020,7 @@ pub async fn launch_flight_async(
             None,        // workspace — derived from ssh_config/local project_path
             None,        // budget_scope_key — flight attempts run without a session budget
             None,        // budget_limit_usd
+            None,        // context_window_tokens — no frontend-supplied window
         )
         .await
         {

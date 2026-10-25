@@ -303,9 +303,20 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       declaring native guarantees vs the weaker SDK/soft-turn claims and the v12
       protocol floor. 1285/0; review findings (child fail-open release, sync-call
       justification, test strength) all fixed. **Still open:** the composer is not
-      yet wired to `get_runtime_capabilities`; context windows are still
-      static-table only (no Rust model-catalog cache); native visual/IME/restart
+      yet wired to `get_runtime_capabilities`; native visual/IME/restart
       evidence needs the user/tooling.
+- [x] **P2 — Context live-catalog windows.** The frontend-supplied directional
+      window (`getModelContextWindow`) is now carried on the session
+      (`RuntimeSession.context_window_tokens`) and used by R6's overflow guard,
+      falling back to the backend static table when absent; non-positive values
+      are dropped, and the sidecar path deliberately does not consume it (the SDK
+      owns hidden context). This closes the "OpenAI/named rows never block on
+      overflow" gap. 1287/0; all 7 gates green. Review caught a frontend
+      positional-arg misbinding that would have broken every default (no-budget)
+      API conversation start — fixed with a real-invoke wire-contract test. Note:
+      the window is a curated/heuristic estimate (200_000 default for unknown
+      ids), so a false PASS is possible for an unknown id whose true window is
+      smaller; the guard only runs when the journal is enabled.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

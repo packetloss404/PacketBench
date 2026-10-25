@@ -101,6 +101,9 @@ struct SessionConfig {
     tasks: Arc<crate::core::tool_tasks::SessionTasks>,
     /// Optional spend admission for this session (R5b). None = no budget.
     budget: Option<SessionBudget>,
+    /// Frontend-supplied directional context window for the R6 guard. `None`
+    /// falls back to the capability-table resolution in the runner.
+    context_window_tokens: Option<u64>,
 }
 
 impl ApiAgentState {
@@ -222,6 +225,7 @@ impl ApiAgentState {
             custom_agents: Arc::clone(&config.custom_agents),
             native_mcp_session: Arc::clone(&config.native_mcp_session),
             tasks: Arc::clone(&config.tasks),
+            context_window_tokens: config.context_window_tokens,
         })
     }
 
@@ -1272,6 +1276,7 @@ pub async fn start_api_agent_session(
     workspace: Option<ApiAgentWorkspaceInput>,
     budget_scope_key: Option<String>,
     budget_limit_usd: Option<f64>,
+    context_window_tokens: Option<u64>,
 ) -> Result<(), String> {
     let id = session_id.clone();
     let result = start_api_agent_session_inner(
@@ -1299,6 +1304,7 @@ pub async fn start_api_agent_session(
         workspace,
         budget_scope_key,
         budget_limit_usd,
+        context_window_tokens,
     )
     .await;
     if let Err(error) = &result {
@@ -1332,6 +1338,7 @@ async fn start_api_agent_session_inner(
     workspace: Option<ApiAgentWorkspaceInput>,
     budget_scope_key: Option<String>,
     budget_limit_usd: Option<f64>,
+    context_window_tokens: Option<u64>,
 ) -> Result<(), String> {
     // R4b pre-dispatch image guard for the sidecar transport. Placed before any
     // side-effecting admission/counter work so a refusal changes nothing. The
@@ -1368,6 +1375,10 @@ async fn start_api_agent_session_inner(
     // Phase 3 slice C: if this provider runs in the sidecar, forward the start
     // request and return early. In-process providers fall through to the
     // existing LlmProvider runtime untouched.
+    //
+    // The frontend-supplied context window is deliberately NOT consumed on this
+    // path: the SDK owns hidden context/compaction, so no fit is claimed (see
+    // dev/agent-experience/07-sdk-limitations.md).
     if is_sidecar_provider(&provider) {
         let is_remote_workspace = ssh_config.is_some();
         let sidecar_workspace = if is_remote_workspace {
@@ -1655,6 +1666,7 @@ async fn start_api_agent_session_inner(
                 custom_agents,
                 tasks: Arc::new(crate::core::tool_tasks::SessionTasks::default()),
                 budget,
+                context_window_tokens: context_window_tokens.filter(|&window| window > 0),
             },
         );
 

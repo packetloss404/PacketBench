@@ -220,6 +220,7 @@ impl FakeServices {
                 custom_agents: Arc::new(Vec::new()),
                 native_mcp_session: Arc::new(NativeMcpSession::default()),
                 tasks: Arc::new(SessionTasks::default()),
+                context_window_tokens: None,
             },
             flags: RuntimeFlags {
                 plan_mode: false,
@@ -329,6 +330,12 @@ impl FakeServices {
     /// to the real capability resolution for the session's route.
     pub fn set_context_window(&self, window: Option<u64>) {
         *self.context_window.lock().expect("context window script") = window;
+    }
+
+    /// Set the window carried on the session binding. When `Some`, the runner
+    /// uses it in preference to the `context_window_tokens` trait method.
+    pub fn set_session_context_window(&mut self, window: Option<u64>) {
+        self.session.context_window_tokens = window;
     }
 
     /// The context snapshots recorded through `record_context_snapshot`.
@@ -1525,6 +1532,57 @@ async fn context_projection_blocks_over_the_window_before_dispatch() {
     let snapshots = services.recorded_context_snapshots();
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].blockers, vec!["context_overflow".to_string()]);
+}
+
+#[tokio::test]
+async fn context_projection_prefers_the_session_carried_window_over_the_trait_method() {
+    let mut services = FakeServices::new("s-ctx-session-window");
+    services.set_capability_guard_enabled(true);
+    // The session carries a window that overflows; the trait method would
+    // return a large window that fits. The session value must win.
+    services.set_session_context_window(Some(1));
+    services.set_context_window(Some(1_000_000));
+    services.push_script(text_script("should never run"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-ctx-session-window"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("blocked_context"), "got: {error}");
+    assert_eq!(*services.stream_calls.lock().unwrap(), 0);
+    assert_eq!(
+        services.context_window_calls(),
+        0,
+        "the session window short-circuits the trait method"
+    );
+    let snapshots = services.recorded_context_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].window_tokens, Some(1));
+}
+
+#[tokio::test]
+async fn context_projection_falls_back_to_the_trait_window_when_the_session_carries_none() {
+    let services = FakeServices::new("s-ctx-trait-window");
+    services.set_capability_guard_enabled(true);
+    // No session window, so the trait-method override governs.
+    services.set_context_window(Some(1));
+    services.push_script(text_script("should never run"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let error = run_turn(&services, run_request("s-ctx-trait-window"), cancel_rx)
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("blocked_context"), "got: {error}");
+    assert_eq!(
+        services.context_window_calls(),
+        1,
+        "the trait method is consulted when the session carries no window"
+    );
+    let snapshots = services.recorded_context_snapshots();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].window_tokens, Some(1));
 }
 
 #[tokio::test]

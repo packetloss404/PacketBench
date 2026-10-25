@@ -123,14 +123,12 @@ describe("agent/workspace store decoupling", () => {
   it("does not write workspaceId on newly-created API conversations", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
 
-    const id = await useAgentTaskStore
-      .getState()
-      .createApiConversation({
-        agent: "api-openai",
-        projectPath: "D:/projects/example",
-        model: "gpt-4.1",
-        initialMessage: "Build the thing",
-      });
+    const id = await useAgentTaskStore.getState().createApiConversation({
+      agent: "api-openai",
+      projectPath: "D:/projects/example",
+      model: "gpt-4.1",
+      initialMessage: "Build the thing",
+    });
 
     const conversation = useAgentTaskStore.getState().conversations.find((c) => c.id === id);
 
@@ -156,33 +154,34 @@ describe("agent/workspace store decoupling", () => {
       null,
       undefined,
       undefined,
+      undefined,
+      undefined,
+      200_000,
     );
   });
 
   it("starts SSH API conversations with remote metadata without local AGENTS.md probing", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
 
-    const id = await useAgentTaskStore
-      .getState()
-      .createApiConversation({
-        agent: "api-openai-agents",
-        projectPath: "/srv/packetbench",
-        model: "gpt-5.5",
-        initialMessage: "Build remotely",
-        thinkingEnabled: false,
-        planMode: false,
-        sshTarget: {
-          serverId: "srv-123",
-          name: "Staging",
-          host: "example.com",
-          port: 2222,
-          user: "ian",
-          remotePath: "/srv/packetbench",
-          keyPath: "C:/Users/ian/.ssh/id_ed25519",
-          authMethod: "key",
-          hostFingerprint: "SHA256:abc123",
-        },
-      });
+    const id = await useAgentTaskStore.getState().createApiConversation({
+      agent: "api-openai-agents",
+      projectPath: "/srv/packetbench",
+      model: "gpt-5.5",
+      initialMessage: "Build remotely",
+      thinkingEnabled: false,
+      planMode: false,
+      sshTarget: {
+        serverId: "srv-123",
+        name: "Staging",
+        host: "example.com",
+        port: 2222,
+        user: "ian",
+        remotePath: "/srv/packetbench",
+        keyPath: "C:/Users/ian/.ssh/id_ed25519",
+        authMethod: "key",
+        hostFingerprint: "SHA256:abc123",
+      },
+    });
 
     const conversation = useAgentTaskStore.getState().conversations.find((c) => c.id === id);
 
@@ -223,6 +222,9 @@ describe("agent/workspace store decoupling", () => {
       null,
       undefined,
       undefined,
+      undefined,
+      undefined,
+      400_000,
     );
   });
 
@@ -236,20 +238,18 @@ describe("agent/workspace store decoupling", () => {
     });
 
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    const id = await useAgentTaskStore
-      .getState()
-      .createApiConversation({
-        agent: "api-openai",
-        projectPath: "D:/projects/example",
-        model: "gpt-4.1",
-        initialMessage: "Build with memory",
-        systemPromptOverride: "You are focused.",
-        thinkingEnabled: false,
-        planMode: false,
-        sshTarget: null,
-        skipBackendStart: false,
-        memoryContextEnabled: true,
-      });
+    const id = await useAgentTaskStore.getState().createApiConversation({
+      agent: "api-openai",
+      projectPath: "D:/projects/example",
+      model: "gpt-4.1",
+      initialMessage: "Build with memory",
+      systemPromptOverride: "You are focused.",
+      thinkingEnabled: false,
+      planMode: false,
+      sshTarget: null,
+      skipBackendStart: false,
+      memoryContextEnabled: true,
+    });
 
     expect(composeMemoryBriefMock).toHaveBeenCalledWith({
       kind: "local",
@@ -301,28 +301,26 @@ describe("agent/workspace store decoupling", () => {
   it("threads SSH target config through sidecar-backed API conversations", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
 
-    const id = await useAgentTaskStore
-      .getState()
-      .createApiConversation({
-        agent: "api-claude-oauth",
-        projectPath: "/srv/app",
-        model: "claude-sonnet-4.5",
-        initialMessage: "Work on the remote repo",
-        systemPromptOverride: null,
-        thinkingEnabled: false,
-        planMode: false,
-        sshTarget: {
-          serverId: "server-1",
-          name: "Build host",
-          host: "example.com",
-          port: 2222,
-          user: "ian",
-          remotePath: "/srv/app",
-          keyPath: "/home/ian/.ssh/id_ed25519",
-          authMethod: "key",
-          hostFingerprint: "SHA256:test",
-        },
-      });
+    const id = await useAgentTaskStore.getState().createApiConversation({
+      agent: "api-claude-oauth",
+      projectPath: "/srv/app",
+      model: "claude-sonnet-4.5",
+      initialMessage: "Work on the remote repo",
+      systemPromptOverride: null,
+      thinkingEnabled: false,
+      planMode: false,
+      sshTarget: {
+        serverId: "server-1",
+        name: "Build host",
+        host: "example.com",
+        port: 2222,
+        user: "ian",
+        remotePath: "/srv/app",
+        keyPath: "/home/ian/.ssh/id_ed25519",
+        authMethod: "key",
+        hostFingerprint: "SHA256:test",
+      },
+    });
 
     const conversation = useAgentTaskStore.getState().conversations.find((c) => c.id === id);
 
@@ -362,6 +360,9 @@ describe("agent/workspace store decoupling", () => {
       null,
       undefined,
       undefined,
+      undefined,
+      undefined,
+      200_000,
     );
   });
 
@@ -421,19 +422,17 @@ describe("agent/workspace store decoupling", () => {
     useAgentSettingsStore.getState().setAutoFailoverEnabled(false);
 
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    await useAgentTaskStore
-      .getState()
-      .createApiConversation({
-        agent: "api-openai",
-        projectPath: "D:/projects/example",
-        model: "gpt-4o",
-        initialMessage: "Build the thing",
-        thinkingEnabled: false,
-        planMode: false,
-        sshTarget: null,
-        explicitId: "conv-no-failover",
-        skipBackendStart: true,
-      });
+    await useAgentTaskStore.getState().createApiConversation({
+      agent: "api-openai",
+      projectPath: "D:/projects/example",
+      model: "gpt-4o",
+      initialMessage: "Build the thing",
+      thinkingEnabled: false,
+      planMode: false,
+      sshTarget: null,
+      explicitId: "conv-no-failover",
+      skipBackendStart: true,
+    });
 
     listeners.get("api-agent:error:conv-no-failover")?.({
       payload: { message: "429 rate limit exceeded" },
@@ -455,19 +454,17 @@ describe("agent/workspace store decoupling", () => {
     );
 
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
-    await useAgentTaskStore
-      .getState()
-      .createApiConversation({
-        agent: "api-openai",
-        projectPath: "D:/projects/example",
-        model: "gpt-4o",
-        initialMessage: "Build the thing",
-        thinkingEnabled: false,
-        planMode: false,
-        sshTarget: null,
-        explicitId: "conv-failover",
-        skipBackendStart: true,
-      });
+    await useAgentTaskStore.getState().createApiConversation({
+      agent: "api-openai",
+      projectPath: "D:/projects/example",
+      model: "gpt-4o",
+      initialMessage: "Build the thing",
+      thinkingEnabled: false,
+      planMode: false,
+      sshTarget: null,
+      explicitId: "conv-failover",
+      skipBackendStart: true,
+    });
 
     listeners.get("api-agent:error:conv-failover")?.({
       payload: { message: "429 rate limit exceeded" },

@@ -237,6 +237,9 @@ pub struct RuntimeSession {
     pub custom_agents: Arc<Vec<CustomAgentDef>>,
     pub native_mcp_session: Arc<NativeMcpSession>,
     pub tasks: Arc<SessionTasks>,
+    /// The frontend-supplied directional context window in tokens. `None`
+    /// falls back to `context_window_tokens(provider, model)`.
+    pub context_window_tokens: Option<u64>,
 }
 
 /// Per-iteration session flags (may flip mid-session).

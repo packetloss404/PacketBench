@@ -3989,6 +3989,10 @@ export async function startApiAgentSession(
   budgetScopeKey?: string,
   /** R5b: session spend ceiling in USD, paired with `budgetScopeKey`. */
   budgetLimitUsd?: number,
+  /** Directional context window (tokens) for the model, from the frontend
+   * catalog. Consumed only by the journal-gated R6 context guard; the backend
+   * falls back to its own capability table when omitted. */
+  contextWindowTokens?: number,
 ): Promise<void> {
   return invoke("start_api_agent_session", {
     sessionId,
@@ -4012,6 +4016,7 @@ export async function startApiAgentSession(
     mcpTrustSnapshot: mcpTrustSnapshot ?? null,
     budgetScopeKey: budgetScopeKey ?? null,
     budgetLimitUsd: budgetLimitUsd ?? null,
+    contextWindowTokens: contextWindowTokens ?? null,
   });
 }
 

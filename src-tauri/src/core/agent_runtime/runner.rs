@@ -544,7 +544,10 @@ pub async fn run_turn<R: RuntimeServices>(
         // dispatch-intent checkpoint, so an overflow blocks before any spend.
         if services.capability_guard_enabled() {
             let attachment_count = services.pending_attachment_count(session_id).await;
-            let window_tokens = services.context_window_tokens(&provider_name, &model);
+            let window_tokens = session
+                .context_window_tokens
+                .filter(|window| *window > 0)
+                .or_else(|| services.context_window_tokens(&provider_name, &model));
             let snapshot = runtime_context::project_context(
                 &format!("{provider_name}:{model}"),
                 &system_prompt,

@@ -22,6 +22,7 @@ import {
 import { isWorktreeDirty } from "@/lib/worktreeLifecycle";
 import { conversationWorktree } from "@/lib/conversationWorktreeDisclosure";
 import { buildResumeSshConfig, type ResumeSshConfig } from "@/lib/resumeSshConfig";
+import { getModelContextWindow } from "@/lib/modelContext";
 import { logSwallowed } from "@/lib/logSwallowed";
 // Type-only: `capabilitiesFor` itself is deliberately NOT imported here. The
 // store must not decide affordances — components do, from the descriptor —
@@ -388,18 +389,18 @@ const apiResumeInFlight = new Map<string, symbol>();
 const pendingTurnAdmissions = new Map<string, { token: symbol; newSession: boolean }>();
 const latestTurnAdmissions = new Map<string, symbol>();
 
-/** R5b: the backend budget args for a session start, or none when the session
- * limit is not a positive number. The scope key is the conversation's local id
- * so every request in the session reserves against the same ceiling. The
- * `[string, number]` cast at the spread sites works around TypeScript's refusal
- * to spread a union of tuples; an empty tuple still spreads to zero args. */
-function sessionBudgetArgs(conversationId: string): [] | [string, number] {
+/** R5b: the backend budget args for a session start, or `[undefined, undefined]`
+ * when the session limit is not a positive number. ALWAYS returns exactly two
+ * positional values so the spread at each call site has a fixed arity — an empty
+ * spread would shift the trailing `contextWindowTokens` argument into the budget
+ * slot. The scope key is the conversation's local id so every request in the
+ * session reserves against the same ceiling. */
+function sessionBudgetArgs(conversationId: string): [string | undefined, number | undefined] {
   const limit = useCostGuardrailStore.getState().sessionLimitUsd;
   if (typeof limit === "number" && limit > 0) {
-    const args: [string, number] = [`local:${conversationId}`, limit];
-    return args;
+    return [`local:${conversationId}`, limit];
   }
-  return [];
+  return [undefined, undefined];
 }
 
 /** Stop/delete can revoke preflight while analytics or resume preparation is
@@ -1008,7 +1009,14 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
                 null, // commandPath — no surviving sidecar provider is CLI-backed
                 undefined,
                 frozenMcpTrust,
-                ...(sessionBudgetArgs(id) as [string, number]),
+                ...sessionBudgetArgs(id),
+                // Directional window for the journal-gated R6 context guard.
+                // `getModelContextWindow` is a curated/family-heuristic estimate
+                // (200_000 default for unknown ids), so this is only directional:
+                // the R6 estimator is conservative, but a false PASS is possible
+                // for an unknown id whose true window is smaller. The guard only
+                // runs when the runtime journal is enabled; otherwise inert.
+                getModelContextWindow(model),
               ),
             );
           },
@@ -2085,7 +2093,14 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
               null, // commandPath — no surviving sidecar provider is CLI-backed
               undefined,
               frozenMcpTrust,
-              ...(sessionBudgetArgs(conversationId) as [string, number]),
+              ...sessionBudgetArgs(conversationId),
+              // Directional window for the journal-gated R6 context guard.
+              // `getModelContextWindow` is a curated/family-heuristic estimate
+              // (200_000 default for unknown ids), so this is only directional:
+              // the R6 estimator is conservative, but a false PASS is possible
+              // for an unknown id whose true window is smaller. The guard only
+              // runs when the runtime journal is enabled; otherwise inert.
+              getModelContextWindow(model),
             ),
           );
         },
