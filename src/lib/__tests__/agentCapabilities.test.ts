@@ -151,6 +151,17 @@ describe("capabilitiesFor — composer inputs", () => {
     expect(caps.canCancelTurn).toBe(true);
     expect(caps.canQueueWhileStreaming).toBe(true);
   });
+
+  it("withdraws image attachments only when the caller reports the guard block", () => {
+    // Absent override: unchanged from before the seam.
+    expect(capabilitiesFor(conv()).imageAttachments).toBe(true);
+    // The override is the ONLY thing that can turn it off — no provider id
+    // decides this.
+    const blocked = capabilitiesFor(conv(), undefined, {
+      imageAttachmentsBlockedByGuard: true,
+    });
+    expect(blocked.imageAttachments).toBe(false);
+  });
 });
 
 describe("capabilitiesFor — context & accounting", () => {

@@ -302,9 +302,17 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       reservations reconcile too. Wrote `dev/agent-experience/07-sdk-limitations.md`
       declaring native guarantees vs the weaker SDK/soft-turn claims and the v12
       protocol floor. 1285/0; review findings (child fail-open release, sync-call
-      justification, test strength) all fixed. **Still open:** the composer is not
-      yet wired to `get_runtime_capabilities`; native visual/IME/restart
-      evidence needs the user/tooling.
+      justification, test strength) all fixed. **Still open:** native
+      visual/IME/restart evidence needs the user/tooling.
+- [x] **P2 — Composer capability wiring.** Added `get_runtime_guard_status()` +
+      `src/stores/runtimeGuardStore.ts`; when the guard is enabled AND the route's
+      vision is not explicitly `supported`, the composer disables the image-attach
+      control (button, paste, drop, drag-enter) with a tooltip, and the send path
+      blocks a staged image that meets a now-unsupported route. Guard-off behavior
+      is unchanged (no capability probe). `capabilitiesFor` stays pure via an
+      optional override. Covers both the chat and launch variants. 1287/0; all 7
+      gates green; review findings (ungated send path + launch variant, accessible
+      tooltip, drop test, PTY probe noise) all fixed.
 - [x] **P2 — Context live-catalog windows.** The frontend-supplied directional
       window (`getModelContextWindow`) is now carried on the session
       (`RuntimeSession.context_window_tokens`) and used by R6's overflow guard,

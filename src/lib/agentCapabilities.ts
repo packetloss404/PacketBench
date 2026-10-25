@@ -121,6 +121,20 @@ export type CapabilityConversation = Pick<
 >;
 
 /**
+ * Answers that depend on state `capabilitiesFor` may not read itself. Passed in
+ * by the caller so this function stays pure (no store reads, no IPC) — the same
+ * reason `live` is a parameter.
+ */
+export interface CapabilityOverrides {
+  /**
+   * The runtime guard blocks image attachments for this session (R4b UX): the
+   * route's vision is not explicitly `supported` while the guard is enabled.
+   * The caller computes this from `stores/runtimeGuardStore`.
+   */
+  imageAttachmentsBlockedByGuard?: boolean;
+}
+
+/**
  * The AUTHORITATIVE model rows for this session, or `undefined` to keep the
  * bundled catalog.
  *
@@ -183,6 +197,11 @@ export function capabilitiesFor(
    * the pre-seam answer exactly: the provider falls back to the catalog.
    */
   live?: LiveModelAnswer,
+  /**
+   * Caller-computed overrides for answers this pure function cannot resolve
+   * itself. Omitting it keeps every field at its pre-override value.
+   */
+  overrides?: CapabilityOverrides,
 ): SessionCapabilities {
   const agent = conversation.agent;
   const isApi = conversation.mode === "api";
@@ -243,7 +262,8 @@ export function capabilitiesFor(
     // session.
     slashCommands: true,
     // Attachment staging (paste/drop) is variant-agnostic in the composer.
-    imageAttachments: true,
+    // The runtime guard can withdraw it per route; see `CapabilityOverrides`.
+    imageAttachments: !overrides?.imageAttachmentsBlockedByGuard,
 
     // Source: modelContext.getModelContextWindow, which always resolves a
     // directional number (unknown ids fall back to the field median), so this

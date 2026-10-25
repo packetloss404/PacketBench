@@ -4191,6 +4191,12 @@ export async function getRuntimeCapabilities(
   return invoke<RuntimeCapabilityView>("get_runtime_capabilities", { provider, model });
 }
 
+// R4b UX: whether the runtime guard (journal) is enabled. Read by the composer
+// to gate image attachments before dispatch.
+export async function getRuntimeGuardStatus(): Promise<boolean> {
+  return invoke<boolean>("get_runtime_guard_status");
+}
+
 export async function loadConversations(): Promise<string[]> {
   return invoke<string[]>("load_conversations");
 }

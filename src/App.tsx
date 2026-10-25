@@ -39,6 +39,7 @@ import { requestNotificationPermission } from "@/lib/notifications";
 import type { AppView } from "@/stores/appStore";
 import { APP_NAME } from "@/lib/brand";
 import { useFlightStore } from "@/stores/flightStore";
+import { useRuntimeGuardStore } from "@/stores/runtimeGuardStore";
 
 // Lazy-loaded views — split into separate chunks to reduce initial bundle size
 const IssueBoard = lazy(() =>
@@ -124,6 +125,10 @@ export default function App() {
   // the complete Workspace + AgentConversation graph.
   useEffect(() => {
     void initializeApp();
+    // R4b UX: read the runtime-guard status once so the composer can refuse
+    // image attachments with an explanation when the guard is enabled. A no-op
+    // read on the default (guard-off) path.
+    void useRuntimeGuardStore.getState().init();
     // Request OS notification permission on the first user gesture. macOS
     // WKWebView refuses `Notification.requestPermission()` calls that aren't
     // triggered by a gesture ("can only be done from a user gesture"), so

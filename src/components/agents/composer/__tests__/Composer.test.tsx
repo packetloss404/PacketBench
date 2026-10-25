@@ -1,8 +1,9 @@
 import { createRef } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "@/components/agents/composer/Composer";
 import { LAUNCH_DRAFT_KEY, useAgentDraftStore } from "@/stores/agentDraftStore";
+import { useRuntimeGuardStore } from "@/stores/runtimeGuardStore";
 import type { AgentConversation } from "@/types/agent-conversation";
 
 const mocks = vi.hoisted(() => ({
@@ -148,6 +149,10 @@ vi.mock("@/lib/tauri", () => ({
   // The composer's context strip owns the git poll now (it moved off the
   // deleted SessionMetaLine band), so this export has to resolve here.
   gitSafetyCheck: vi.fn(() => Promise.resolve(null)),
+  // The runtime guard is off by default, so the composer stays unguarded unless
+  // a test seeds the store.
+  getRuntimeGuardStatus: vi.fn(() => Promise.resolve(false)),
+  getRuntimeCapabilities: vi.fn(() => Promise.resolve({ vision: { state: "unknown" } })),
 }));
 
 function renderLaunch(
@@ -226,6 +231,7 @@ async function stageImage(
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  useRuntimeGuardStore.getState().reset();
   useAgentDraftStore.setState({
     drafts: {},
     stagedAttachments: {},
@@ -534,5 +540,113 @@ describe("Composer (chat variant) — per-conversation drafts + send (protected)
     expect(stopIcon).toHaveClass("animate-pulse");
     fireEvent.click(stopButton!);
     expect(mocks.agentTaskState.cancelActiveConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe("Composer (chat variant) — runtime guard image gating", () => {
+  function seedGuard(visionState: string) {
+    useRuntimeGuardStore.setState({
+      enabled: true,
+      capabilities: { "openai:gpt-4o": { visionState } },
+    });
+  }
+
+  it("disables the attach control and exposes the reason via tooltip when vision is unknown", () => {
+    seedGuard("unknown");
+    renderChat(makeConversation("conv-guard-unknown"));
+
+    const attach = screen.getByRole("button", { name: "Attach image" });
+    expect(attach).toBeDisabled();
+
+    vi.useFakeTimers();
+    fireEvent.focus(attach);
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      /runtime guard blocks image attachments/i,
+    );
+    vi.useRealTimers();
+  });
+
+  it("keeps the attach control enabled when the guard is off", () => {
+    useRuntimeGuardStore.setState({ enabled: false, capabilities: {} });
+    renderChat(makeConversation("conv-guard-off"));
+
+    expect(screen.getByRole("button", { name: "Attach image" })).not.toBeDisabled();
+  });
+
+  it("keeps the attach control enabled when the guard is on and vision is supported", () => {
+    seedGuard("supported");
+    renderChat(makeConversation("conv-guard-supported"));
+
+    expect(screen.getByRole("button", { name: "Attach image" })).not.toBeDisabled();
+  });
+
+  it("ignores a pasted image while the guard blocks attachments", async () => {
+    seedGuard("unsupported");
+    renderChat(makeConversation("conv-guard-paste"));
+
+    const file = new File(["image-bytes"], "blocked.png", { type: "image/png" });
+    fireEvent.paste(screen.getByPlaceholderText(/do anything/i), {
+      clipboardData: {
+        items: [{ kind: "file", getAsFile: () => file }],
+      },
+    });
+    await Promise.resolve();
+
+    expect(screen.queryByText("blocked.png")).not.toBeInTheDocument();
+  });
+
+  it("ignores a dropped image and suppresses the drag highlight while blocked", () => {
+    seedGuard("unknown");
+    const { container } = renderChat(makeConversation("conv-guard-drop"));
+    const zone = container.querySelector(".composer-zone") as HTMLElement;
+    const card = container.querySelector(".rounded-b-xl.bg-bg-tertiary") as HTMLElement;
+
+    fireEvent.dragEnter(zone);
+    expect(card.className).not.toContain("ring-2");
+
+    const file = new File(["image-bytes"], "dropped.png", { type: "image/png" });
+    fireEvent.drop(zone, { dataTransfer: { files: [file] } });
+    expect(screen.queryByText("dropped.png")).not.toBeInTheDocument();
+  });
+
+  it("blocks a send when a staged image meets a now-unsupported route", () => {
+    seedGuard("unsupported");
+    useAgentDraftStore.setState({
+      stagedAttachments: {
+        "conv-guard-send": [
+          {
+            id: "s1",
+            name: "late.png",
+            sizeBytes: 1,
+            attachment: { media_type: "image/png", data_base64: "x" },
+            previewUrl: "blob:late",
+          },
+        ],
+      },
+    });
+    renderChat(makeConversation("conv-guard-send"));
+
+    const textarea = screen.getByPlaceholderText(/do anything/i);
+    fireEvent.change(textarea, { target: { value: "send it" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(mocks.agentTaskState.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText(/image attachments are disabled/i)).toBeInTheDocument();
+  });
+
+  it("gates the launch variant by the selected route", () => {
+    useRuntimeGuardStore.setState({
+      enabled: true,
+      capabilities: { "minimax:MiniMax-M2.5": { visionState: "unknown" } },
+    });
+    renderLaunch(vi.fn(() => false));
+
+    expect(screen.getByRole("button", { name: "Attach image" })).toBeDisabled();
   });
 });

@@ -68,6 +68,14 @@ pub fn get_runtime_capabilities(
     Ok(runtime_capabilities::resolve_capabilities(&provider, &model, None).view())
 }
 
+/// R4b UX: whether the runtime guard is active. Read by the composer so an
+/// image attach can be refused up front with an explanation rather than failing
+/// at dispatch, and so the disabled path can stay byte-identical.
+#[tauri::command]
+pub fn get_runtime_guard_status() -> bool {
+    journal::is_enabled()
+}
+
 #[tauri::command]
 pub async fn cancel_runtime_run(
     operation_id: String,

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronUp, Mic, Square, X } from "lucide-react";
+import { ArrowUp, ChevronUp, Mic, Paperclip, Square, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { useAgentTaskStore, type AgentCli } from "@/stores/agentTaskStore";
+import { useAgentTaskStore, apiAgentProvider, type AgentCli } from "@/stores/agentTaskStore";
+import { useRuntimeGuardStore } from "@/stores/runtimeGuardStore";
 import { LAUNCH_DRAFT_KEY, useAgentDraftStore } from "@/stores/agentDraftStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { usePromptStore } from "@/stores/promptStore";
@@ -46,6 +47,11 @@ import { buildComposerKeyboardHandler } from "./buildComposerKeyboardHandler";
 import { stagedToImageAttachments, stagedAttachmentsReadySync } from "@/lib/agentDraftAssets";
 import { buildSlashItems, templatesToSlashDefs, type SlashItem } from "./slashCommandSource";
 import { slashCommandHandlers } from "./slashCommandHandlers";
+
+/** One explanation for every surface that refuses an image while the runtime
+ * guard is on and the route's vision is not explicitly supported. */
+const IMAGE_ATTACH_BLOCKED_MESSAGE =
+  "Image attachments are disabled: this model's image support is unverified and the runtime guard blocks image attachments.";
 
 export interface LaunchComposerProps {
   variant: "launch";
@@ -119,6 +125,7 @@ export function Composer(props: ComposerProps) {
 
   const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = launch ? launch.textareaRef : internalTextareaRef;
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Store wiring ─────────────────────────────────────────────────────
   const selectedRepo = useAgentTaskStore((s) => s.selectedRepo);
@@ -141,6 +148,55 @@ export function Composer(props: ComposerProps) {
   );
   const activeProfileId = launch?.selectedProfileId ?? defaultProfileId;
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
+
+  // ─── Capabilities — every control below renders from THIS, never from a
+  //     provider id. See lib/agentCapabilities.ts. ────────────────────────
+  /**
+   * This provider's live model list, from the shared cache.
+   *
+   * `capabilitiesFor` is PURE — it may not read a store or issue IPC — so the
+   * live answer is subscribed HERE and passed in. The empty-string agent for a
+   * launch-mode composer resolves to no registry entry, so it subscribes to
+   * nothing and fetches nothing; the launch card's own ModelSelector does its
+   * own lookup from `launch.selectedAgent`.
+   */
+  const { answer: liveModelAnswer } = useLiveModels(conversation?.agent ?? ("" as AgentCli));
+  /**
+   * Whether the runtime guard withdraws image attachments for the session's
+   * route. The store answers `true` whenever the guard is off (the default),
+   * so this is `true` on every pre-R4b path; only an enabled guard with an
+   * unverified route flips it. Resolved here because `capabilitiesFor` is pure.
+   *
+   * Only API sessions have a route to probe. A PTY chat conversation has no
+   * provider mapping, so asking `apiAgentProvider` for one would log a fallback
+   * to anthropic and probe a route the session never uses; a launch selection
+   * with no model yet (a live-enumerated provider before its first answer) is
+   * likewise unprobeable. Both gaps are treated as "allowed" — the backend
+   * `require_route_supports_images` guard remains the backstop.
+   */
+  const guardAgent = isChat
+    ? conversation?.mode === "api"
+      ? conversation.agent
+      : undefined
+    : launch?.selectedAgent;
+  const guardModel = isChat ? (conversation?.model ?? "") : (launch?.selectedModel ?? "");
+  const guardProvider = guardAgent ? apiAgentProvider(guardAgent) : "";
+  const guardProbeable = guardAgent !== undefined && guardModel !== "";
+  const guardEnabled = useRuntimeGuardStore((s) => s.enabled);
+  const guardAllowsImages = useRuntimeGuardStore((s) =>
+    guardProbeable ? s.imageAttachmentsAllowed(guardProvider, guardModel) : true,
+  );
+  const caps = conversation
+    ? capabilitiesFor(conversation, liveModelAnswer, {
+        imageAttachmentsBlockedByGuard: !guardAllowsImages,
+      })
+    : null;
+  const imageAttachmentsEnabled = caps ? caps.imageAttachments : guardAllowsImages;
+
+  useEffect(() => {
+    if (!guardEnabled || !guardProbeable) return;
+    useRuntimeGuardStore.getState().ensureCapability(guardProvider, guardModel);
+  }, [guardEnabled, guardProbeable, guardProvider, guardModel]);
 
   // ─── Attachment staging (paste / drag-drop) — both variants ──────────
   const {
@@ -165,8 +221,21 @@ export function Composer(props: ComposerProps) {
   // pointer crosses into nested children (textarea, staged chips, popovers).
   const dragDepthRef = useRef(0);
 
+  const handleFilePick = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? []);
+      if (files.length > 0) void addFiles(files);
+      // Reset so picking the same file twice still fires a change.
+      e.target.value = "";
+    },
+    [addFiles],
+  );
+
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      // The runtime guard can withdraw image attachments for a route whose
+      // vision is unverified; never stage an image it will refuse.
+      if (!imageAttachmentsEnabled) return;
       const items = e.clipboardData?.items;
       if (!items) return;
       const files: File[] = [];
@@ -182,7 +251,7 @@ export function Composer(props: ComposerProps) {
         void addFiles(files);
       }
     },
-    [addFiles],
+    [addFiles, imageAttachmentsEnabled],
   );
 
   const handleDrop = useCallback(
@@ -190,17 +259,22 @@ export function Composer(props: ComposerProps) {
       e.preventDefault();
       dragDepthRef.current = 0;
       setDragActive(false);
+      if (!imageAttachmentsEnabled) return;
       const files = Array.from(e.dataTransfer?.files ?? []);
       if (files.length > 0) void addFiles(files);
     },
-    [addFiles],
+    [addFiles, imageAttachmentsEnabled],
   );
 
-  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragDepthRef.current += 1;
-    setDragActive(true);
-  }, []);
+  const handleDragEnter = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (!imageAttachmentsEnabled) return;
+      dragDepthRef.current += 1;
+      setDragActive(true);
+    },
+    [imageAttachmentsEnabled],
+  );
 
   // dragover must preventDefault for the drop to fire, but doesn't touch the
   // depth counter — enter/leave own the active state.
@@ -222,20 +296,6 @@ export function Composer(props: ComposerProps) {
     [draftKey, setDraft],
   );
   const voice = useVoiceTranscript(appendToInput);
-
-  // ─── Capabilities — every control below renders from THIS, never from a
-  //     provider id. See lib/agentCapabilities.ts. ────────────────────────
-  /**
-   * This provider's live model list, from the shared cache.
-   *
-   * `capabilitiesFor` is PURE — it may not read a store or issue IPC — so the
-   * live answer is subscribed HERE and passed in. The empty-string agent for a
-   * launch-mode composer resolves to no registry entry, so it subscribes to
-   * nothing and fetches nothing; the launch card's own ModelSelector does its
-   * own lookup from `launch.selectedAgent`.
-   */
-  const { answer: liveModelAnswer } = useLiveModels(conversation?.agent ?? ("" as AgentCli));
-  const caps = conversation ? capabilitiesFor(conversation, liveModelAnswer) : null;
 
   // ─── Prefix-trigger pickers (@ mentions, / slash-commands) ───────────
   const mention = usePrefixMatcher("@");
@@ -504,10 +564,25 @@ export function Composer(props: ComposerProps) {
     return true;
   }, [staged, draftKey]);
 
+  // An image staged while the route was supported, then the route switched (or
+  // the guard status settled late), must never be sent silently. The disabled
+  // control stops new staging; this is the send-path backstop.
+  const blockGuardBlockedAttachments = useCallback((): boolean => {
+    if (imageAttachmentsEnabled || staged.length === 0) return false;
+    const state = useAgentDraftStore.getState();
+    state.addAttachmentRejection(draftKey, state.stagingGenerations[draftKey] ?? 0, {
+      id: `rej_${Date.now()}_guard`,
+      name: staged[0].name,
+      message: `${staged[0].name}: ${IMAGE_ATTACH_BLOCKED_MESSAGE}`,
+    });
+    return true;
+  }, [imageAttachmentsEnabled, staged, draftKey]);
+
   const submitLaunch = useCallback(async () => {
     if (!launch || !launchReady) return;
     if (submitInFlightRef.current) return;
     if (blockMissingAttachments()) return;
+    if (blockGuardBlockedAttachments()) return;
     submitInFlightRef.current = true;
     const syncToSend = stagedAttachmentsReadySync(staged);
     let toSend: ImageAttachment[];
@@ -537,7 +612,15 @@ export function Composer(props: ComposerProps) {
         submitInFlightRef.current = false;
       },
     );
-  }, [launch, launchReady, staged, input, clearStaged, blockMissingAttachments]);
+  }, [
+    launch,
+    launchReady,
+    staged,
+    input,
+    clearStaged,
+    blockMissingAttachments,
+    blockGuardBlockedAttachments,
+  ]);
 
   const isActive = conversation?.status === "active";
 
@@ -546,6 +629,7 @@ export function Composer(props: ComposerProps) {
     const text = input.trim();
     if (!text) return;
     if (blockMissingAttachments()) return;
+    if (blockGuardBlockedAttachments()) return;
     // While a turn is streaming the store QUEUES the text (protected
     // queued-send-while-streaming behavior) — queued messages carry no
     // attachments, so keep any staged images for the next live send
@@ -578,6 +662,7 @@ export function Composer(props: ComposerProps) {
     chatActions,
     conversationId,
     blockMissingAttachments,
+    blockGuardBlockedAttachments,
   ]);
 
   const submit = isChat ? submitChat : submitLaunch;
@@ -735,6 +820,31 @@ export function Composer(props: ComposerProps) {
     />
   );
 
+  // ─── Image attach — the explicit affordance for paste/drop staging ────
+  const attachButton = (
+    <Tooltip content={imageAttachmentsEnabled ? "Attach image" : IMAGE_ATTACH_BLOCKED_MESSAGE}>
+      <button
+        type="button"
+        aria-label="Attach image"
+        disabled={!imageAttachmentsEnabled}
+        onClick={() => fileInputRef.current?.click()}
+        className="shrink-0 rounded-md p-1 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none"
+      >
+        <Paperclip size={12} />
+      </button>
+    </Tooltip>
+  );
+  const fileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept="image/*"
+      multiple
+      className="hidden"
+      onChange={handleFilePick}
+    />
+  );
+
   // ─── Voice button — same control in both shells ──────────────────────
   const voiceButton = voice.isSupported && (
     <Tooltip content={voice.isListening ? "Stop recording" : "Voice input"}>
@@ -786,6 +896,7 @@ export function Composer(props: ComposerProps) {
                 : "border-bg-border focus-within:border-accent-green/50"
             }`}
           >
+            {fileInput}
             {attachmentArea}
             {textarea}
 
@@ -826,6 +937,7 @@ export function Composer(props: ComposerProps) {
 
               <div className="ml-auto flex min-w-0 items-center gap-1.5">
                 {voiceButton}
+                {attachButton}
 
                 {/* NOT gated on `caps.models.length > 0` any more.
                     That gate degraded an empty list to a dead read-only label
@@ -923,6 +1035,8 @@ export function Composer(props: ComposerProps) {
           {/* Popovers positioned above the textarea. */}
           {popovers}
 
+          {fileInput}
+
           {(staged.length > 0 || rejections.length > 0) && (
             <div className="px-4 pt-3">{attachmentArea}</div>
           )}
@@ -949,22 +1063,25 @@ export function Composer(props: ComposerProps) {
                 />
               </div>
 
-              <ActionButtons
-                isSupported={voice.isSupported}
-                isListening={voice.isListening}
-                startListening={voice.startListening}
-                stopListening={voice.stopListening}
-                launchReady={launchReady}
-                launchLabel={launchLabel}
-                launchTitle={
-                  launchReady
-                    ? "Launch (Enter)"
-                    : selectedAuth && selectedAuth !== "loading"
-                      ? selectedAuth.hint || launchLabel
-                      : launchLabel
-                }
-                onLaunch={submitLaunch}
-              />
+              <div className="flex items-center gap-1.5">
+                {attachButton}
+                <ActionButtons
+                  isSupported={voice.isSupported}
+                  isListening={voice.isListening}
+                  startListening={voice.startListening}
+                  stopListening={voice.stopListening}
+                  launchReady={launchReady}
+                  launchLabel={launchLabel}
+                  launchTitle={
+                    launchReady
+                      ? "Launch (Enter)"
+                      : selectedAuth && selectedAuth !== "loading"
+                        ? selectedAuth.hint || launchLabel
+                        : launchLabel
+                  }
+                  onLaunch={submitLaunch}
+                />
+              </div>
             </div>
 
             <AdvancedAccordion
