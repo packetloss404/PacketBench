@@ -628,6 +628,7 @@ pub fn run() {
             commands::agent_runtime::get_runtime_capabilities,
             commands::agent_runtime::get_runtime_guard_status,
             commands::agent_runtime::get_runtime_context_summary,
+            commands::agent_runtime::get_conversation_runtime,
             commands::agent_runtime::cancel_runtime_run,
             commands::agent_runtime::inspect_runtime_resume,
             commands::agent_runtime::resume_runtime_run,

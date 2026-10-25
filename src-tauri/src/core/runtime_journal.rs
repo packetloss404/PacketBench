@@ -870,6 +870,28 @@ pub struct ResumeInspection {
     pub inspected_revision: Option<String>,
 }
 
+/// The conversation's latest durable run, or `None` when it has no owner. The
+/// runtime-state readout uses it so the frontend can show a conversation's run
+/// state and offer a resume without knowing the run id itself.
+pub fn latest_run_for_conversation(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Option<RuntimeRunSummary>, String> {
+    validate_id("conversationId", conversation_id)?;
+    let latest: Option<String> = connection
+        .query_row(
+            "SELECT latest_root_run_id FROM conversation_owners WHERE conversation_id = ?1",
+            params![conversation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read conversation owner: {e}"))?;
+    match latest {
+        Some(run_id) => get_run(connection, &run_id).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// The operation id a run belongs to. The cancel command uses it to cancel the
 /// matching launch operation so the operation phase and run state agree.
 pub fn run_operation_id(connection: &Connection, run_id: &str) -> Result<String, String> {
@@ -1858,6 +1880,34 @@ mod tests {
         );
         assert!(run_conversation_id(&connection, "does-not-exist").is_err());
         assert!(run_operation_id(&connection, "does-not-exist").is_err());
+    }
+
+    #[test]
+    fn latest_run_for_conversation_returns_the_newest_run_and_none_without_an_owner() {
+        let connection = open_at(&temp_db()).unwrap();
+        assert!(latest_run_for_conversation(&connection, "conv-1")
+            .unwrap()
+            .is_none());
+
+        let first = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        assert_eq!(
+            latest_run_for_conversation(&connection, "conv-1")
+                .unwrap()
+                .unwrap()
+                .runtime_run_id,
+            first.run_id
+        );
+
+        let mut follow = input("op-2", &digest(2));
+        follow.kind = "existing".to_string();
+        let second = prepare_operation(&connection, &follow).unwrap();
+        assert_eq!(
+            latest_run_for_conversation(&connection, "conv-1")
+                .unwrap()
+                .unwrap()
+                .runtime_run_id,
+            second.run_id
+        );
     }
 
     #[test]

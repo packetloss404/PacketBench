@@ -171,6 +171,7 @@ export async function createPtySession(
   command: string,
   args: string[] | null,
   env?: Record<string, string> | null,
+  customCli = false,
 ): Promise<string> {
   const run = async (): Promise<string> => {
     const id = await invoke<string>("create_pty_session", {
@@ -180,6 +181,7 @@ export async function createPtySession(
       command,
       args,
       env: env ?? null,
+      ...(customCli ? { customCli: true } : {}),
     });
     await new Promise((resolve) => setTimeout(resolve, PTY_SPAWN_GAP_MS));
     return id;
@@ -1618,7 +1620,7 @@ export interface DetectCatalogItem {
  * (`core::agent::CliLaunchSource`) chose a CLI's binary. The SAME resolver
  * runs on the PTY spawn path, so a reported path is the path that launches.
  */
-export type CliLaunchSource = "settings" | "legacyPin" | "path" | "installerLocation" | "bareName";
+export type CliLaunchSource = "settings" | "legacyPin" | "path" | "installerLocation" | "bareName" | "wsl";
 
 export interface DetectCatalogResult {
   id: string;
@@ -2289,6 +2291,7 @@ function fromDtoWorkspace(workspace: WorkspaceDto): Workspace {
       sessionId: pane.sessionId,
       gridPosition: pane.gridPosition,
       pinnedCommands: pane.pinnedCommands,
+      ...(pane.customCli ? { customCli: pane.customCli } : {}),
       // Tile program (P1-S1): thread the kind discriminant + conversationId
       // through hydration or they silently drop on the next save. The invariant
       // (conversationId set iff kind==="conversation", absent kind ⇒ terminal)
@@ -2346,6 +2349,7 @@ function toDtoWorkspace(workspace: Workspace): WorkspaceDtoWithFrontendMetadata 
       sessionId: pane.sessionId,
       gridPosition: pane.gridPosition ?? { row: 0, col: index },
       pinnedCommands: pane.pinnedCommands,
+      ...(pane.customCli ? { customCli: pane.customCli } : {}),
       // Tile program (P1-S1): only conversation panes carry kind/conversationId
       // in the persisted shape — terminal panes stay byte-identical so old
       // binaries and the five-field-era round-trip are unaffected. The inert
@@ -4202,6 +4206,14 @@ export async function getRuntimeGuardStatus(): Promise<boolean> {
 // run plus an honest window-policy disclosure. Read-only; never a quota claim.
 export async function getRuntimeContextSummary(runId: string): Promise<RuntimeContextSummary> {
   return invoke<RuntimeContextSummary>("get_runtime_context_summary", { runId });
+}
+
+// R1/R3 runtime-state readout: the conversation's latest durable run, or null
+// when the journal is disabled or the conversation has no owner. Read-only.
+export async function getConversationRuntime(
+  conversationId: string,
+): Promise<RuntimeRunSummary | null> {
+  return invoke<RuntimeRunSummary | null>("get_conversation_runtime", { conversationId });
 }
 
 export async function loadConversations(): Promise<string[]> {

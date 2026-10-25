@@ -223,6 +223,25 @@ fn reconstruct_resume_history(
     Ok(Some((conversation_id, checkpoint.messages)))
 }
 
+/// R1/R3 runtime-state readout: the conversation's latest durable run (identity,
+/// state, resume mode), or `None` when the journal is disabled or the
+/// conversation has no owner. Lets the frontend show a run's state and offer a
+/// resume without knowing the run id.
+#[tauri::command]
+pub async fn get_conversation_runtime(
+    conversation_id: String,
+) -> Result<Option<RuntimeRunSummary>, String> {
+    if !journal::is_enabled() {
+        return Ok(None);
+    }
+    on_blocking(move || {
+        journal::with_journal(|connection| {
+            journal::latest_run_for_conversation(connection, &conversation_id)
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn resume_runtime_run(
     state: State<'_, Arc<ApiAgentState>>,
