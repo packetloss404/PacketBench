@@ -169,6 +169,8 @@ async fn live_compatibility_for_run(
         return None;
     }
     let run_id_owned = run_id.to_string();
+    // An unknown run (or a transient lookup failure) yields no live context; the
+    // subsequent inspect/resume re-queries the run and surfaces the real error.
     let conversation_id = on_blocking(move || {
         journal::with_journal(|connection| journal::run_conversation_id(connection, &run_id_owned))
     })
@@ -185,7 +187,7 @@ pub async fn inspect_runtime_resume(
 ) -> Result<journal::ResumeInspection, String> {
     // Verify the live policy when the session is still registered, so a
     // compatible checkpoint offers `typed`; otherwise stay semantic-only.
-    let current = live_compatibility_for_run(&state, &run_id).await;
+    let current = live_compatibility_for_run(state.inner().as_ref(), &run_id).await;
     on_blocking(move || {
         journal::with_journal(|connection| {
             journal::inspect_resume_with_compatibility(connection, &run_id, current.as_ref())
@@ -202,7 +204,7 @@ pub async fn resume_runtime_run(
     mode: String,
     inspected_revision: Option<String>,
 ) -> Result<RuntimeRunSummary, String> {
-    let current = live_compatibility_for_run(&state, &run_id).await;
+    let current = live_compatibility_for_run(state.inner().as_ref(), &run_id).await;
     on_blocking(move || {
         journal::with_journal(|connection| {
             journal::resume_run_with_compatibility(
