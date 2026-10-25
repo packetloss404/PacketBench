@@ -219,9 +219,15 @@ revision (local git HEAD, else an explicit `unresolved` marker), context version
 — and inserts a content-addressed `RunManifest` (fail-closed when enabled and
 bound). `core::git::get_head_revision` is the new HEAD resolver. Evidence: full
 lib suite **1296 passed / 0 failed** (manifest-identity + runner-call tests),
-runtime-eval **12/12**, fmt clean. Open: R1/R3 production transaction/typed
-resume, conservative window policy for non-Anthropic routes, and the remaining
-R8 evidence; the journal is still default-off.
+runtime-eval **12/12**, fmt clean. An independent review approved it (no blocking
+defects); its follow-ups landed in `d9c5189d`: identity derivation + insert run
+on the blocking worker (the local git subprocess never blocks the async
+runtime), an invalid identity is skipped with a warning instead of failing the
+turn (write failures stay fail-closed), and the MCP trust hash is folded into the
+manifest `tool_policy_hash` so two runs differing only in MCP authority do not
+collide. Open: R1/R3 production transaction/typed resume, conservative window
+policy for non-Anthropic routes, and the remaining R8 evidence; the journal is
+still default-off.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
       rendered, automated Agents navigation timed out, the next capture showed
