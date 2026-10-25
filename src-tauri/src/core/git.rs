@@ -148,6 +148,14 @@ pub fn get_branch(project_path: &str) -> Result<String, String> {
         .map_err(|_| "Not a git repository or git not found".to_string())
 }
 
+/// The full commit SHA at `HEAD`, used as a run manifest's `repositoryRevision`
+/// (R4/H6). Errors when the path is not a git repository or has an unborn HEAD,
+/// so the caller records an explicit unresolved marker instead of a wrong SHA.
+pub fn get_head_revision(project_path: &str) -> Result<String, String> {
+    git_command_result(&["rev-parse", "HEAD"], project_path)
+        .map_err(|_| "Not a git repository or git not found".to_string())
+}
+
 pub fn get_status(project_path: &str) -> Result<String, String> {
     let output = git_command(&["status", "--short"], project_path)?;
     if output.status.success() {

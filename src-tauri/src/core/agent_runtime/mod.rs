@@ -359,6 +359,14 @@ pub trait RuntimeServices:
     ) -> Result<(), String> {
         Ok(())
     }
+    /// Record a durable run manifest (R4/H6) freezing the identity inputs a run
+    /// was prepared with (endpoint, model, harness/tool-policy hashes, repository
+    /// revision, context version). Default is a no-op for a host that does not
+    /// record manifests; the Tauri host writes to the `manifests` table when the
+    /// runtime journal is enabled and the session is bound to a prepared run.
+    async fn record_manifest(&self, _session_id: &str) -> Result<(), String> {
+        Ok(())
+    }
     fn load_hooks(&self, execution: &ExecutionTarget) -> Vec<HookConfig>;
     async fn execute_tool(
         &self,

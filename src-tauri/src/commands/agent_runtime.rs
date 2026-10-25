@@ -287,6 +287,39 @@ fn checkpoint_compatibility(session: &RuntimeSession) -> CompatibilityContext {
     }
 }
 
+/// Explicit marker for a repository revision that could not be resolved (a
+/// non-git target or an SSH checkout, which has no local git plumbing). Never a
+/// fabricated SHA.
+const UNRESOLVED_REVISION: &str = "unresolved";
+
+/// Derive a run manifest's identity from a frozen session binding (R4/H6). The
+/// endpoint is the provider's resolved base URL (falling back to the provider id
+/// when unknown); the harness hash covers the effective system prompt; the
+/// tool-policy hash reuses the checkpoint compatibility hash; the context
+/// version is the projection schema. The repository revision is the local `HEAD`
+/// when resolvable and [`UNRESOLVED_REVISION`] otherwise.
+fn manifest_identity_for(session: &RuntimeSession) -> runtime_manifest::ManifestIdentity {
+    let endpoint = crate::core::provider_endpoints::resolve(&session.provider)
+        .unwrap_or_else(|_| session.provider.clone());
+    let repository_revision = match &session.execution {
+        ExecutionTarget::Local { project_path } => {
+            crate::core::git::get_head_revision(project_path)
+                .unwrap_or_else(|_| UNRESOLVED_REVISION.to_string())
+        }
+        _ => UNRESOLVED_REVISION.to_string(),
+    };
+    runtime_manifest::ManifestIdentity {
+        parent_request_id: None,
+        child_request_id: None,
+        endpoint,
+        model: session.model.clone(),
+        harness_hash: runtime_checkpoint::hash_payload(&session.system_prompt),
+        tool_policy_hash: checkpoint_compatibility(session).tool_policy_hash,
+        repository_revision,
+        context_version: format!("ctx-v{}", runtime_context::CONTEXT_SCHEMA_VERSION),
+    }
+}
+
 /// Durable checkpoint sink backed by the runtime journal. Bound to one run and
 /// one compatibility context; assigns sequence numbers and enforces retention.
 pub struct JournalCheckpointStore {
@@ -402,6 +435,7 @@ use crate::core::runtime_checkpoint::{
     CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_TRANSPORT_VERSION,
 };
 use crate::core::runtime_context;
+use crate::core::runtime_manifest;
 use crate::core::tool_runtime;
 use crate::core::tool_runtime_ssh::SSH_TOOL_OWNER;
 use crate::core::tool_subagent::{ChildBudgetHook, ParentLlm, PARENT_LLM};
@@ -587,6 +621,31 @@ impl RuntimeServices for TauriRuntimeServices {
                     &snapshot,
                 )
                 .map_err(String::from)
+            })
+        })
+        .await
+    }
+
+    /// R4/H6: freeze the run's identity inputs into a durable manifest. No-op
+    /// unless the journal is enabled and the session is bound to a prepared run.
+    /// Fail-closed: a manifest write failure fails the turn, matching the
+    /// checkpoint-boundary policy.
+    async fn record_manifest(&self, session_id: &str) -> Result<(), String> {
+        if !journal::is_enabled() {
+            return Ok(());
+        }
+        let Some(session) = self.state.runtime_session(session_id).await else {
+            return Ok(());
+        };
+        if self.state.runtime_run_binding(session_id).await.is_none() {
+            return Ok(());
+        }
+        let manifest =
+            runtime_manifest::RunManifest::new(manifest_identity_for(&session), now_ms())
+                .map_err(String::from)?;
+        on_blocking(move || {
+            journal::with_journal(|connection| {
+                runtime_manifest::insert_manifest(connection, &manifest).map_err(String::from)
             })
         })
         .await
@@ -1044,6 +1103,58 @@ mod tests {
         let path = directory.path().join("usage.jsonl");
         std::fs::write(&path, "not json\n").unwrap();
         assert!(crate::commands::usage::read_usage_ledger(&path).is_err());
+    }
+
+    fn manifest_session(execution: ExecutionTarget) -> crate::core::agent_runtime::RuntimeSession {
+        crate::core::agent_runtime::RuntimeSession {
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            execution,
+            system_prompt: "You are a test agent.".to_string(),
+            thinking_enabled: false,
+            allowed_tools: Some(vec!["read_file".to_string(), "bash".to_string()]),
+            enabled_mcp_server_ids: None,
+            mcp_trust_snapshot: None,
+            custom_agents: std::sync::Arc::new(Vec::new()),
+            native_mcp_session: std::sync::Arc::new(Default::default()),
+            tasks: std::sync::Arc::new(Default::default()),
+            context_window_tokens: None,
+        }
+    }
+
+    #[test]
+    fn manifest_identity_freezes_route_policy_and_revision() {
+        // An absolute path inside this repository, so a real HEAD resolves.
+        let session = manifest_session(ExecutionTarget::Local {
+            project_path: env!("CARGO_MANIFEST_DIR").to_string(),
+        });
+        let identity = manifest_identity_for(&session);
+
+        // Endpoint is the provider's resolved base URL, not the bare id.
+        assert!(
+            identity.endpoint.contains("anthropic"),
+            "endpoint was {}",
+            identity.endpoint
+        );
+        assert_eq!(identity.model, "claude-sonnet-4-5");
+        assert!(identity.harness_hash.starts_with("sha256:"));
+        assert!(identity.tool_policy_hash.starts_with("sha256:"));
+        assert_eq!(
+            identity.context_version,
+            format!("ctx-v{}", runtime_context::CONTEXT_SCHEMA_VERSION)
+        );
+        // The test runs inside this repository, so a real HEAD resolves.
+        assert_ne!(identity.repository_revision, UNRESOLVED_REVISION);
+        // A non-git target records the explicit marker, never a fabricated SHA.
+        let non_git = manifest_session(ExecutionTarget::Local {
+            project_path: std::env::temp_dir().to_string_lossy().to_string(),
+        });
+        assert_eq!(
+            manifest_identity_for(&non_git).repository_revision,
+            UNRESOLVED_REVISION
+        );
+        // The identity validates and yields a content-addressed manifest.
+        assert!(runtime_manifest::RunManifest::new(identity, 1).is_ok());
     }
 
     #[test]

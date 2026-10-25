@@ -195,6 +195,7 @@ pub struct FakeServices {
     settle_calls: Mutex<Vec<(String, String, i64)>>,
     release_calls: Mutex<Vec<(String, String)>>,
     mark_dispatched_calls: Mutex<Vec<(String, String)>>,
+    manifest_calls: Mutex<usize>,
     context_window: Mutex<Option<u64>>,
     recorded_snapshots: Mutex<Vec<ContextSnapshot>>,
     pending_attachment_count_calls: Mutex<usize>,
@@ -252,6 +253,7 @@ impl FakeServices {
             settle_calls: Mutex::new(Vec::new()),
             release_calls: Mutex::new(Vec::new()),
             mark_dispatched_calls: Mutex::new(Vec::new()),
+            manifest_calls: Mutex::new(0),
             context_window: Mutex::new(None),
             recorded_snapshots: Mutex::new(Vec::new()),
             pending_attachment_count_calls: Mutex::new(0),
@@ -329,6 +331,11 @@ impl FakeServices {
             .lock()
             .expect("mark dispatched calls")
             .clone()
+    }
+
+    /// How many times the runner recorded a run manifest (R4/H6).
+    pub fn manifest_calls(&self) -> usize {
+        *self.manifest_calls.lock().expect("manifest calls")
     }
 
     /// How many times the runner drained queued attachments.
@@ -707,6 +714,11 @@ impl RuntimeServices for FakeServices {
             .lock()
             .expect("mark dispatched calls")
             .push((session_id.to_string(), request_id.to_string()));
+        Ok(())
+    }
+
+    async fn record_manifest(&self, _session_id: &str) -> Result<(), String> {
+        *self.manifest_calls.lock().expect("manifest calls") += 1;
         Ok(())
     }
 
@@ -1377,6 +1389,24 @@ async fn budget_configured_releases_the_reservation_on_cancellation() {
     let marks = services.mark_dispatched_calls();
     assert_eq!(marks.len(), 1);
     assert_eq!(marks[0].1, services.admit_calls()[0].1);
+}
+
+#[tokio::test]
+async fn the_runner_records_a_run_manifest_once_per_turn() {
+    let services = FakeServices::new("s-manifest");
+    services.push_script(text_script("hi"));
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let outcome = run_turn(&services, run_request("s-manifest"), cancel_rx)
+        .await
+        .unwrap();
+
+    assert!(matches!(outcome, RunOutcome::Completed { .. }));
+    assert_eq!(
+        services.manifest_calls(),
+        1,
+        "one manifest per turn, before any dispatch"
+    );
 }
 
 #[tokio::test]

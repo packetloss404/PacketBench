@@ -510,6 +510,11 @@ pub async fn run_turn<R: RuntimeServices>(
         }
     }
 
+    // R4/H6: freeze this run's identity inputs into a durable manifest before any
+    // model dispatch. No-op unless the host records manifests (runtime journal
+    // enabled + a prepared run binding); fail-closed when the host does record.
+    services.record_manifest(session_id).await?;
+
     for iteration in 0..MAX_TOOL_ITERATIONS {
         // Check cancellation
         if cancel_rx.try_recv().is_ok() {
