@@ -44,12 +44,16 @@ committed and pushed; latest installed-source identity remains unverified.
       reconcile use. Public typed resume currently refuses; epoch changes alone
       do not continue the provider. Full run manifests and typed image pins are
       not production-complete. Keep native/SDK strength explicit.
-- [ ] **P1 — R5 uncertain liability and truthful budget strength.** Dispatched
-      cancellation and startup missing-ledger rows can release reservations
-      without proving zero billing. Preserve/reconcile unknown liability, include
-      system/tool/image input and required scope ownership, then earn activation
-      and cap claims. Current journal is default-off and budgets are conditional;
-      do not enable it merely because a prerequisite commit landed.
+- [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
+      durable `dispatched_at` marker (journal v5→v6, additive) is set by the
+      runner and the R7 child loop at the last pre-dispatch point; `release`
+      retains a dispatched reservation as `uncertain` (which still counts toward
+      committed spend) instead of freeing it, and `reconcile_reserved` retains a
+      dispatched-but-absent row rather than releasing it (commits `d1a92522`,
+      `e8fcb3ae`). OPEN: system/tool/image input in the estimate and scope
+      ownership; a proven-safe release path for `uncertain` liability; and the
+      activation/cap claims (journal still default-off, budgets conditional — do
+      not enable merely because a prerequisite commit landed).
 - [~] **P1 — F2 retained assets and delivery failure.** DONE: GC never reclaims
       assets whose v2 envelope is newer/unknown or corrupt (commits `02641d6e`,
       `764cdbd5`). OPEN: message/submission/checkpoint ownership pins, grace/
@@ -139,6 +143,35 @@ adoption, failure wording, remote URI fallback) were fixed in `43c8d45a`.
 Open: Phase 1 runtime/recovery/spend, the remaining F2/F3/F6/V3–V8 items, N1
 diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
+
+### Phase 1 runtime tranche — R5 uncertain budget liability, commits `d1a92522`, `e8fcb3ae`
+
+Bounded Rust slice of Phase 1 (Rust only; no build, install, provider or native
+run). The budget ledger previously freed a reservation whenever its request was
+absent from the usage ledger — on the runner cancel path and in the startup
+reconcile — so a request that had actually reached the provider could have its
+headroom silently re-admitted, contradicting the module's own ledger-append
+fail-closed policy.
+
+- Journal v5→v6 (additive): `dispatched_at` on `requests` and
+  `budget_reservations`; a migrated row defaults NULL (never dispatched).
+- `runtime_budget::mark_dispatched` sets it; the runner calls it at the last
+  pre-dispatch point (after `ensure_usage_healthy`, before the provider stream)
+  and the R7 child loop mirrors it before `stream_chat`.
+- `release` returns a `ReleaseOutcome`: a dispatched request becomes `uncertain`
+  (still counted toward the scope's committed spend); only a never-dispatched
+  request is freed. `reconcile_reserved` retains a dispatched-but-absent row as
+  `uncertain` and reports the new count.
+
+Evidence: `cargo check --lib` clean (only pre-existing warnings); full local
+`cargo test --lib` **1291 passed / 0 failed / 9 ignored**; the offline
+`runtime-eval --all` lane **12/12 pass**; 4 new budget unit tests, runner-level
+dispatch-mark assertions, and a child-loop mark assertion. An independent
+read-only review found no blocking defects; its substantive finding (the R7
+child path did not mark dispatch) and nits (non-transactional marker, stale
+module doc) were fixed in `e8fcb3ae`. Open: R1/R3 production transaction/typed
+resume, R4 production manifest, R6 context readout, R7 child *cancellation*, and
+the remaining R8 evidence; the journal is still default-off.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
       rendered, automated Agents navigation timed out, the next capture showed
