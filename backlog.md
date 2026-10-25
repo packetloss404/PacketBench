@@ -75,11 +75,15 @@ committed and pushed; latest installed-source identity remains unverified.
       mic/Stop/Send carry accessible names and 32px targets (commits `ae1d8ee7`,
       `43c8d45a`). OPEN: legacy typography/geometry scaling, narrow header/drawer/
       action lane and actual composited contrast.
-- [ ] **P2 — R4/R6/R7/R8 remaining contract/evidence.** Wire production manifest
-      identity, context readout and conservative window/counting policy; complete
-      child cancellation and SDK hooks/declarations. Retain offline v1 success
-      separately from unimplemented live/repeated/isolated task evidence. No
-      model-training or Composer research is included.
+- [~] **P2 — R4/R6/R7/R8 remaining contract/evidence.** DONE: the R6
+      context/window readout command (`get_runtime_context_summary`) with an
+      honest window-known disclosure and a hash-verified latest-snapshot store
+      (commit `88d34a54`). OPEN: production manifest identity (R4), conservative
+      window/counting policy for non-Anthropic routes (the static table resolves
+      an unknown window that never blocks), explicit child cancellation (R7) and
+      SDK hooks/declarations. Retain offline v1 success separately from
+      unimplemented live/repeated/isolated task evidence. No model-training or
+      Composer research is included.
 - [ ] **P1 — Installed-source and native verification.** The October 23 installed
       executable matches its available NSIS payload, but no source manifest
       binds it to `922ddcc9`. N1 navigation diagnosis, native IME/appearance/
@@ -169,9 +173,20 @@ Evidence: `cargo check --lib` clean (only pre-existing warnings); full local
 dispatch-mark assertions, and a child-loop mark assertion. An independent
 read-only review found no blocking defects; its substantive finding (the R7
 child path did not mark dispatch) and nits (non-transactional marker, stale
-module doc) were fixed in `e8fcb3ae`. Open: R1/R3 production transaction/typed
-resume, R4 production manifest, R6 context readout, R7 child *cancellation*, and
-the remaining R8 evidence; the journal is still default-off.
+module doc) were fixed in `e8fcb3ae`.
+
+**R6 context/window readout, commit `88d34a54`.** `get_runtime_context_summary`
+returns the latest context projection for a run plus an honest window-policy
+disclosure (`windowKnown`, `policyNote`); it answers with no projection when the
+journal is disabled rather than erroring, and is never a quota/dollar claim. A
+new `runtime_context::latest_context_snapshot` selects the newest row and
+decodes it through the hash-verifying path. New TS DTOs are registered and bound
+(`RuntimeContextSummary`/`RuntimeContextProjection`). Evidence: full lib suite
+**1293 passed / 0 failed**, runtime-eval **12/12**, `check:tauri-schema` and
+`tsc --noEmit` pass. Open: R1/R3 production transaction/typed resume, R4
+production manifest, conservative window policy for non-Anthropic routes, R7
+child *cancellation*, and the remaining R8 evidence; the journal is still
+default-off.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
       rendered, automated Agents navigation timed out, the next capture showed
