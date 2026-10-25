@@ -38,12 +38,14 @@ committed and pushed; latest installed-source identity remains unverified.
 
 ### Verified agent-experience residuals
 
-- [ ] **P1 — R1/R3 production transaction and recovery.** Enforce immutable
-      execution/SSH authority, owner/revision/predecessor validation, one root
-      run per turn, terminal projection and actual prepare/start/cancel/resume/
-      reconcile use. Public typed resume currently refuses; epoch changes alone
-      do not continue the provider. Full run manifests and typed image pins are
-      not production-complete. Keep native/SDK strength explicit.
+- [~] **P1 — R1/R3 production transaction and recovery.** DONE: the public
+      resume path now derives and verifies the live policy context, so a
+      compatible checkpoint offers `typed` (commit `f6cc73ae`); the run manifest
+      is recorded in production (commit `8187c8a3`). OPEN: the full
+      prepare/start/cancel/reconcile bridge (epoch changes still do not continue
+      the provider), immutable execution/SSH authority, owner/revision/
+      predecessor validation, one root run per turn, terminal projection and
+      typed image pins. Keep native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -225,7 +227,20 @@ on the blocking worker (the local git subprocess never blocks the async
 runtime), an invalid identity is skipped with a warning instead of failing the
 turn (write failures stay fail-closed), and the MCP trust hash is folded into the
 manifest `tool_policy_hash` so two runs differing only in MCP authority do not
-collide. Open: R1/R3 production transaction/typed resume, conservative window
+collide.
+
+**R1/R3 typed-resume wiring, commit `f6cc73ae`.** The journal's typed-resume
+logic (`inspect_resume_with_compatibility`/`resume_run_with_compatibility`) was
+already complete and tested, but the public commands always passed
+`current=None`, so `typed` was unreachable and only `semantic` was offered.
+`inspect_runtime_resume`/`resume_runtime_run` now take
+`State<Arc<ApiAgentState>>`, derive the live `CompatibilityContext` from the
+run's conversation session when it is still registered, and pass it through (a
+missing session stays semantic-only, fail-closed). `journal::run_conversation_id`
+maps a run to its conversation. Evidence: full lib suite **1297 passed / 0
+failed**, runtime-eval **12/12**, fmt clean. Open: the full
+prepare/start/cancel/reconcile bridge, owner/revision/predecessor validation, one
+root run per turn, terminal projection, typed image pins, conservative window
 policy for non-Anthropic routes, and the remaining R8 evidence; the journal is
 still default-off.
 
