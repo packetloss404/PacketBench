@@ -76,14 +76,15 @@ committed and pushed; latest installed-source identity remains unverified.
       `43c8d45a`). OPEN: legacy typography/geometry scaling, narrow header/drawer/
       action lane and actual composited contrast.
 - [~] **P2 — R4/R6/R7/R8 remaining contract/evidence.** DONE: the R6
-      context/window readout command (`get_runtime_context_summary`) with an
-      honest window-known disclosure and a hash-verified latest-snapshot store
-      (commit `88d34a54`). OPEN: production manifest identity (R4), conservative
-      window/counting policy for non-Anthropic routes (the static table resolves
-      an unknown window that never blocks), explicit child cancellation (R7) and
-      SDK hooks/declarations. Retain offline v1 success separately from
-      unimplemented live/repeated/isolated task evidence. No model-training or
-      Composer research is included.
+      context/window readout (`get_runtime_context_summary` with a window-known
+      disclosure and a hash-verified latest-snapshot store, commit `88d34a54`)
+      and explicit R7 child cancellation (a per-turn cancellation token threaded
+      into the child loop; `SubagentStatus::Cancelled`; commit `6d3498e5`). OPEN:
+      production manifest identity (R4), conservative window/counting policy for
+      non-Anthropic routes (the static table resolves an unknown window that
+      never blocks), and SDK hooks/declarations. Retain offline v1 success
+      separately from unimplemented live/repeated/isolated task evidence. No
+      model-training or Composer research is included.
 - [ ] **P1 — Installed-source and native verification.** The October 23 installed
       executable matches its available NSIS payload, but no source manifest
       binds it to `922ddcc9`. N1 navigation diagnosis, native IME/appearance/
@@ -183,10 +184,19 @@ new `runtime_context::latest_context_snapshot` selects the newest row and
 decodes it through the hash-verifying path. New TS DTOs are registered and bound
 (`RuntimeContextSummary`/`RuntimeContextProjection`). Evidence: full lib suite
 **1293 passed / 0 failed**, runtime-eval **12/12**, `check:tauri-schema` and
-`tsc --noEmit` pass. Open: R1/R3 production transaction/typed resume, R4
-production manifest, conservative window policy for non-Anthropic routes, R7
-child *cancellation*, and the remaining R8 evidence; the journal is still
-default-off.
+`tsc --noEmit` pass.
+
+**R7 explicit child cancellation, commit `6d3498e5`.** A per-turn
+`CancellationToken` is created in `run_turn`, cancelled in every parent cancel
+arm, and threaded through `ToolExecContext` into `ParentLlm`; the child loop
+selects on it, drops its provider stream, releases its reservation (a dispatched
+child becomes uncertain liability) and returns the new `SubagentStatus::Cancelled`
+instead of relying on the implicit future-drop. Nested children inherit the
+token. Evidence: full lib suite **1294 passed / 0 failed** (with a deterministic
+blocked-provider cancellation test), runtime-eval **12/12**, fmt clean. Open:
+R1/R3 production transaction/typed resume, R4 production manifest, conservative
+window policy for non-Anthropic routes, and the remaining R8 evidence; the
+journal is still default-off.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
       rendered, automated Agents navigation timed out, the next capture showed
