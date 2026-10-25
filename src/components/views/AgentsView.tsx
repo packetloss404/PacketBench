@@ -104,6 +104,10 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
     // with the credential auto-pick.
     if (pinnedAgent || autoPickStarted.current || selectedConversationId) return;
     autoPickStarted.current = true;
+    // F4: capture the selection revision the probe started under. A user/context
+    // choice bumps it, so a late probe result may apply only while the automatic
+    // selection is still current.
+    const startedRevision = useAgentLaunchStore.getState().launch.revision;
     let cancelled = false;
     void Promise.all(
       AUTO_PICK_ORDER.map(async (agent) => {
@@ -121,6 +125,7 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
       // F4: a late probe result must never overwrite an explicit choice the
       // user made while it was in flight.
       if (userInteractedRef.current) return;
+      if (useAgentLaunchStore.getState().launch.revision !== startedRevision) return;
       const ready = results.find((result) => result?.status.status === "ready");
       if (!ready) return;
       setSelectedAgent(ready.agent);

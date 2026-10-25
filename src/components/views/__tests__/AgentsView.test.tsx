@@ -229,6 +229,29 @@ describe("AgentsView", () => {
     expect(screen.getByTestId("selected-agent")).toHaveTextContent("api-openai");
   });
 
+  it("a selection-revision bump alone blocks a late auth probe (F4)", async () => {
+    let resolveAuth!: (v: Awaited<ReturnType<typeof getProviderAuthStatus>>) => void;
+    vi.mocked(getProviderAuthStatus).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAuth = resolve;
+        }),
+    );
+    render(<AgentsView />);
+    const before = screen.getByTestId("selected-agent").textContent;
+
+    // A context change bumps the selection revision without touching the
+    // user-interaction ref, so only the captured-revision guard can block it.
+    act(() => {
+      useAgentLaunchStore.getState().bumpRevision();
+    });
+    await act(async () => {
+      resolveAuth({ status: "ready", hint: "" });
+    });
+
+    expect(screen.getByTestId("selected-agent").textContent).toBe(before);
+  });
+
   it("contextual New preserves SSH host identity instead of a bare remote path (F5)", () => {
     agentState.selectedConversationId = "conv-ssh";
     agentState.conversations = [
