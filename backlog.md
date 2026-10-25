@@ -47,10 +47,12 @@ committed and pushed; latest installed-source identity remains unverified.
       journalled launch operation so the operation phase and run state agree
       (commit `c3c239d5`); startup now reconciles crash-stranded non-terminal runs
       to `needs_reconciliation` and an existing turn is refused for an unrelated
-      project owner (commit `8f74d19c`). OPEN: the full prepare/start/reconcile
-      bridge (epoch changes still do not continue the provider), immutable
-      execution/SSH authority, one root run per turn, typed image pins and the
-      §4.2 crash-injection matrix. Keep native/SDK strength explicit.
+      project owner (commit `8f74d19c`); the immutable execution authority
+      (local/SSH host + host-key pin) is frozen in the launch and a changed
+      target is refused on an existing turn (commit `9a5b316e`). OPEN: the full
+      prepare/start/reconcile bridge (epoch changes still do not continue the
+      provider), one root run per turn, typed image pins and the §4.2
+      crash-injection matrix. Keep native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -161,6 +163,17 @@ diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
 
 ### Plan execution — desktop completion gate
+
+**A1 immutable execution authority (R1/R3), commit `9a5b316e`.** The frozen
+launch captured route/model/project but not the execution target, so an existing
+turn could extend a conversation against a different SSH host undetected (the
+`project_key` is path-only). `FrozenRuntimeLaunch` now carries an optional
+`FrozenExecutionBinding` (kind + SSH server id, host, verified host-key pin);
+`prepare_session_run` freezes it from the `ExecutionTarget`, and
+`prepare_operation` refuses an existing turn whose binding differs from the
+owner's (compared only when both sides carry a binding, so legacy rows load).
+Schema regenerated. Evidence: full lib suite **1303 passed / 0 failed**,
+`check:tauri-schema` passes, runtime-eval **12/12**, fmt clean.
 
 **A1 startup reconciliation + owner validation (R1/R3), commit `8f74d19c`.**
 `runtime_journal::reconcile_runs_on_startup` marks every non-terminal run
