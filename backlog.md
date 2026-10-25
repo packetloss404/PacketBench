@@ -43,11 +43,12 @@ committed and pushed; latest installed-source identity remains unverified.
       compatible checkpoint offers `typed` (commit `f6cc73ae`); the run manifest
       is recorded in production (commit `8187c8a3`); a finished turn now records
       its terminal run state (epoch-CAS, `finished` event) from all three
-      api_agent spawn sites (commit `63b44dfa`). OPEN: the full
-      prepare/start/cancel/reconcile bridge (epoch changes still do not continue
-      the provider), immutable execution/SSH authority, owner/revision/
-      predecessor validation, one root run per turn and typed image pins. Keep
-      native/SDK strength explicit.
+      api_agent spawn sites (commit `63b44dfa`); a UI Stop now also cancels the
+      journalled launch operation so the operation phase and run state agree
+      (commit `c3c239d5`). OPEN: the full prepare/start/cancel/reconcile bridge
+      (epoch changes still do not continue the provider), immutable execution/SSH
+      authority, owner/revision/predecessor validation, one root run per turn and
+      typed image pins. Keep native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -158,6 +159,16 @@ diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
 
 ### Plan execution — desktop completion gate
+
+**A1 cancel unification (R1/R3), commit `c3c239d5`.** A UI Stop only signalled
+the running turn, leaving the journalled launch operation in its prepared phase
+while the run ended. `runtime_journal::run_operation_id` maps a run to its
+operation; `agent_runtime::cancel_session_run` best-effort cancels the bound
+run's operation (no-op unless the journal is enabled and the session is bound);
+`cancel_api_agent_session` calls it after the turn cancel. Evidence: full lib
+suite **1300 passed / 0 failed**, runtime-eval **12/12**, fmt clean. (This
+commit was briefly swept onto a concurrent agent's branch and moved back to
+`main`.)
 
 **A1 first slice (R1/R3 terminal projection), commit `63b44dfa`.** The journalled
 run stayed `prepared` after a turn ended, so its durable projection was
