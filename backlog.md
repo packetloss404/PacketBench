@@ -49,10 +49,13 @@ committed and pushed; latest installed-source identity remains unverified.
       to `needs_reconciliation` and an existing turn is refused for an unrelated
       project owner (commit `8f74d19c`); the immutable execution authority
       (local/SSH host + host-key pin) is frozen in the launch and a changed
-      target is refused on an existing turn (commit `9a5b316e`). OPEN: the full
-      prepare/start/reconcile bridge (epoch changes still do not continue the
-      provider), one root run per turn, typed image pins and the §4.2
-      crash-injection matrix. Keep native/SDK strength explicit.
+      target is refused on an existing turn (commit `9a5b316e`); a typed resume
+      reconstructs and seeds the provider history from the latest replayable
+      checkpoint and refreshes the session epoch (commit `afb146dd`, review
+      fixes `7c9f5890`). OPEN: one root run per turn (follow-ups reuse the run),
+      typed image pins, the §4.2 crash-injection matrix, and the typed-resume
+      seed needs a live session so it does not fire after a bare restart. Keep
+      native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -163,6 +166,21 @@ diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
 
 ### Plan execution — desktop completion gate
+
+**A1 typed-resume continuation (R1/R3), commits `afb146dd`, `7c9f5890`.** An
+epoch change advanced the journal but never continued the provider.
+`resume_runtime_run` now, on a typed resume, loads the run's latest checkpoint
+(`load_latest_checkpoint`), refuses to reconstruct when an unresolved effect is
+pending or the history is not replayable (`validate_replayable`), seeds the live
+session's provider history (`ApiAgentState::runtime_seed_history`), and refreshes
+the session binding to the resumed epoch. A peer review of the A1 series also
+fixed: `finish_run` mirrors the terminal phase onto the launch operation and
+`cancel_operation` guards its run update (no cancel-after-complete clobber); the
+execution-binding conflict ignores a later-populated TOFU pin. Known limitation:
+the seed requires a live session, so it does not fire after a bare restart
+(where only `semantic` is offered) — that is the unwired frontend resume flow.
+Evidence: full lib suite **1306 passed / 0 failed**, runtime-eval **12/12**,
+fmt clean.
 
 **A1 immutable execution authority (R1/R3), commit `9a5b316e`.** The frozen
 launch captured route/model/project but not the execution target, so an existing
