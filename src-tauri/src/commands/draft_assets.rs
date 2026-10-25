@@ -187,8 +187,29 @@ fn release_in(dir: &Path, attachment_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn gc_in(dir: &Path, keep: &HashSet<String>) -> Result<usize, String> {
-    let mut removed = 0usize;
+/// Unreferenced draft assets younger than this are kept, so a crash in the
+/// window between staging bytes and writing the v2 envelope is not mistaken for
+/// an orphan.
+const GC_GRACE_MS: u128 = 24 * 60 * 60 * 1000;
+/// Aggregate cap on the whole draft-assets directory. Over it, the oldest
+/// unreferenced assets are reclaimed even within the grace window.
+const MAX_TOTAL_BYTES: u64 = 100 * 1024 * 1024;
+
+fn read_created_at_ms(dir: &Path, id: &str) -> Option<u128> {
+    let raw = fs::read_to_string(meta_path(dir, id)).ok()?;
+    let meta: DraftAssetMeta = serde_json::from_str(&raw).ok()?;
+    Some(meta.created_at_ms)
+}
+
+fn remove_asset(dir: &Path, id: &str) -> std::io::Result<()> {
+    let _ = fs::remove_file(bin_path(dir, id));
+    fs::remove_file(meta_path(dir, id))
+}
+
+fn gc_in(dir: &Path, keep: &HashSet<String>, now: u128) -> Result<usize, String> {
+    let mut total_bytes: u64 = 0;
+    // (id, created_at, bytes) for every unreferenced asset.
+    let mut unreferenced: Vec<(String, u128, u64)> = Vec::new();
     for entry in fs::read_dir(dir).map_err(|e| format!("Failed to read draft-assets dir: {e}"))? {
         let entry = entry.map_err(|e| format!("Failed to read a draft-assets entry: {e}"))?;
         let file_name = entry.file_name().to_string_lossy().into_owned();
@@ -196,12 +217,29 @@ fn gc_in(dir: &Path, keep: &HashSet<String>) -> Result<usize, String> {
             continue;
         }
         let id = file_name.trim_end_matches(".bin").to_string();
+        let bytes = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        total_bytes = total_bytes.saturating_add(bytes);
         if validate_attachment_id(&id).is_err() || keep.contains(&id) {
             continue;
         }
-        let _ = fs::remove_file(entry.path());
-        let _ = fs::remove_file(meta_path(dir, &id));
-        removed += 1;
+        let created = read_created_at_ms(dir, &id).unwrap_or(0);
+        unreferenced.push((id, created, bytes));
+    }
+    // Oldest first, so the capacity pass reclaims the least-recently-staged.
+    unreferenced.sort_by_key(|(_, created, _)| *created);
+
+    let mut removed = 0usize;
+    let mut over = total_bytes.saturating_sub(MAX_TOTAL_BYTES);
+    for (id, created, bytes) in &unreferenced {
+        let past_grace = now.saturating_sub(*created) >= GC_GRACE_MS;
+        let needed_for_capacity = over > 0;
+        if !past_grace && !needed_for_capacity {
+            continue;
+        }
+        if remove_asset(dir, id).is_ok() {
+            removed += 1;
+            over = over.saturating_sub(*bytes);
+        }
     }
     Ok(removed)
 }
@@ -245,7 +283,7 @@ pub async fn gc_agent_draft_assets(keep: Vec<String>) -> Result<usize, String> {
     tokio::task::spawn_blocking(move || {
         let keep: HashSet<String> = keep.into_iter().collect();
         let dir = assets_dir()?;
-        gc_in(&dir, &keep)
+        gc_in(&dir, &keep, now_ms())
     })
     .await
     .map_err(|e| format!("Draft asset gc task failed: {e}"))?
@@ -396,10 +434,38 @@ mod tests {
         )
         .unwrap();
 
-        let removed = gc_in(&dir, &HashSet::from([a.attachment_id.clone()])).unwrap();
+        // Far-future `now` so the freshly-created assets are past the grace window.
+        let removed = gc_in(&dir, &HashSet::from([a.attachment_id.clone()]), u128::MAX).unwrap();
         assert_eq!(removed, 1);
         assert!(read_in(&dir, &a.attachment_id).is_ok());
         assert!(read_in(&dir, &b.attachment_id).is_err());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gc_keeps_a_recently_staged_unreferenced_asset_within_grace() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let a = stage_in(
+            &dir,
+            &StageDraftAssetInput {
+                name: "a.png".into(),
+                mime_type: "image/png".into(),
+                data_base64: png_base64(6),
+            },
+        )
+        .unwrap();
+        let created = read_created_at_ms(&dir, &a.attachment_id).unwrap();
+
+        // Unreferenced but just staged: within the grace window -> kept.
+        assert_eq!(gc_in(&dir, &HashSet::new(), created + 1_000).unwrap(), 0);
+        assert!(read_in(&dir, &a.attachment_id).is_ok());
+        // Past the grace window -> reclaimed.
+        assert_eq!(
+            gc_in(&dir, &HashSet::new(), created + GC_GRACE_MS + 1).unwrap(),
+            1
+        );
+        assert!(read_in(&dir, &a.attachment_id).is_err());
         fs::remove_dir_all(&dir).ok();
     }
 }
