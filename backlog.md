@@ -82,10 +82,13 @@ Remote Agents, Packet Control and PacketAgent work retain their current owners.
       target is refused on an existing turn (commit `9a5b316e`); a typed resume
       reconstructs and seeds the provider history from the latest replayable
       checkpoint and refreshes the session epoch (commit `afb146dd`, review
-      fixes `7c9f5890`). OPEN: one root run per turn (follow-ups reuse the run),
-      typed image pins, the §4.2 crash-injection matrix, and the typed-resume
-      seed needs a live session so it does not fire after a bare restart. Keep
-      native/SDK strength explicit.
+      fixes `7c9f5890`); each user turn (initial/follow-up/retry) now prepares
+      its own run linked to its predecessor (commit `ea830f7b`, review fix
+      `d2a4a102`); a conversation's durable run state is exposed and a Resume
+      action is wired into the conversation view (commits `6a75e071`,
+      `b4d7a7a7`, `6a24774d`). OPEN: typed image pins, the §4.2 runner-level
+      crash-injection matrix, and reaching the typed-resume seed after a bare
+      restart (it needs a live session). Keep native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -110,9 +113,11 @@ Remote Agents, Packet Control and PacketAgent work retain their current owners.
       acknowledgment (phase labels still substitute for it).
 - [~] **P1 — F3/F6 authoritative history and attention.** DONE: the exact
       permission/plan/failure attention closes the review overlay so the target
-      is visible, and the return anchor survives (commit `02641d6e`). OPEN: Flight
-      transcript mutation restrictions at store/backend boundaries (UI gating
-      only).
+      is visible, and the return anchor survives (commit `02641d6e`); the Flight
+      transcript-mutation restriction is now enforced at the store boundary
+      (`forkConversation`/`rewindConversation` refuse a Flight-owned
+      conversation), not only in the UI (commit `46e0094d`). OPEN: exact
+      approval routing and reader-return from every entry point.
 - [~] **P2 — V3–V8 final migration.** DONE: one rendered sidebar-width/reset
       owner (`appearanceStore.agentSidebarWidthPx` with legacy migration) and the
       transient terminal dialog now follows the terminal text preference;
@@ -336,6 +341,24 @@ diagnosis, and every build/install/native/Docker acceptance case — no native
 evidence was produced here.
 
 ### Plan execution — desktop completion gate
+
+**A1 one-root-run-per-turn + resume wiring + F3 boundary guard (R1/R3, F3),
+commits `ea830f7b`, `d2a4a102`, `6a75e071`, `b4d7a7a7`, `6a24774d`, `46e0094d`.**
+Follow-up and retry turns now prepare + bind a fresh run linked to their
+predecessor instead of reopening the session's first run (`ea830f7b`); the run's
+project path is derived from the execution target in one place so the owner guard
+cannot trip on a divergent path (`d2a4a102`, peer-review fix). A conversation's
+durable run state is exposed (`latest_run_for_conversation` +
+`get_conversation_runtime` + `getConversationRuntime`), `ResumeInspection` is
+exported to TS, and a `RuntimeRecoveryBanner` offers a Resume action that
+inspects and continues from the run's durable history (`6a75e071`, `b4d7a7a7`,
+`6a24774d`). The F3 Flight transcript-mutation restriction is now enforced at the
+store boundary — `forkConversation`/`rewindConversation` refuse a Flight-owned
+conversation (`46e0094d`). Evidence: full lib suite passed; full frontend suite
+**335 files / 3333 tests**; `check:tauri-schema` passes; tsc/eslint clean.
+Remaining Phase-A: typed image pins (blocked on the typed-image-recovery
+contract), the §4.2 runner-level crash-injection matrix, and the F4 frontend
+operation-handle.
 
 **A1 typed-resume continuation (R1/R3), commits `afb146dd`, `7c9f5890`.** An
 epoch change advanced the journal but never continued the provider.
