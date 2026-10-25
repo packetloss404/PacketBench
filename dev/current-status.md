@@ -116,8 +116,9 @@ rebuild deleted infrastructure from an old diagram.
 Evidence-backed quota disclosure, scoped rendered-app verification and the
 official supported-plan feasibility packet remain open outside the desktop
 completion gate. Native iOS and other expansion follow
-the PWA's evidence. Composer research/model training stays in its separate thread
-and is excluded from this completion plan.
+the PWA's evidence. Composer research/model training now belongs to the separate
+[packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md),
+at `D:/projects/packetbench-model-lab`, and is excluded from this completion plan.
 
 Other documented optional/deferred concepts remain explicitly separate: Packet
 Control evidence capture, paused general Computer Use, delayed Global Undo,

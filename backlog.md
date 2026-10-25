@@ -34,7 +34,7 @@ committed and pushed; latest installed-source identity remains unverified.
    [The canonical plan](dev/remoteagents/README.md) retains its full requirements.
 6. **Later integrations:** quota disclosure, scoped app verification and
    supported-plan feasibility; native iOS follows the PWA. Composer research
-   remains separately owned and excluded.
+   belongs to the separate packetbench-model-lab project and remains excluded.
 
 ### Verified agent-experience residuals
 
@@ -97,7 +97,7 @@ Finding IDs below resolve to detailed source references and acceptance criteria.
 The subsequent [future-team implementation handoff](dev/agent-experience/README.md)
 adds researched contracts, packets, dependencies/file leases, migrations,
 fault tests and dispatch prompts. The target remains incomplete despite the
-committed slices below. Composer research is in a separate thread and
+committed slices below. Composer research is in the separate packetbench-model-lab project and
 excluded from that team. H1 evaluation applies to the existing production runtime.
 
 ### Desktop-completion tranche — October 24 (later), commits `02641d6e`, `ae1d8ee7`, `764cdbd5`, `43c8d45a`
@@ -482,7 +482,9 @@ evidence was produced here.
       adapter resurrection or provider change is performed by the research.
       Keep retired provider IDs retired; use a new explicit identity if approved.
 
-Composer/model-development research is owned by another thread. The packets
+Composer/model-development research now belongs to the separate
+[packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md),
+at `D:/projects/packetbench-model-lab`. Its active plan and progress live there. The packets
 above improve the existing runtime and do not create a separate model or
 competitor harness product.
 

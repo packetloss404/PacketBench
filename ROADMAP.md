@@ -41,7 +41,7 @@ The [October 24 audit](dev/documentation-audit-2026-10-24.md) verifies committed
 - Optional bounded improvements already in backlog only when selected; old product sketches are not an approved implementation queue.
 - Packet Control, delayed Global Undo, Monitor/SSH expansion and dictation benchmarks keep their existing boundaries; general Computer Use remains paused. These do not become prerequisites for desktop completion or silently become required feature expansion.
 
-Composer/model-development research is owned by a separate thread and excluded from this completion plan. Retired ACP providers, the autonomous Flight planner, Syndicate execution-target integration and the Cost Dashboard stay retired.
+Composer/model-development research now belongs to the separate [packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md), at `D:/projects/packetbench-model-lab`, and is excluded from this completion plan. Retired ACP providers, the autonomous Flight planner, Syndicate execution-target integration and the Cost Dashboard stay retired.
 
 ## Baseline and completion rules
 

@@ -12,7 +12,7 @@ The October 24 audit verified application source `922ddcc9` as committed and pus
 
 The journal/capability/context/budget paths remain opt-in; request-budget admission also needs a configured budget. Typed public recovery and uncertain billing handling are incomplete. Do not interpret a committed module, larger test count or the version string as a universal safety or deployment guarantee.
 
-Sugar/Conduit remains the configured source default; its October 15 native acceptance and other provider/account limits are historical evidence in the handoff. This audit made no live provider or account checks. Composer research is separately owned.
+Sugar/Conduit remains the configured source default; its October 15 native acceptance and other provider/account limits are historical evidence in the handoff. This audit made no live provider or account checks. Composer research and model development now belong to the separate [packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md), outside PacketBench's desktop/runtime plan.
 
 ![PacketBench Workspace running Claude Code and PacketCode side by side](./docs/screenshots/workspace-claude-packetcode.png)
 

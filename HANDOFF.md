@@ -14,7 +14,7 @@ Application source `922ddcc928629e116215d899580f7e9370b2603d` is committed on ma
 
 **Next work: finish the existing desktop/runtime and its acceptance.** The owner's later October 24 instruction supersedes the Remote-Agents-first order in documentation commit `4da14806`. Start [the desktop completion plan](dev/agent-experience/08-desktop-completion-before-remote-agents.md) and [team dispatch](dev/agent-experience/05-agent-dispatch-and-acceptance.md). Refresh current source, reuse committed slices, diagnose N1 alongside independent repairs, then complete runtime/flow/readability residuals, existing feature hardening and integration/platform proof. Bind the installed package to source and run the native local/Docker SSH journey before claiming desktop completion. Missing platform/account/hardware evidence remains open; it does not become a pass.
 
-**Remote Agents follows desktop completion/acceptance.** Keep it fail-closed while waiting. Its later team must extend the existing `D:/projects/packetrelay` Rust service and reuse committed foundation work. Later local relay records differ from old Railway/PostgreSQL topology; verify actual infrastructure before rollout. Preserve the resolved product-auth/E2EE direction. Optional expansion and Composer research remain separate from this desktop gate.
+**Remote Agents follows desktop completion/acceptance.** Keep it fail-closed while waiting. Its later team must extend the existing `D:/projects/packetrelay` Rust service and reuse committed foundation work. Later local relay records differ from old Railway/PostgreSQL topology; verify actual infrastructure before rollout. Preserve the resolved product-auth/E2EE direction. Optional expansion remains outside this desktop gate. Composer research/model development now belongs to the separate [packetbench-model-lab project](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md), at `D:/projects/packetbench-model-lab`; its active plan and progress live there.
 
 Agent-experience implementation is substantial but partial: the production runner is extracted and offline evaluation exists; the journal still defaults off, typed public resume is not provider continuation, and request-budget unknown-liability handling needs repair before stronger claims. The audit also records SSH contextual New, failed-start draft handling, approval-over-review, asset GC/pins and scaling/control residuals.
 
@@ -36,7 +36,7 @@ fault tests, native evidence and ready-to-use coordinator/worker prompts.
 The backlog remains the only task/status register. The plan is a proposed
 technical handoff; it does not claim application changes or passing new gates.
 
-**Composer research is moved to another thread and excluded.** Current-runtime
+**Composer research now belongs to the separate packetbench-model-lab project and is excluded.** Current-runtime
 evaluation verifies existing behavior; do not expand it into model training,
 adaptation or a competitor-agent product. Optional supported-plan/browser
 experiments are later bounded packets, not prerequisites for core repairs.
