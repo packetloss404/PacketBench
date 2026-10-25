@@ -1,10 +1,11 @@
 //! R4a run manifests (H6): a versioned, immutable, content-addressed record of
 //! the inputs a run was prepared with.
 //!
-//! Substrate only — nothing in the live agent loop calls this yet; R4b wires the
-//! manifest into prepare/dispatch. The module is pure apart from the small store
-//! helpers at the bottom that read/write the `manifests` table created by
-//! [`super::runtime_journal`].
+//! R4b wires this into the live loop: `run_turn` calls
+//! `RuntimeServices::record_manifest` once per turn, and the Tauri host derives
+//! the identity from the frozen session binding and inserts it here. The module
+//! is pure apart from the small store helpers at the bottom that read/write the
+//! `manifests` table created by [`super::runtime_journal`].
 //!
 //! A manifest is a **record, not a pointer to live settings**. It freezes the
 //! harness hash, tool-policy hash, endpoint/model, repository revision, context

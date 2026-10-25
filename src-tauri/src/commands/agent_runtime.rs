@@ -308,13 +308,20 @@ fn manifest_identity_for(session: &RuntimeSession) -> runtime_manifest::Manifest
         }
         _ => UNRESOLVED_REVISION.to_string(),
     };
+    let compatibility = checkpoint_compatibility(session);
     runtime_manifest::ManifestIdentity {
         parent_request_id: None,
         child_request_id: None,
         endpoint,
         model: session.model.clone(),
         harness_hash: runtime_checkpoint::hash_payload(&session.system_prompt),
-        tool_policy_hash: checkpoint_compatibility(session).tool_policy_hash,
+        // The effective tool authority includes both the tool allowlist and the
+        // frozen MCP trust snapshot; fold both so two runs differing only in MCP
+        // authority do not share a manifest identity.
+        tool_policy_hash: runtime_checkpoint::hash_payload(&format!(
+            "{}|{}",
+            compatibility.tool_policy_hash, compatibility.mcp_hash
+        )),
         repository_revision,
         context_version: format!("ctx-v{}", runtime_context::CONTEXT_SCHEMA_VERSION),
     }
@@ -628,8 +635,9 @@ impl RuntimeServices for TauriRuntimeServices {
 
     /// R4/H6: freeze the run's identity inputs into a durable manifest. No-op
     /// unless the journal is enabled and the session is bound to a prepared run.
-    /// Fail-closed: a manifest write failure fails the turn, matching the
-    /// checkpoint-boundary policy.
+    /// A write failure fails the turn (matching the checkpoint-boundary policy);
+    /// an invalid identity is skipped with a warning rather than failing the
+    /// turn, since it is a configuration problem that surfaces at dispatch too.
     async fn record_manifest(&self, session_id: &str) -> Result<(), String> {
         if !journal::is_enabled() {
             return Ok(());
@@ -640,10 +648,22 @@ impl RuntimeServices for TauriRuntimeServices {
         if self.state.runtime_run_binding(session_id).await.is_none() {
             return Ok(());
         }
-        let manifest =
-            runtime_manifest::RunManifest::new(manifest_identity_for(&session), now_ms())
-                .map_err(String::from)?;
+        // Identity derivation shells out to git for a local checkout, so it runs
+        // on the blocking worker alongside the insert (never on the async
+        // runtime).
+        let now = now_ms();
         on_blocking(move || {
+            let manifest =
+                match runtime_manifest::RunManifest::new(manifest_identity_for(&session), now) {
+                    Ok(manifest) => manifest,
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "Skipping run manifest: identity is invalid"
+                        );
+                        return Ok(());
+                    }
+                };
             journal::with_journal(|connection| {
                 runtime_manifest::insert_manifest(connection, &manifest).map_err(String::from)
             })
@@ -1130,12 +1150,10 @@ mod tests {
         });
         let identity = manifest_identity_for(&session);
 
-        // Endpoint is the provider's resolved base URL, not the bare id.
-        assert!(
-            identity.endpoint.contains("anthropic"),
-            "endpoint was {}",
-            identity.endpoint
-        );
+        // "anthropic" is a built-in (non-configurable) provider, so the endpoint
+        // falls back to the provider id. A named provider (sugar, google, ...)
+        // resolves to its configured/default base URL instead.
+        assert_eq!(identity.endpoint, "anthropic");
         assert_eq!(identity.model, "claude-sonnet-4-5");
         assert!(identity.harness_hash.starts_with("sha256:"));
         assert!(identity.tool_policy_hash.starts_with("sha256:"));
