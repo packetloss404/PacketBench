@@ -327,4 +327,20 @@ describe("agentDraftStore", () => {
 
     expect(tauri.gcAgentDraftAssets).toHaveBeenCalledWith(["asset-keep"]);
   });
+
+  it("skips GC entirely when a newer envelope schema owns the assets", async () => {
+    localStorage.setItem(
+      V2_STORAGE_KEY,
+      JSON.stringify({ version: 3, drafts: {}, attachments: {}, updatedAt: 1 }),
+    );
+    const tauri = await import("@/lib/tauri");
+    vi.mocked(tauri.gcAgentDraftAssets).mockClear();
+
+    const removed = await gcOrphanDraftAssets();
+
+    // Parsing a v3 envelope with the v2 reader yields an empty keep set; running
+    // GC would delete every image that envelope still references. Skip instead.
+    expect(removed).toBe(0);
+    expect(tauri.gcAgentDraftAssets).not.toHaveBeenCalled();
+  });
 });

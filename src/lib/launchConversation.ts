@@ -68,6 +68,21 @@ export interface LaunchConversationParams {
 export type LaunchPhase = "preparing" | "starting" | "running" | "failed";
 
 /**
+ * F1/F4: `createApiConversation` persists the conversation record even when the
+ * backend rejects the start — it marks that record `failed` (see `failTurn`)
+ * and still resolves with its id. A caller that treated any resolved id as a
+ * successful launch would show "Running…" and clear the user's draft for a
+ * turn that never started. Detect the failed/absent record so the launcher can
+ * report the failure and keep the draft and staged attachments for a retry.
+ */
+function backendStartFailed(conversationId: string): boolean {
+  const conversation = useAgentTaskStore
+    .getState()
+    .conversations.find((c) => c.id === conversationId);
+  return !conversation || conversation.status === "failed";
+}
+
+/**
  * Launch an API conversation from the Agents launcher. Returns `false` for the
  * synchronous guard failures (empty text, no repo, unresolved SSH target), and
  * a promise settling `true`/`false` for a dispatched launch so callers can keep
@@ -207,6 +222,17 @@ export function launchConversation({
           approveWrites: launchApproveWrites,
           selectOnCreate: false,
         });
+        // F4: a backend start rejection resolves with the conversation id but
+        // leaves the record `failed`. Report the failure and retain the draft
+        // instead of claiming a turn is running.
+        if (backendStartFailed(convId)) {
+          setLaunchError(
+            "The agent session failed to start. Your draft and attachments are " +
+              "preserved — retry, or check the provider configuration.",
+          );
+          onPhase?.("failed");
+          return false;
+        }
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
@@ -295,6 +321,17 @@ export function launchConversation({
             ),
           }));
           requestConversationSave(convId);
+        }
+        // F4: a backend start rejection resolves with the conversation id but
+        // leaves the record `failed`. Report the failure and retain the draft
+        // instead of claiming a turn is running.
+        if (backendStartFailed(convId)) {
+          setLaunchError(
+            "The agent session failed to start. Your draft and attachments are " +
+              "preserved — retry, or check the provider configuration.",
+          );
+          onPhase?.("failed");
+          return false;
         }
         useProjectHistoryStore.getState().recordOpen(selectedRepo);
         onPhase?.("starting");

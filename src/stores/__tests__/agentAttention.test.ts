@@ -82,6 +82,24 @@ describe("openAgentAttention — exact attention routing (F6)", () => {
     });
   });
 
+  it("closes an open review so the exact permission card is visible (F6)", () => {
+    // The user is reviewing a diff; the review overlay (z-20) covers the
+    // transcript where the approval card lives.
+    useReviewStore.getState().openForConversation("conv-1", "src/other.ts");
+    expect(useReviewStore.getState().open).toBe(true);
+
+    const result = openAgentAttention({
+      conversationId: "conv-1",
+      kind: "permission",
+      requestId: "perm-1",
+    });
+
+    expect(result).toEqual({ opened: true });
+    expect(useReviewStore.getState().open).toBe(false);
+    // The saved return anchor survives the close, so review is still reachable.
+    expect(useReviewStore.getState().returnAnchor).toMatchObject({ conversationId: "conv-1" });
+  });
+
   it("returns missing_conversation for a stale id without arming anything", () => {
     const result = openAgentAttention({
       conversationId: "does-not-exist",

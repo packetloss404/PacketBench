@@ -6,6 +6,13 @@ const agentState = vi.hoisted(() => ({
   selectedRepo: "D:\\projects\\PacketBench" as string | null,
   selectedConversationId: null as string | null,
   selectConversation: vi.fn(),
+  setSelectedRepo: vi.fn(),
+  conversations: [] as Array<{
+    id: string;
+    projectPath: string;
+    sshTarget?: { id: string; name: string; host: string; user: string; remotePath: string };
+    worktree?: { basePath: string };
+  }>,
 }));
 const launchConversation = vi.hoisted(() => vi.fn((_params: unknown) => true));
 const setComposerMode = vi.hoisted(() => vi.fn());
@@ -13,7 +20,10 @@ const setComposerMode = vi.hoisted(() => vi.fn());
 vi.mock("@/stores/agentTaskStore", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/stores/agentTaskStore")>()),
   apiAgentProvider: (agent: AgentCli) => agent,
-  useAgentTaskStore: (selector: (state: typeof agentState) => unknown) => selector(agentState),
+  useAgentTaskStore: Object.assign(
+    (selector: (state: typeof agentState) => unknown) => selector(agentState),
+    { getState: () => agentState },
+  ),
 }));
 
 vi.mock("@/stores/agentSettingsStore", () => ({
@@ -82,6 +92,7 @@ vi.mock("@/components/agents/composer/Composer", () => ({
 import { AgentsView } from "@/components/views/AgentsView";
 import { getProviderAuthStatus } from "@/lib/tauri";
 import { getDefaultModel } from "@/lib/api-models";
+import { makeSshUri } from "@/lib/ssh-uri";
 
 describe("AgentsView", () => {
   beforeEach(() => {
@@ -89,6 +100,7 @@ describe("AgentsView", () => {
     vi.mocked(getProviderAuthStatus).mockResolvedValue({ status: "login_required", hint: "" });
     agentState.selectedRepo = "D:\\projects\\PacketBench";
     agentState.selectedConversationId = null;
+    agentState.conversations = [];
   });
 
   it("renders the same-window launcher when no conversation is selected", () => {
@@ -189,6 +201,45 @@ describe("AgentsView", () => {
     });
 
     expect(screen.getByTestId("selected-agent")).toHaveTextContent("api-openai");
+  });
+
+  it("contextual New preserves SSH host identity instead of a bare remote path (F5)", () => {
+    agentState.selectedConversationId = "conv-ssh";
+    agentState.conversations = [
+      {
+        id: "conv-ssh",
+        projectPath: "/srv/app",
+        sshTarget: {
+          id: "srv-1",
+          name: "Box",
+          host: "example.com",
+          user: "ian",
+          remotePath: "/srv/app",
+        },
+      },
+    ];
+
+    render(<AgentsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Sidebar new agent" }));
+
+    expect(agentState.setSelectedRepo).toHaveBeenCalledWith(makeSshUri("srv-1", "/srv/app"));
+    expect(agentState.selectConversation).toHaveBeenCalledWith(null);
+  });
+
+  it("contextual New resolves a worktree conversation to its base checkout (F5)", () => {
+    agentState.selectedConversationId = "conv-wt";
+    agentState.conversations = [
+      {
+        id: "conv-wt",
+        projectPath: "D:/projects/example/.pkt-worktrees/conv-wt",
+        worktree: { basePath: "D:/projects/example" },
+      },
+    ];
+
+    render(<AgentsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Sidebar new agent" }));
+
+    expect(agentState.setSelectedRepo).toHaveBeenCalledWith("D:/projects/example");
   });
 
   it("renders the selected conversation and inspector in the main window", () => {

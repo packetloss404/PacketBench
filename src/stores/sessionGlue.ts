@@ -211,6 +211,13 @@ export function openAgentAttention(target: AgentAttentionTarget): AgentAttention
   // Edit attention opens the canonical review at its exact pending edit.
   if (target.kind === "edit") {
     review.openForConversation(target.conversationId, target.filePath);
+  } else {
+    // F6: permission/plan/failure targets live inline in the transcript. The
+    // canonical review overlay (z-20) covers that area, so leaving it open
+    // would hide the exact card we just armed. Close it so the requested
+    // blocker is actually visible. The saved return anchor (above) survives
+    // this, so "Return to review" still restores the user's place.
+    review.close();
   }
 
   store.selectConversation(target.conversationId);

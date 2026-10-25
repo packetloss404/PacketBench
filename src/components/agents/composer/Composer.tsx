@@ -850,8 +850,9 @@ export function Composer(props: ComposerProps) {
     <Tooltip content={voice.isListening ? "Stop recording" : "Voice input"}>
       <button
         type="button"
+        aria-label={voice.isListening ? "Stop voice input" : "Voice input"}
         onClick={voice.isListening ? voice.stopListening : voice.startListening}
-        className={`shrink-0 rounded-md p-1 transition-colors motion-reduce:transition-none ${
+        className={`grid h-8 w-8 shrink-0 place-items-center rounded-md transition-colors motion-reduce:transition-none ${
           voice.isListening
             ? "animate-pulse bg-accent-green/20 text-accent-green motion-reduce:animate-none"
             : "text-text-muted hover:bg-bg-hover hover:text-text-primary"
@@ -916,9 +917,10 @@ export function Composer(props: ComposerProps) {
                 <Tooltip content={isStopping ? "Waiting for Stop acknowledgement" : "Stop turn"}>
                   <button
                     type="button"
+                    aria-label={isStopping ? "Stopping turn" : "Stop turn"}
                     onClick={handleStop}
                     disabled={isStopping}
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-red/20 text-accent-red transition-colors hover:bg-accent-red/30 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none"
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent-red/20 text-accent-red transition-colors hover:bg-accent-red/30 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none"
                   >
                     <Square
                       size={12}
@@ -989,7 +991,7 @@ export function Composer(props: ComposerProps) {
                     onClick={submitChat}
                     disabled={!input.trim() || (isActive && !caps.canCancelTurn)}
                     aria-label="Send"
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-accent-green text-bg-primary transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30 motion-reduce:transition-none"
+                    className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent-green text-bg-primary transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-30 motion-reduce:transition-none"
                   >
                     <ArrowUp size={14} />
                   </button>

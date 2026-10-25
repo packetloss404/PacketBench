@@ -6,6 +6,7 @@ import { useProfileStore } from "@/stores/profileStore";
 import { launchConversation, type LaunchPhase } from "@/lib/launchConversation";
 import { API_PROVIDERS, DEFAULT_API_AGENT, getDefaultModel } from "@/lib/api-models";
 import { getProviderAuthStatus, type ImageAttachment } from "@/lib/tauri";
+import { makeSshUri } from "@/lib/ssh-uri";
 import { AgentSidebar } from "@/components/agents/AgentSidebar";
 import { AgentChatPane } from "@/components/agents/AgentChatPane";
 import { AgentInspectorPane } from "@/components/agents/AgentInspectorPane";
@@ -136,7 +137,15 @@ export function AgentsView({ pinnedAgent, pinnedModel }: AgentsViewProps = {}) {
       : undefined;
     if (current) {
       const base = current.worktree?.basePath ?? current.projectPath;
-      useAgentTaskStore.getState().setSelectedRepo(base);
+      // F5: a remote conversation's `projectPath` is the plain remote path, not
+      // a local directory. Reconstructing the canonical `ssh://<serverId>?path=`
+      // URI preserves the host identity, so New targets the same remote project
+      // instead of silently launching locally against a path that only exists
+      // on the remote host.
+      const repoRef = current.sshTarget
+        ? makeSshUri(current.sshTarget.id, current.sshTarget.remotePath || base)
+        : base;
+      useAgentTaskStore.getState().setSelectedRepo(repoRef);
     }
     selectConversation(null);
   }, [selectConversation, selectedConversationId]);

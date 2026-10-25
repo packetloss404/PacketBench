@@ -193,6 +193,14 @@ function persist(state: {
 export async function gcOrphanDraftAssets(): Promise<number> {
   try {
     const envelope = loadFromStorage<DraftsV2Envelope | null>(V2_STORAGE_KEY, null);
+    // F2: a newer/unknown envelope schema owns its assets under retention rules
+    // this build does not know. Parsing it with the v2 reader yields an empty
+    // keep set, so running GC would delete every image that envelope still
+    // references. Never reclaim bytes we cannot attribute — skip the pass and
+    // leave the orphan cleanup to the build that owns the schema.
+    if (envelope && typeof envelope.version === "number" && envelope.version !== 2) {
+      return 0;
+    }
     const keep: string[] = [];
     if (envelope && envelope.version === 2) {
       for (const refs of Object.values(envelope.attachments ?? {})) {

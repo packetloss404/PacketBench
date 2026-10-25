@@ -25,8 +25,10 @@ export function ActionButtons({
     <div className="flex items-center gap-1">
       {isSupported && (
         <button
+          type="button"
+          aria-label={isListening ? "Stop voice input" : "Voice input"}
           onClick={isListening ? stopListening : startListening}
-          className={`p-1.5 rounded-full transition-colors ${
+          className={`grid h-8 w-8 place-items-center rounded-full transition-colors ${
             isListening
               ? "bg-accent-green/20 text-accent-green animate-pulse"
               : "text-text-muted hover:text-text-primary"

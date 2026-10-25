@@ -555,6 +555,51 @@ describe("launchConversation — real memory-injection seam", () => {
   });
 });
 
+describe("launchConversation — failed backend start (F4)", () => {
+  it("reports failure and retains the draft when the backend start rejects", async () => {
+    startApiAgentSessionMock.mockRejectedValue(new Error("provider exploded"));
+    const setLaunchError = vi.fn();
+    const phases: string[] = [];
+
+    const { useAgentDraftStore, LAUNCH_DRAFT_KEY } = await import("@/stores/agentDraftStore");
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const { launchConversation } = await import("@/lib/launchConversation");
+
+    useAgentDraftStore.getState().setDraft(LAUNCH_DRAFT_KEY, "keep this prompt");
+
+    const launched = await launchConversation(
+      baseParams({ setLaunchError, onPhase: (phase) => phases.push(phase) }),
+    );
+
+    expect(launched).toBe(false);
+    expect(phases[phases.length - 1]).toBe("failed");
+    // A rejected start must never be reported as a running turn.
+    expect(phases).not.toContain("running");
+
+    const message = setLaunchError.mock.calls
+      .map(([arg]) => arg)
+      .find((arg): arg is string => typeof arg === "string" && arg.includes("failed to start"));
+    expect(message).toBeDefined();
+
+    // The failed conversation record still exists so the failure is inspectable…
+    expect(useAgentTaskStore.getState().conversations[0]?.status).toBe("failed");
+    // …but the user's draft is NOT cleared — it is theirs to retry.
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_DRAFT_KEY]).toBe("keep this prompt");
+  });
+
+  it("clears the draft only once a start actually succeeds", async () => {
+    const { useAgentDraftStore, LAUNCH_DRAFT_KEY } = await import("@/stores/agentDraftStore");
+    const { launchConversation } = await import("@/lib/launchConversation");
+
+    useAgentDraftStore.getState().setDraft(LAUNCH_DRAFT_KEY, "send this");
+
+    const launched = await launchConversation(baseParams());
+
+    expect(launched).toBe(true);
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_DRAFT_KEY]).toBeUndefined();
+  });
+});
+
 describe("launchConversation — synchronous guards (behavior parity)", () => {
   it("returns false for empty text and dispatches nothing", async () => {
     const { launchConversation } = await import("@/lib/launchConversation");
