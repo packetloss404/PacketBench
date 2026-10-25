@@ -1,11 +1,23 @@
 # Current product and delivery status
 
 The [October 25 advertised-feature audit](./advertised-feature-acceptance-2026-10-25.md)
-adds current browser/source validation and an explicit feature inventory. Its
-native smoke uses the existing installed payload, not a newly source-bound
-package. The October 24 facts below retain their original snapshot; subsequent
-runtime/flow commits and remaining work are recorded in [backlog](../backlog.md)
-and [HANDOFF](../HANDOFF.md).
+records an 82-group feature inventory and isolated validation from audit commit
+`2dd33b98` plus a test-timeout/documentation correction. The latest result for
+all twelve local gates is green: 3,296 Vitest tests, 24 Chromium cases, 1,300 Rust
+library tests, 12 offline evaluation cases, schema and the remaining checks.
+The original scheduler had one cold-import timeout; its complete Vitest rerun
+passed with all assertions intact. A disposable Linux SSH matrix also passed
+15/15 native sidecar/PTY cases. Exact logs, source identity, ignored tests and
+live-provider skips are in the report. The earlier shared-checkout gate run was
+unstable because another task edited Rust source and is not final evidence.
+
+The owner requested **verified installers without reinstalling**. A clean
+source-bound NSIS/MSI build and noninstalling payload verification remain next;
+the installed application stays untouched. Its limited native navigation smoke
+uses the existing payload. Real provider/account, installed whole-flow,
+hardware/platform and external-integration cases remain open. The October 24
+facts below retain their original snapshot; subsequent runtime/flow commits and
+remaining work are recorded in [backlog](../backlog.md) and [HANDOFF](../HANDOFF.md).
 
 Reconciled October 24, 2026 (America/Chicago). Source audited:
 `922ddcc928629e116215d899580f7e9370b2603d` on `main`.

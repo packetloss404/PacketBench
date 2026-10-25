@@ -156,10 +156,93 @@ the related individual advertised operations so omissions stay visible.
 ## Execution record for this pass
 
 The inventory contains 82 grouped rows covering the README's related advertised
-operations. Remaining final local-gate and packaging outcomes are being gathered;
-the rows above by themselves make no fresh pass claim.
+operations. The latest isolated local gates and disposable Linux SSH matrix pass
+within their recorded scope. Installer build/payload verification remains
+pending; neither these tests nor the inventory establish every native/live
+feature row.
 
-Completed observations so far:
+### Source isolation and attribution
+
+The early checks below ran in the shared `D:/projects/PacketBench` checkout.
+During its full gate scheduler, another task added 50 uncommitted lines across
+`commands/agent_runtime.rs`, `commands/api_agent.rs` and
+`core/runtime_journal.rs`. Those edits were preserved. Because that source tree
+changed during the run, its full-scheduler output is exploratory evidence and
+cannot be attributed to the final installer snapshot, regardless of individual
+exit statuses. A sidecar run scheduled alone also does not mean its source
+checkout was isolated.
+
+This team's 26 files were committed separately as
+`2dd33b983fe0aa26e389c4656a05a993dda35ef9`, based on committed runtime source
+through `d41a0a51`. Final validation and packaging move to the managed checkout
+`C:/Users/ianwalmsley/.codex/worktrees/feature-acceptance/PacketBench`, on branch
+`codex/verified-feature-installers`, created at that exact commit. The other
+task's 50 unfinished Rust lines are excluded from this snapshot and remain
+untouched in the original checkout. The isolated validation below covers that
+snapshot plus the documented test-timeout correction and pending evidence
+documentation. The next clean commit and installer manifest will identify the
+build source. The existing installed application remains untouched.
+
+### Final isolated local validation
+
+The isolated full runner executed all twelve gates; its original
+`test-results/final-gates.log` records eleven passes and one cold-module-import
+timeout in Vitest (3,295 passed, one failed). The migration test had a hardcoded
+15-second timeout despite the project's configured 20 seconds. Only that
+per-test override was removed, preserving all assertions. The focused migration
+suite then passed 25/25 in 4.74 seconds, followed by a **complete** Vitest rerun:
+331 files and 3,296 tests passed in 115.3 seconds, recorded in
+`test-results/final-vitest.log`.
+
+The latest result for each of the twelve local gates is therefore green. This
+is the original scheduler's eleven passes plus the successful full Vitest rerun,
+not a claim that the original scheduler log contains twelve passes. Production
+source was unchanged by the timeout correction.
+
+| Gate                 | Latest isolated result                 | Scope or limitation                                                                                                                |
+| -------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `format:check`       | PASS                                   | Repository formatting baseline.                                                                                                    |
+| `lint:src`           | PASS                                   | Zero errors, nine existing warnings.                                                                                               |
+| `typecheck`          | PASS                                   | Frontend TypeScript.                                                                                                               |
+| `test`               | PASS — 331 files / 3,296 tests         | Complete rerun after removing the isolated timeout override; no assertions removed.                                                |
+| `build`              | PASS                                   | TypeScript and production Vite bundle.                                                                                             |
+| `remoteagents:check` | PASS — 25 shared tests and both builds | Shared protocol/PWA shell, not a working hosted Remote Agents product.                                                             |
+| `e2e`                | PASS — 24/24, 128.9 seconds            | Chromium UI with simulated native bridge; includes the six new journeys.                                                           |
+| `sidecar:check`      | PASS — 35.8 seconds                    | Full clean-build/protocol/registry/trust/config/edit suite; live Anthropic multi-turn explicitly SKIPPED because opt-in was unset. |
+| `rust:check`         | PASS                                   | Native backend compilation.                                                                                                        |
+| `rust:test`          | PASS — 1,300 library tests             | Nine library tests and two integration tests remain ignored; the schema test passed separately.                                    |
+| `runtime:eval`       | PASS — 12/12                           | Production runner with scripted fake services; offline only.                                                                       |
+| `check:tauri-schema` | PASS — one schema test                 | Exported Rust/TypeScript contract parity.                                                                                          |
+
+The isolated noninstalling installer verifier's ten unsafe-path/helper
+regressions also passed. These tests do not validate fresh installer artifacts;
+the clean build and subsequent NSIS/MSI extraction/hash/packaged-echo run remain
+the next operation.
+
+### Final disposable Linux SSH validation
+
+The isolated checkout's live disposable SSH run passed **15/15 cases** in
+195.1 seconds: nine native sidecar trust/handshake/host-key/reconnect cases and
+six native Workspace PTY cases. The latter cover interactive Unicode/resize,
+exit code 7, a 10,000-line/2,220,674-byte output burst with continued input,
+wrong-pin denial, disconnect and reconnect; output drains before completion.
+This uses the production SSH argument builder, binary resolver and PTY
+decoder/batch dispatcher against a real Linux OpenSSH container.
+
+Evidence:
+`test-results/acceptance/live-ssh/2026-10-25T17-33-35-241Z/report.json`.
+It records HEAD `2dd33b983fe0aa26e389c4656a05a993dda35ef9`, dirty true for the
+pending documentation/test correction, source SHA-256
+`0a7000a7b5c5774345c1d9e759ca5af25f55e9a313959408d14e0229226155a4`,
+and the sidecar/test-binary/image identities. The run reported no source/dist
+drift, and its container/image were cleaned up.
+
+The remote process is a harmless interactive Node fixture. No provider CLI,
+paid API, installed Workspace GUI, WAN server or Windows SSH host was tested.
+This closes the named disposable transport cases, not the separate live-model,
+provider/SSH parity and native whole-flow acceptance rows.
+
+### Early observations from the shared checkout
 
 - Four new full-app Chromium journeys passed. The two
   [issue lifecycle cases](../e2e/issue-lifecycle.spec.ts) exercise creation,
@@ -180,7 +263,8 @@ Completed observations so far:
 - The specialist's `remoteagents:check` passed: 25/25 shared-envelope tests,
   shared TypeScript build and PWA TypeScript/Vite build. This is foundation and
   protocol proof, not a working Remote Agents service or phone-control journey.
-- The complete isolated `sidecar:check` passed, including the new clean-build
+- The complete `sidecar:check`, scheduled alone in the shared checkout, passed,
+  including the new clean-build
   regression, full two-turn Unicode echo, strict SDK registration/missing-key
   checks, protocol controls/order/cancellation, OpenAI gating, edit correlation,
   MCP config/trust/enforcement/remote sourcing and Anthropic API-key isolation.

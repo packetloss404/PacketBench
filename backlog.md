@@ -42,11 +42,21 @@ committed and pushed; latest installed-source identity remains unverified.
       team audit maps the README's advertised operations to source/browser
       coverage and named native/live prerequisites in
       [the acceptance inventory](dev/advertised-feature-acceptance-2026-10-25.md).
+      DONE: the latest isolated result for all twelve local gates passes
+      (3,296 Vitest, 24 Chromium, 1,300 Rust library tests, 12 offline evaluator
+      cases); a complete Vitest rerun closes the initial cold-import timeout
+      without removing assertions. Disposable Linux SSH passed 15/15 native
+      sidecar/PTY cases. The report preserves exact source/evidence identities;
+      the concurrent-source shared-checkout run is exploratory only.
       Browser journeys use a simulated Tauri bridge; sidecar SDK doubles,
-      shared-protocol/PWA builds and old installed navigation do not close live
-      provider/SSH/PTY/keyring/hardware/host-integration acceptance. Keep the
-      source-bound build/install and full named integration matrix open until
+      shared-protocol/PWA builds, fixture SSH and old installed navigation do
+      not close real provider, production-host SSH, installed GUI/PTY, keyring,
+      hardware or host-integration acceptance. Keep the
+      clean source-bound installer build/payload verification and full named
+      integration matrix open until
       exercised; do not reinterpret absent hosted CI as a successful CI run.
+      The owner requested verified installers without reinstalling; installed
+      native acceptance remains a separate open matrix.
 
 - [~] **P1 — R1/R3 production transaction and recovery.** DONE: the public
       resume path now derives and verifies the live policy context, so a

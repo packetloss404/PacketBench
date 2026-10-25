@@ -31,6 +31,6 @@ The sidecar wire version/minimum floor remains 12. Runtime admission/effect/chec
 
 ## Evaluation
 
-The feature-gated offline runtime-eval lane uses the production runner with FakeServices and scripted fixtures. It avoids real providers/keyrings/ambient MCP/projects; live mode refuses. The archived October 25UTC manifest records 12/12 at dirty `22d1cbd6`, not fresh clean `922ddcc9` or live-model proof. Repeated held-out tasks, real executor isolation, native/SSH/SDK evaluation and remaining fault cases are open. Composer research is excluded.
+The feature-gated offline runtime-eval lane uses the production runner with FakeServices and scripted fixtures. It avoids real providers/keyrings/ambient MCP/projects; live mode refuses. The October 25 isolated local gates passed all 12 cases; [the feature acceptance report](../advertised-feature-acceptance-2026-10-25.md) identifies the source snapshot and preserves the older shared-checkout evidence separately. This is offline runner evidence. Repeated held-out tasks, real executor isolation, live-model/SDK evaluation and remaining fault cases are open. The separately passing disposable SSH transport matrix does not evaluate a provider. Composer research is excluded.
 
-No product tests, live provider calls, builds or installations were performed to write this declaration.
+Current test outcomes and packaging status are recorded in the feature acceptance report. No live-provider, installed whole-flow or deployment guarantee follows from this source declaration.
