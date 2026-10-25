@@ -1,17 +1,30 @@
 # Should PacketBench develop a Composer-like coding agent?
 
-Research date: **October 19, 2026, America/Chicago**; sources retrieved through
+Initial research date: **October 19, 2026, America/Chicago**; sources retrieved through
 October 20 UTC. Repository inspected:
 `e5d31084e5d2c4861723dca4d4c2931a64b0f732`. This is the same HEAD as the earlier
 harness review, confirmed against the current checkout rather than assumed.
 Existing working-tree changes were documentation, including the earlier review;
 no application-source changes were present at the inspection checkpoint.
 
-**Status: research and proposed experiments only.** No adapter, model training,
-infrastructure, paid inference, authentication change, application build or
-installation is authorized by this document. Only this report and its research
-index entry are outputs of this task. Proposed implementation would require a
-separate request; this document is not another task register.
+**Active plan moved October 24, 2026.** The canonical experiment plan is now
+[packetbench-model-lab/docs/PLAN.md](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md)
+in the owner's private model-lab repository. Local unpaid preparation is approved
+there; GPU rental, paid API calls, training and deployment remain unapproved.
+This document retains the historical research and recommendations. It is no
+longer the active implementation plan or progress ledger.
+
+The exact October 24 proposal and follow-up cost/preparation discussion were
+transferred to the lab's
+[frozen starting proposal](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/history/starting-proposal-2026-10-24.md).
+The initial source identity above describes the October 19 inspection. The lab
+records its later PacketBench source pin and current preparation status.
+
+**Original research scope (historical):** this investigation originally authorized
+research/documentation only. The owner subsequently authorized creating the
+private lab and beginning local preparation. That later authority does not
+authorize paid inference, cloud resources, model training, authentication changes
+or a PacketBench app build/install. GUI and general Agents changes remain separate.
 
 Follow-up clarification: the owner is willing to consider post-training Kimi,
 DeepSeek or another suitable open checkpoint for the **main coding agent**.
@@ -19,9 +32,8 @@ DeepSeek or another suitable open checkpoint for the **main coding agent**.
 assesses that route explicitly. This is broader research intent, not authorization
 to train, provision resources or incur charges.
 The owner subsequently selected **rented GPU servers with controlled operating
-cost and an initial cash budget below $1,000, excluding owner time**. The current
-model shortlist, training evidence and proposed $950 experiment are in
-[Section 10](#10-budgeted-model-selection-beyond-deepseek).
+cost and an initial cash budget below $1,000, excluding owner time**. The current plan is maintained in the private model lab linked above;
+Section 10 preserves the earlier expanded screen and budget rationale.
 
 ## Recommendation
 
@@ -29,7 +41,7 @@ model shortlist, training evidence and proposed $950 experiment are in
 in bounded stages.** PacketBench already owns most of the required harness. Make
 that production executor measurable, compare the unmodified candidate, and then
 test whether adaptation improves verified work. The current first candidate is
-**Qwen3.8-27B**, with GLM-4.7-Flash as a conditional training backup; see Section 10
+**Qwen3.8-27B**, with GLM-4.7-Flash as a conditional training backup; see Section 11
 for the evidence and budget. A new agent engine is not necessary for this study.
 
 The owner's clarified target includes an owned main coding model, not only a
@@ -505,12 +517,12 @@ Specific current constraints:
   [Anthropic terms](https://www.anthropic.com/legal/commercial-terms),
   [Gemini terms](https://ai.google.dev/gemini-api/terms)
 - **Base licensing:** Kimi K2.5's modified MIT adds prominent model attribution
-  for products above 100M MAU or $20M monthly revenue. Qwen3.8's actual license
+  for products above 100M MAU or $20M monthly revenue. Qwen3.8-2.4T-A95B's license
   has separate commercial terms, including aggregate licensee-and-affiliate
   revenue exceeding $50M during any consecutive 12 months for
   Model-as-a-Service/AI Work Assistant businesses and
-  large-product attribution conditions. Small Apache Qwen3.6 candidates avoid
-  those particular custom triggers, while retaining Apache notice obligations.
+  large-product attribution conditions. Those terms do not describe the
+  Apache-2.0 Qwen3.8-27B selected in Sections 10–12; preserve its own notices.
   [Kimi license](https://huggingface.co/moonshotai/Kimi-K2.5/blob/main/LICENSE),
   [Qwen3.8 license](https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B/blob/main/LICENSE)
 
@@ -639,8 +651,8 @@ experiment because product access, terms, prices and model releases can change.
 Documentation validation is limited to formatting, relative-link resolution,
 source-reference spot checks and whitespace checks. Application gates, live
 providers, training, infrastructure and installation are outside this research.
-The report passes the installed Prettier formatter; all 21 unique relative
-targets resolve; `git diff --check` passes. Read-only research reviewers checked
+The report passes the installed Prettier formatter; relative local-file links
+resolve; `git diff --check` passes. Read-only research reviewers checked
 the Cursor and adaptation/evaluation claims, with precision corrections applied.
 
 ## 9. Follow-up: owned main model through open-weight post-training
@@ -852,11 +864,13 @@ Qwen RL route disables fast inference. Do not price coding RL from that button.
 GLM has useful recorded output: an Unsloth notebook shows an A100 80 GB at 2k
 sequence length, rank 8, roughly 65.738 GiB reserved, and 60 steps in about 1,052
 seconds. That is math-style conversational training, not a coding-quality or
-4–8k capacity result. The Axolotl GLM guide correctly names MLA projections, but
-its current QLoRA YAML lists ordinary Q/K/V module names that do not match this
-architecture; copying it can silently narrow adapter coverage. Enumerate matched
-modules and trainable parameter counts before spending on a sweep. Pin one
-coherent framework/recipe revision; source cells and saved outputs can differ.
+4–8k capacity result. **October 24 correction:** the earlier warning that the
+current Axolotl recipe used the wrong Q/K/V targets was based on stale example
+content. Version 0.21.0, released October 16, already included the MLA-target
+correction and unsupported-kernel checks. Use the corrected recipe and enumerate
+matched modules/trainable parameters before a sweep. Source cells and saved
+outputs can still differ; pin one coherent framework/recipe revision.
+[Dated fix record](https://github.com/axolotl-ai-cloud/axolotl/releases/tag/v0.21.0)
 [Executed GLM notebook](<https://raw.githubusercontent.com/unslothai/notebooks/main/nb/GLM_Flash_A100(80GB).ipynb>),
 [GLM training guide](https://docs.axolotl.ai/docs/models/glm47-flash.html),
 [current example](https://raw.githubusercontent.com/axolotl-ai-cloud/axolotl/main/examples/glm47-flash/qlora.yaml)
@@ -963,3 +977,27 @@ as needed, and use large DeepSeek/Kimi/GLM models to understand the remaining
 quality gap. This is a route toward measured Composer 2.5 parity, not a reason
 to assume either that a trillion-parameter model is required or that a small
 adapter will achieve it.
+
+## 11. October 24 refresh and concrete first experiment
+
+Moved to the private model lab. Use the [active plan](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md)
+for current scope/status and the [frozen proposal](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/history/starting-proposal-2026-10-24.md)
+for the original section and supporting October 24 discussion.
+
+## 12. Teacher-generated data within the same $950 experiment
+
+Moved to the private model lab. Use the [active plan](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md)
+for current scope/status and the [frozen proposal](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/history/starting-proposal-2026-10-24.md)
+for the original section and supporting October 24 discussion.
+
+## 13. A $100 first slice
+
+Moved to the private model lab. Use the [active plan](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md)
+for current scope/status and the [frozen proposal](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/history/starting-proposal-2026-10-24.md)
+for the original section and supporting October 24 discussion.
+
+## 14. Getting started with the Cursor-inspired Qwen pilot
+
+Moved to the private model lab. Use the [active plan](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md)
+for current scope/status and the [frozen proposal](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/history/starting-proposal-2026-10-24.md)
+for the original section and supporting October 24 discussion.

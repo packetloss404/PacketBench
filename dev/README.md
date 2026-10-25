@@ -141,11 +141,12 @@ All document links in this file resolve as of 2026-08-27.
   local/SSH/native acceptance. It is documentation only. Composer research is
   owned by a separate thread and excluded; existing-runtime evaluation remains.
 - [Composer research and experimental path](./composer-research-2026-10-19.md)
-  assesses current Composer 2.5 evidence, PacketBench's existing executor,
-  open-weight adaptation, evaluation/data requirements and operating economics.
-  The expanded shortlist recommends Qwen3.8-27B for a proposed owned main-model
-  study on rented GPUs under $1,000, with license/training/evaluation gates.
-  Implementation, paid evaluation and model training remain proposed, not approved.
+  preserves the historical Composer/model/harness assessment. The canonical
+  [active plan](https://github.com/packetloss404/packetbench-model-lab/blob/main/docs/PLAN.md)
+  and preparation now live in the private **packetbench-model-lab** repository.
+  Local unpaid preparation is approved; GPU rentals, paid API calls, training
+  and deployment remain unapproved. The transferred starting proposal is
+  archived in that repository; this research report is no longer the active plan.
 - [Agent harness, Cursor and desktop experience review](./agent-harness-and-experience-review-2026-10-19.md)
   is the October 19 fresh runtime/GUI/journey assessment at `e5d31084`.
   It verifies Cursor ownership/weekly plans and official ChatGPT-plan options,
