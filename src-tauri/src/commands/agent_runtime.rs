@@ -3,10 +3,11 @@
 //! can be exercised and validated before integration.
 
 use crate::core::runtime_capabilities::{self, RuntimeCapabilityView};
+use crate::core::runtime_context::ContextSnapshot;
 use crate::core::runtime_journal as journal;
 use crate::core::runtime_types::{
-    FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView,
-    RuntimeLaunchView, RuntimeRunSummary,
+    FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeContextProjection,
+    RuntimeContextSummary, RuntimeEventView, RuntimeLaunchView, RuntimeRunSummary,
 };
 
 async fn on_blocking<T: Send + 'static>(
@@ -74,6 +75,69 @@ pub fn get_runtime_capabilities(
 #[tauri::command]
 pub fn get_runtime_guard_status() -> bool {
     journal::is_enabled()
+}
+
+/// R6 (H3) context/window readout. Returns the latest context projection
+/// recorded for a run plus an honest window-policy disclosure. Read-only; with
+/// the journal disabled it answers with no projection rather than erroring.
+/// Never a provider quota, reset or dollar claim.
+#[tauri::command]
+pub async fn get_runtime_context_summary(run_id: String) -> Result<RuntimeContextSummary, String> {
+    if !journal::is_enabled() {
+        return Ok(summarize_context(
+            &run_id,
+            None,
+            "The runtime journal is disabled, so no context projection is recorded.",
+        ));
+    }
+    let run_id_for_query = run_id.clone();
+    let snapshot = on_blocking(move || {
+        journal::with_journal(|connection| {
+            runtime_context::latest_context_snapshot(connection, &run_id_for_query)
+                .map_err(String::from)
+        })
+    })
+    .await?;
+    Ok(summarize_context(&run_id, snapshot, ""))
+}
+
+/// Flatten a snapshot into the readout DTO and derive the honest window policy
+/// note. Split out so the disclosure wording is unit-testable without a journal.
+fn summarize_context(
+    run_id: &str,
+    snapshot: Option<ContextSnapshot>,
+    disabled_note: &str,
+) -> RuntimeContextSummary {
+    let projection = snapshot.map(|s| RuntimeContextProjection {
+        snapshot_id: s.snapshot_id,
+        model_route: s.model_route,
+        count_kind: s.count_kind,
+        total_tokens: s.counts.total_tokens,
+        window_tokens: s.window_tokens,
+        reserved_output_tokens: s.reserved_output_tokens,
+        safety_margin_tokens: s.safety_margin_tokens,
+        blockers: s.blockers,
+        created_at: s.created_at,
+    });
+    let window_known = projection.as_ref().and_then(|p| p.window_tokens).is_some();
+    let policy_note = match &projection {
+        None if !disabled_note.is_empty() => disabled_note.to_string(),
+        None => "No context projection has been recorded for this run yet.".to_string(),
+        Some(_) if window_known => {
+            "Counts are a conservative byte/3 estimate, not a tokenizer. Dispatch is blocked \
+             only when the estimate plus reserved output and margin exceeds the known window."
+                .to_string()
+        }
+        Some(_) => "No model window is known for this route, so the projection could not block on \
+             overflow. Counts are a conservative estimate, not a tokenizer."
+            .to_string(),
+    };
+    RuntimeContextSummary {
+        run_id: run_id.to_string(),
+        projection,
+        window_known,
+        policy_note,
+    }
 }
 
 #[tauri::command]
@@ -977,5 +1041,45 @@ mod tests {
         let path = directory.path().join("usage.jsonl");
         std::fs::write(&path, "not json\n").unwrap();
         assert!(crate::commands::usage::read_usage_ledger(&path).is_err());
+    }
+
+    #[test]
+    fn summarize_context_discloses_unknown_windows_and_no_projection() {
+        // No projection recorded.
+        let none = summarize_context("run-1", None, "");
+        assert!(none.projection.is_none());
+        assert!(!none.window_known);
+        assert!(none.policy_note.contains("No context projection"));
+
+        // A disabled-journal note is used verbatim when supplied.
+        let disabled = summarize_context("run-1", None, "journal disabled");
+        assert_eq!(disabled.policy_note, "journal disabled");
+
+        // A projection with a known window.
+        let snapshot = crate::core::runtime_context::project_context(
+            "fake:model",
+            "system",
+            &[],
+            &[],
+            0,
+            Some(1_000_000),
+            16384,
+            0,
+            5,
+        );
+        let known = summarize_context("run-1", Some(snapshot.clone()), "");
+        assert!(known.window_known);
+        assert_eq!(
+            known.projection.as_ref().unwrap().window_tokens,
+            Some(1_000_000)
+        );
+        assert!(known.policy_note.contains("blocked only when"));
+
+        // The same projection with an unknown window never claims a block.
+        let mut unknown_snapshot = snapshot;
+        unknown_snapshot.window_tokens = None;
+        let unknown = summarize_context("run-1", Some(unknown_snapshot), "");
+        assert!(!unknown.window_known);
+        assert!(unknown.policy_note.contains("could not block"));
     }
 }

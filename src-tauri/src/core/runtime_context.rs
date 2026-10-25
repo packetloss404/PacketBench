@@ -402,6 +402,29 @@ pub fn load_context_snapshot(
     Ok(snapshot)
 }
 
+/// The newest context snapshot recorded for a run, if any. Selected by
+/// `created_at` (rowid breaks ties) and decoded through
+/// [`load_context_snapshot`]'s hash-verifying path, so a corrupt newest row is a
+/// named error rather than a silently skipped readout.
+pub fn latest_context_snapshot(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<Option<ContextSnapshot>, ContextError> {
+    let snapshot_id: Option<String> = connection
+        .query_row(
+            "SELECT snapshot_id FROM context_snapshots WHERE run_id = ?1 \
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| ContextError::Store(e.to_string()))?;
+    match snapshot_id {
+        Some(id) => load_context_snapshot(connection, &id).map(Some),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,5 +766,59 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn latest_context_snapshot_returns_the_newest_for_the_run() {
+        let connection = open_at(&temp_db()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, conversation_id, operation_id, root_run_id, epoch, state, latest_seq) \
+                 VALUES ('run-1', 'conv-1', 'op-1', 'run-1', 0, 'prepared', 0)",
+                [],
+            )
+            .unwrap();
+
+        // No projection recorded yet.
+        assert!(latest_context_snapshot(&connection, "run-1")
+            .unwrap()
+            .is_none());
+
+        // Two snapshots for the run; the newer `created_at` wins.
+        let older = project_context(
+            "fake:model-a",
+            "system",
+            &[text_message("hi")],
+            &[],
+            0,
+            Some(1_000_000),
+            16384,
+            0,
+            10,
+        );
+        insert_context_snapshot(&connection, Some("run-1"), Some(0), &older).unwrap();
+        let newer = project_context(
+            "fake:model-b",
+            "system",
+            &[text_message("hi")],
+            &[],
+            0,
+            Some(1_000_000),
+            16384,
+            0,
+            20,
+        );
+        insert_context_snapshot(&connection, Some("run-1"), Some(0), &newer).unwrap();
+
+        let latest = latest_context_snapshot(&connection, "run-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.model_route, "fake:model-b");
+        assert_eq!(latest.created_at, 20);
+
+        // A different run has its own (empty) history.
+        assert!(latest_context_snapshot(&connection, "run-2")
+            .unwrap()
+            .is_none());
     }
 }

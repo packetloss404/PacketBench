@@ -44,6 +44,19 @@ export type RuntimeLaunchView = { operationId: string, conversationId: string, r
 
 export type RuntimeEventView = { runId: string, seq: number, epoch: number, kind: string, payloadHash: string, createdAt: number, };
 
+export type RuntimeContextSummary = { runId: string, projection?: RuntimeContextProjection, windowKnown: boolean,
+/**
+ * Human-readable policy note. Never a provider quota, reset or dollar
+ * claim.
+ */
+policyNote: string, };
+
+export type RuntimeContextProjection = { snapshotId: string, modelRoute: string,
+/**
+ * `"estimate"` — a conservative byte/3 heuristic, never a tokenizer.
+ */
+countKind: string, totalTokens: number, windowTokens: number | null, reservedOutputTokens: number, safetyMarginTokens: number, blockers: Array<string>, createdAt: number, };
+
 export type RuntimeCapabilityView = { version: number, provider: string, model: string, tools: ToolsCapabilityView, vision: BoolCapabilityView, reasoning: ReasoningCapabilityView, structuredOutput: BoolCapabilityView, contextWindow: ContextWindowCapabilityView, resumability: ResumabilityCapabilityView, };
 
 export type BoolCapabilityView = { state: string, provenance: string, reason?: string, value?: boolean, };

@@ -7,6 +7,7 @@ import type {
   PrepareRuntimeRunResult,
   ReadDraftAssetDto,
   RuntimeCapabilityView,
+  RuntimeContextSummary,
   RuntimeEventView,
   RuntimeLaunchView,
   RuntimeRunSummary,
@@ -4195,6 +4196,12 @@ export async function getRuntimeCapabilities(
 // to gate image attachments before dispatch.
 export async function getRuntimeGuardStatus(): Promise<boolean> {
   return invoke<boolean>("get_runtime_guard_status");
+}
+
+// R6 (H3) context/window readout. Returns the latest context projection for a
+// run plus an honest window-policy disclosure. Read-only; never a quota claim.
+export async function getRuntimeContextSummary(runId: string): Promise<RuntimeContextSummary> {
+  return invoke<RuntimeContextSummary>("get_runtime_context_summary", { runId });
 }
 
 export async function loadConversations(): Promise<string[]> {

@@ -11,8 +11,8 @@ use crate::core::runtime_capabilities::{
     ResumabilityCapabilityView, RuntimeCapabilityView, ToolsCapabilityView,
 };
 use crate::core::runtime_types::{
-    FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView,
-    RuntimeLaunchView, RuntimeRunSummary,
+    FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeContextProjection,
+    RuntimeContextSummary, RuntimeEventView, RuntimeLaunchView, RuntimeRunSummary,
 };
 use crate::core::{
     agent_config as core_agent, flight as core_flight, orchestrator as core_orchestrator,
@@ -3152,6 +3152,8 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(RuntimeRunSummary);
     push_decl!(RuntimeLaunchView);
     push_decl!(RuntimeEventView);
+    push_decl!(RuntimeContextSummary);
+    push_decl!(RuntimeContextProjection);
     push_decl!(RuntimeCapabilityView);
     push_decl!(BoolCapabilityView);
     push_decl!(ToolsCapabilityView);

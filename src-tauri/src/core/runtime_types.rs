@@ -160,3 +160,40 @@ pub struct RuntimeEventView {
     #[ts(type = "number")]
     pub created_at: i64,
 }
+
+/// R6 (H3) context/window readout for one run. The latest projection recorded
+/// for the run, plus an honest window-policy disclosure. `window_known == false`
+/// means no model window was available, so the projection could not have blocked
+/// on overflow (an unknown window never blocks) — a disclosure, not a pass.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeContextSummary {
+    pub run_id: String,
+    #[ts(optional)]
+    pub projection: Option<RuntimeContextProjection>,
+    pub window_known: bool,
+    /// Human-readable policy note. Never a provider quota, reset or dollar
+    /// claim.
+    pub policy_note: String,
+}
+
+/// A flattened view of one [`crate::core::runtime_context::ContextSnapshot`].
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeContextProjection {
+    pub snapshot_id: String,
+    pub model_route: String,
+    /// `"estimate"` — a conservative byte/3 heuristic, never a tokenizer.
+    pub count_kind: String,
+    #[ts(type = "number")]
+    pub total_tokens: u64,
+    #[ts(type = "number | null")]
+    pub window_tokens: Option<u64>,
+    #[ts(type = "number")]
+    pub reserved_output_tokens: u64,
+    #[ts(type = "number")]
+    pub safety_margin_tokens: u64,
+    pub blockers: Vec<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
