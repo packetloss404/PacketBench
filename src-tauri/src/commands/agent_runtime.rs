@@ -306,6 +306,32 @@ pub async fn finish_session_run(
     .await
 }
 
+/// Cancel a session's journalled launch operation when the user stops the turn,
+/// so the operation phase and the run's terminal state agree. Best-effort; a
+/// no-op unless the journal is enabled and the session is bound to a run.
+pub async fn cancel_session_run(state: &ApiAgentState, session_id: &str) {
+    if !journal::is_enabled() {
+        return;
+    }
+    let Some(binding) = state.runtime_run_binding(session_id).await else {
+        return;
+    };
+    let result = on_blocking(move || {
+        journal::with_journal(|connection| {
+            let operation_id = journal::run_operation_id(connection, &binding.run_id)?;
+            journal::cancel_operation(connection, &operation_id, binding.epoch).map(|_| ())
+        })
+    })
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(
+            session_id = %session_id,
+            error = %error,
+            "Failed to cancel the journalled run operation"
+        );
+    }
+}
+
 /// Derive the checkpoint compatibility identity from a frozen session binding.
 ///
 /// The policy hashes are computed here and *stored* in each checkpoint at write

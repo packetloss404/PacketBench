@@ -1894,6 +1894,10 @@ pub async fn cancel_api_agent_session(
     if state.cancel_turn(&session_id).await {
         info!(session_id = %session_id, "API agent session cancelled");
     }
+    // R1/R3: also cancel the journalled launch operation so the durable
+    // operation phase and the run's terminal state agree. No-op unless the
+    // journal is enabled and the session is bound to a run.
+    super::agent_runtime::cancel_session_run(&state, &session_id).await;
     Ok(())
 }
 

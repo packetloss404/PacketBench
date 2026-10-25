@@ -756,6 +756,21 @@ pub struct ResumeInspection {
     pub inspected_revision: Option<String>,
 }
 
+/// The operation id a run belongs to. The cancel command uses it to cancel the
+/// matching launch operation so the operation phase and run state agree.
+pub fn run_operation_id(connection: &Connection, run_id: &str) -> Result<String, String> {
+    validate_id("runId", run_id)?;
+    connection
+        .query_row(
+            "SELECT operation_id FROM runs WHERE run_id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read run: {e}"))?
+        .ok_or_else(|| format!("Unknown run: {run_id}"))
+}
+
 /// The conversation id a run belongs to. The resume commands use it to look up
 /// the live session whose policy context gates typed resume.
 pub fn run_conversation_id(connection: &Connection, run_id: &str) -> Result<String, String> {
@@ -1722,7 +1737,12 @@ mod tests {
             run_conversation_id(&connection, &prepared.run_id).unwrap(),
             "conv-1"
         );
+        assert_eq!(
+            run_operation_id(&connection, &prepared.run_id).unwrap(),
+            "op-1"
+        );
         assert!(run_conversation_id(&connection, "does-not-exist").is_err());
+        assert!(run_operation_id(&connection, "does-not-exist").is_err());
     }
 
     #[test]
