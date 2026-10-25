@@ -262,6 +262,9 @@ pub struct ToolExecContext {
     pub native_mcp_session: Arc<NativeMcpSession>,
     pub tasks: Arc<SessionTasks>,
     pub frozen_tools: Arc<Vec<ToolDefinition>>,
+    /// R7: the parent turn's cancellation token, threaded into `ParentLlm` so a
+    /// stopped parent cancels its in-flight child sub-agents explicitly.
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Pending permission/edit prompt registration and response delivery.

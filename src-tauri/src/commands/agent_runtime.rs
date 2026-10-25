@@ -635,6 +635,9 @@ impl RuntimeServices for TauriRuntimeServices {
             } else {
                 None
             },
+            // R7: the parent turn's cancellation token, so a Stop cancels this
+            // child's in-flight provider stream explicitly.
+            cancel: ctx.cancel.clone(),
         };
         let execution = ctx.execution.clone();
         let enabled = ctx.enabled_mcp_server_ids.clone();

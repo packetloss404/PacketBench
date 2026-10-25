@@ -371,6 +371,7 @@ mod tests {
             tasks: Arc::new(Default::default()),
             record_usage: Arc::new(|_| Ok(())),
             child_budget: None,
+            cancel: tokio_util::sync::CancellationToken::new(),
         }
     }
 

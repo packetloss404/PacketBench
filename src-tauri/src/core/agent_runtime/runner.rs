@@ -414,6 +414,12 @@ pub async fn run_turn<R: RuntimeServices>(
     let session_id = request.session_id.as_str();
     let session = services.session(session_id).await?;
 
+    // R7: one cancellation token for this turn, shared with every child
+    // sub-agent. It is cancelled alongside the oneshot in each cancel arm below,
+    // so a Stop aborts in-flight children explicitly instead of relying on the
+    // implicit future-drop.
+    let child_cancel = tokio_util::sync::CancellationToken::new();
+
     // Durable checkpoint sink. `None` (journal disabled / unbound session) keeps
     // the exact pre-journal code path — every persist below is then a no-op.
     let checkpoint_store = services.checkpoints(session_id).await;
@@ -452,6 +458,7 @@ pub async fn run_turn<R: RuntimeServices>(
             biased;
             result = session.native_mcp_session.tool_definitions() => result?,
             _ = &mut cancel_rx => {
+                child_cancel.cancel();
                 session.native_mcp_session.close().await;
                 finish_cancelled_agent_turn(services, session_id, 0, 0, 0, 0, &[]).await;
                 return Ok(RunOutcome::Cancelled);
@@ -478,6 +485,7 @@ pub async fn run_turn<R: RuntimeServices>(
         native_mcp_session: Arc::clone(&session.native_mcp_session),
         tasks: Arc::clone(&session.tasks),
         frozen_tools: Arc::clone(&frozen_tools),
+        cancel: child_cancel.clone(),
     };
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
@@ -505,6 +513,7 @@ pub async fn run_turn<R: RuntimeServices>(
     for iteration in 0..MAX_TOOL_ITERATIONS {
         // Check cancellation
         if cancel_rx.try_recv().is_ok() {
+            child_cancel.cancel();
             finish_cancelled_agent_turn(
                 services,
                 session_id,
@@ -657,7 +666,10 @@ pub async fn run_turn<R: RuntimeServices>(
         // billed. Marked AFTER the last pre-dispatch failure point
         // (`ensure_usage_healthy`), so a request that never left is still freed.
         if pending_reservation {
-            if let Err(error) = services.mark_request_dispatched(session_id, &request_id).await {
+            if let Err(error) = services
+                .mark_request_dispatched(session_id, &request_id)
+                .await
+            {
                 release_pending_reservation(
                     services,
                     session_id,
@@ -696,6 +708,8 @@ pub async fn run_turn<R: RuntimeServices>(
         loop {
             tokio::select! {
                 _ = &mut cancel_rx => {
+                    // R7: cancel in-flight child sub-agents of this turn too.
+                    child_cancel.cancel();
                     // Abort the detached stream task so the provider's
                     // `stream_chat` stops holding the upstream HTTP connection
                     // and pushing into the now-dropped mpsc channel.
@@ -1415,6 +1429,9 @@ pub async fn run_turn<R: RuntimeServices>(
 
         let raw_results = tokio::select! {
             _ = &mut cancel_rx => {
+                // R7: cancel in-flight child sub-agents explicitly before the
+                // join_all drop below aborts their futures.
+                child_cancel.cancel();
                 // Dropping join_all drops every in-flight tool future. Child
                 // processes and network requests owned by those futures can
                 // unwind immediately instead of waiting for the next model

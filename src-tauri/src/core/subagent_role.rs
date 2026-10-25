@@ -142,7 +142,8 @@ pub fn resolve_subagent_role(
 }
 
 /// Terminal status of one child run. `Incomplete` is a bounded loop that ran
-/// out of rounds; `Blocked` is a refusal (e.g. budget) before completion.
+/// out of rounds; `Blocked` is a refusal (e.g. budget) before completion;
+/// `Cancelled` is a parent turn that was stopped while the child was in flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentStatus {
@@ -150,6 +151,7 @@ pub enum SubagentStatus {
     Incomplete,
     Blocked,
     Failed,
+    Cancelled,
 }
 
 /// Structured outcome of one child run. Rendered to the parent through
@@ -205,6 +207,13 @@ impl SubagentResult {
                 format!("Sub-agent blocked: {reason}")
             }
             SubagentStatus::Failed => format!("Sub-agent failed: {}", self.summary),
+            SubagentStatus::Cancelled => {
+                let reason = self
+                    .incomplete_reason
+                    .as_deref()
+                    .unwrap_or("the parent turn was cancelled");
+                format!("Sub-agent cancelled: {reason}")
+            }
         }
     }
 }

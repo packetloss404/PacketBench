@@ -57,6 +57,11 @@ pub struct ParentLlm {
     /// that never sets a budget): no reservation is made and behavior is
     /// unchanged.
     pub child_budget: Option<Arc<dyn ChildBudgetHook>>,
+    /// R7: the parent turn's cancellation token. When the parent turn is
+    /// stopped, the child loop observes it, aborts its in-flight provider stream
+    /// and returns [`SubagentStatus::Cancelled`] instead of relying on the
+    /// implicit future-drop. Nested children inherit the same token.
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 /// R7 child-request budget seam. Mirrors the runner's per-request admission
@@ -406,7 +411,26 @@ async fn run_agent_loop_inner(
             },
         );
 
-        let (stream_res, collected) = tokio::join!(stream_fut, collect_fut);
+        let (stream_res, collected) = tokio::select! {
+            joined = async { tokio::join!(stream_fut, collect_fut) } => joined,
+            _ = parent.cancel.cancelled() => {
+                // R7: the parent turn was stopped. Dropping the joined future
+                // aborts the provider stream; release the reservation (a
+                // dispatched child becomes uncertain liability in the store) and
+                // report an explicit Cancelled outcome rather than a silent drop.
+                if pending_reservation {
+                    release_child_reservation(&parent, &request_id).await;
+                }
+                return Ok(SubagentResult {
+                    child_run_id,
+                    status: SubagentStatus::Cancelled,
+                    summary: "The parent turn was cancelled before the sub-agent finished."
+                        .to_string(),
+                    incomplete_reason: Some("parent_cancelled".to_string()),
+                    usage: total_usage,
+                });
+            }
+        };
         let (assistant_text, tool_calls, provider_reasoning, usage) = match collected {
             Ok(collected) => collected,
             Err(error) => {
@@ -548,9 +572,10 @@ async fn run_agent_loop_inner(
 pub(crate) fn result_to_tool_output(result: SubagentResult) -> Result<String, String> {
     match result.status {
         SubagentStatus::Completed => Ok(result.to_tool_content()),
-        SubagentStatus::Incomplete | SubagentStatus::Blocked | SubagentStatus::Failed => {
-            Err(result.to_tool_content())
-        }
+        SubagentStatus::Incomplete
+        | SubagentStatus::Blocked
+        | SubagentStatus::Failed
+        | SubagentStatus::Cancelled => Err(result.to_tool_content()),
     }
 }
 
@@ -699,6 +724,7 @@ mod tests {
                 Ok(())
             }),
             child_budget: None,
+            cancel: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -1331,6 +1357,54 @@ mod tests {
         recorded_ids.sort();
         reserved_ids.sort();
         assert_eq!(recorded_ids, reserved_ids);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_parent_stops_the_child_with_a_cancelled_status() {
+        let recorded = Arc::new(std::sync::Mutex::new(vec![]));
+        let hook = Arc::new(CountingBudget::default());
+        let mut context = parent(recorded.clone());
+        context.child_budget = Some(hook.clone());
+        let cancel = context.cancel.clone();
+
+        // A provider whose stream blocks on a 2-party barrier the test never
+        // releases, so only cancellation can end the child.
+        let provider = FixtureProvider {
+            keep_calling: true,
+            barrier: Some(Arc::new(tokio::sync::Barrier::new(2))),
+        };
+
+        let handle =
+            tokio::spawn(async move { PARENT_LLM.scope(context, run_fixture(&provider)).await });
+
+        // The child reserves and marks dispatch before it streams; wait for that
+        // so cancellation lands while the child is genuinely in flight.
+        for _ in 0..10_000 {
+            if hook.marks() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            hook.marks(),
+            1,
+            "the child marked dispatch before we cancel"
+        );
+        cancel.cancel();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("the child must stop promptly on cancel")
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.status, SubagentStatus::Cancelled);
+        assert_eq!(
+            result.incomplete_reason.as_deref(),
+            Some("parent_cancelled")
+        );
+        assert_eq!(hook.reserves(), 1);
+        assert_eq!(hook.releases(), 1, "the in-flight child is released");
+        assert_eq!(hook.settles(), 0, "a cancelled child never settles");
     }
 
     #[tokio::test]
