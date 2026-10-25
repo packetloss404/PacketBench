@@ -360,6 +360,23 @@ Remaining Phase-A: typed image pins (blocked on the typed-image-recovery
 contract), the §4.2 runner-level crash-injection matrix, and the F4 frontend
 operation-handle.
 
+**F4 launch operation handle (F4), commits `9b5ce1b6`, `753828a4`.** A new
+`agentLaunchStore` is the canonical launch transaction: an honest phase
+(`idle/preparing/ready/starting/cancelling/running/failed/unknown`), a draft
+revision, and `begin()` which refuses a duplicate Start for the SAME in-flight
+revision — even across a remount — so a repeated Enter/click yields one
+operation/run/worktree. `AgentsView` reads its phase from the store and routes
+`handleLaunch` through `begin()`; an explicit provider/model/mode/profile change
+bumps the revision and starts a distinct operation, and the credential auto-pick
+captures the revision it started under so a late probe result can only apply
+while the automatic selection is still current (`753828a4`). Evidence: focused
+Vitest (store 5 + AgentsView 12), tsc and eslint clean. Remaining F4: connect the
+phases to authoritative backend prepare/start/cancel outcomes; keep a preparing
+item visible in the conversation/project list; freeze + show effective
+profile/model/posture overrides; Stop/cancel must acknowledge from backend state
+(no fixed timeout, and a local ack is not proof an unreachable SSH process
+stopped).
+
 **A1 typed-resume continuation (R1/R3), commits `afb146dd`, `7c9f5890`.** An
 epoch change advanced the journal but never continued the provider.
 `resume_runtime_run` now, on a typed resume, loads the run's latest checkpoint
@@ -623,10 +640,16 @@ still default-off.
       against the selected conversation's base project. Focused sidebar/Agents
       tests, TypeScript and ESLint pass.
 - [ ] **P2 — Preparation phase surface and cancel tombstones (F4 residual).**
-      Phase labels landed in `581cd5c2`; connect them to authoritative backend
-      prepare/start/cancel outcomes. Failed startup can still return an ID and
-      clear the draft/show Running. F6 has a helper/header slice but approval
-      reveal over review and global routing remain; F7 anchors are persisted.
+      The shared `agentLaunchStore` operation handle, duplicate-Start guard,
+      revision-bumped selection and revision-guarded auto-pick landed
+      (`9b5ce1b6`, `753828a4`); phase labels landed in `581cd5c2`. Still open:
+      connect the phases to authoritative backend prepare/start/cancel outcomes;
+      keep a preparing item in the conversation/project list when navigating
+      away; freeze + show effective profile/model/posture overrides; Stop/cancel
+      must acknowledge from backend state (no fixed timeout, and a local ack is
+      not proof an unreachable SSH process stopped). F6 has a helper/header slice
+      but approval reveal over review and global routing remain; F7 anchors are
+      persisted.
 - [x] **P2 — Shared GUI accessibility and layout (V4–V8).** Theme-aware code
       (V4), 32/36px targets (V5), accessible names + opaque focus ring (V6),
       resizable 240–480px sidebar with full-title disclosure (V7) and narrow
