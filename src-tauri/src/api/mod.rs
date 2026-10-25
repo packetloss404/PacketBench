@@ -10,6 +10,7 @@ use crate::core::runtime_capabilities::{
     BoolCapabilityView, ContextWindowCapabilityView, ReasoningCapabilityView,
     ResumabilityCapabilityView, RuntimeCapabilityView, ToolsCapabilityView,
 };
+use crate::core::runtime_journal::ResumeInspection;
 use crate::core::runtime_types::{
     FrozenExecutionBinding, FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult,
     RuntimeContextProjection, RuntimeContextSummary, RuntimeEventView, RuntimeLaunchView,
@@ -3201,6 +3202,7 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(RuntimeEventView);
     push_decl!(RuntimeContextSummary);
     push_decl!(RuntimeContextProjection);
+    push_decl!(ResumeInspection);
     push_decl!(RuntimeCapabilityView);
     push_decl!(BoolCapabilityView);
     push_decl!(ToolsCapabilityView);

@@ -69,6 +69,13 @@ export type RuntimeContextProjection = { snapshotId: string, modelRoute: string,
  */
 countKind: string, totalTokens: number, windowTokens: number | null, reservedOutputTokens: number, safetyMarginTokens: number, blockers: Array<string>, createdAt: number, };
 
+export type ResumeInspection = { runId: string, conversationId: string, operationId: string, epoch: bigint, state: string, latestDurableSeq: bigint, permittedModes: Array<string>, incompatibilities: Array<string>, pendingEffectIds: Array<string>, needsReconciliation: boolean, checkpointId: string | null,
+/**
+ * Opaque revision token the caller echoes back to `resume_run`. Present iff
+ * a checkpoint row exists (even a corrupt/newer one).
+ */
+inspectedRevision: string | null, };
+
 export type RuntimeCapabilityView = { version: number, provider: string, model: string, tools: ToolsCapabilityView, vision: BoolCapabilityView, reasoning: ReasoningCapabilityView, structuredOutput: BoolCapabilityView, contextWindow: ContextWindowCapabilityView, resumability: ResumabilityCapabilityView, };
 
 export type BoolCapabilityView = { state: string, provenance: string, reason?: string, value?: boolean, };

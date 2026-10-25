@@ -7,6 +7,7 @@ import type {
   PrepareRuntimeRunResult,
   ReadDraftAssetDto,
   RuntimeCapabilityView,
+  ResumeInspection,
   RuntimeContextSummary,
   RuntimeEventView,
   RuntimeLaunchView,
@@ -4216,9 +4217,16 @@ export async function getConversationRuntime(
   return invoke<RuntimeRunSummary | null>("get_conversation_runtime", { conversationId });
 }
 
+// R3b resume inspect: read-only; reports the permitted resume modes, the
+// checkpoint revision token and any incompatibilities. Inert unless the
+// runtime journal is enabled.
+export async function inspectRuntimeResume(runId: string): Promise<ResumeInspection> {
+  return invoke<ResumeInspection>("inspect_runtime_resume", { runId });
+}
+
 // R3b resume: advances the durable epoch (does NOT start the provider). Inert
 // unless the runtime journal is enabled. A semantic resume needs no inspected
-// revision; a typed resume does (from a separate inspect readout).
+// revision; a typed resume does (from the inspect readout).
 export async function resumeRuntimeRun(
   runId: string,
   expectedEpoch: number,

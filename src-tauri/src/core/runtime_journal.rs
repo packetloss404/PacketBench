@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use ts_rs::TS;
 use uuid::Uuid;
 
 use super::runtime_checkpoint::CompatibilityContext;
@@ -851,7 +852,7 @@ pub fn reconcile_runs_on_startup(connection: &Connection) -> Result<usize, Strin
 /// What `inspect_runtime_resume` reports: the permitted resume modes plus every
 /// incompatibility found. This is a read-only projection — it never dispatches
 /// a provider, executes a tool or mutates the run.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeInspection {
     pub run_id: String,

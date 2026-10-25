@@ -39,6 +39,7 @@ import { useDiffTotals } from "./hooks/useDiffTotals";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { capabilitiesFor } from "@/lib/agentCapabilities";
 import { isRemoteConversation } from "@/lib/remoteConversation";
+import { RuntimeRecoveryBanner } from "@/components/agents/RuntimeRecoveryBanner";
 import type { DockSurface } from "@/stores/rightDockStore";
 
 const AGENT_LABELS: Record<string, string> = {
@@ -415,6 +416,12 @@ export function AgentChatPane({
           onToggleDock={dockSurface ? toggleDock : undefined}
         />
       </div>
+
+      {/* R1/R3: offer a Resume when the durable run was left needing
+          reconciliation by a crash. Inert unless the journal is enabled. */}
+      {conversation.mode === "api" && (
+        <RuntimeRecoveryBanner conversationId={conversationId} />
+      )}
 
       <div aria-live={announce ? "polite" : "off"} aria-atomic="true" className="sr-only">
         {announce ? `${status.label}. ${lastAssistantText}` : ""}
