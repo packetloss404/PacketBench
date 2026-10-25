@@ -1,10 +1,11 @@
-# Future agent dispatch and acceptance
+# Desktop completion team dispatch and acceptance
 
 > Before reusing these original prompts, read [current status](../current-status.md)
 > and [the committed-source audit](../documentation-audit-2026-10-24.md).
 > Implement the remaining assigned tranche, not already-landed R/F/V slices.
-> Remote Agents is now the highest product implementation priority; these
-> desktop/runtime repairs support that program or follow its critical path.
+> The owner's later October 24 decision puts desktop/runtime completion and
+> acceptance before Remote Agents. [The completion plan](./08-desktop-completion-before-remote-agents.md)
+> defines current scope, phases and the exit gate.
 
 Design only, October 19, 2026. Read [the package entry point](./README.md) and
 the assigned track before editing product code. [backlog.md](../../backlog.md)
@@ -14,21 +15,30 @@ development are excluded from every prompt below.
 ## Coordinator bootstrap prompt
 
 ```text
-Implement the assigned tranche of PacketBench's Agents/runtime plan at
+Complete PacketBench's existing desktop/runtime work and acceptance before
+Remote Agents, at
 D:\projects\PacketBench. Read AGENTS.md, HANDOFF.md, backlog.md and
 dev/agent-experience/README.md, then every affected track specification.
 Also read dev/current-status.md and dev/documentation-audit-2026-10-24.md.
-Remote Agents is the top product priority; this prompt is for a specifically
-assigned supporting desktop/runtime tranche. Verify already-committed slices
-and implement only the current residual, not the whole original plan again.
+Use dev/agent-experience/08-desktop-completion-before-remote-agents.md for the
+current phase order and exit gate. The Remote-Agents-first order published in
+4da14806 is superseded. Verify already-committed slices and implement only the
+current residuals; preserve completed work.
 
-You are not alone in the codebase. Preserve the existing uncommitted review
-and planning documents and other agents' edits. Inventory current HEAD,
+You are not alone in the codebase. Preserve unrelated changes and other
+agents' edits. Do not modify, format, stage or commit Composer research or its
+pre-existing summary changes in dev/README.md. Inventory current HEAD,
 changes, runtime/schema contracts and installed evidence before implementing.
 The design used e5d31084; reconcile intervening changes instead of overwriting
 them. Create/reuse an appropriate codex/ branch/worktree according to AGENTS.
+Use the published desktop-first plan before branching; 4da14806 alone has the
+old ordering. Carry any additional uncommitted plan edits into an isolated
+checkout only when they belong to this team.
+Leave Composer and other unrelated edits in place; never stage everything.
 
-Scope: existing-runtime safety, Agents flow and readability. Composer research
+Scope: existing-runtime safety/recovery, Agents/Workspace/Flight reliability,
+readability/accessibility, applicable older bounded defects, existing feature
+integration proof and source-bound installed/platform acceptance. Composer research
 is in another thread. Do not add model training, a competitor harness product,
 a graph editor, billing dashboard, autonomous Flight planner or unrelated work.
 
@@ -37,6 +47,8 @@ as integration/quality owner, within available concurrency slots. Give each
 an explicit packet and file ownership. Maintain serialized leases for shared
 files and schema generation. Reuse idle agents for independent review when
 implementation work settles; don't exceed available slots.
+Refresh ownership for legacy hardening, provider/feature and platform acceptance
+after P1 source repairs. Do not start Remote Agents implementation in parallel.
 
 Begin with fail-closed isolation/draft/history repairs and N1 evidence, while
 runtime journal/budget and isolated appearance foundations proceed in parallel.
@@ -55,11 +67,23 @@ local/Docker Linux SSH journeys. Record exact source/package identity and
 remaining platform/provider limits. Desktop control must use short bursts and
 release/reset immediately; no control session during builds, waits or research.
 
+Recheck old bounded source findings before fixing them; retired providers and
+closed programs stay retired. Cover existing provider/SDK, Flight supervision,
+MCP/Memory/trust, Git host, shell/credentials, Monitor and dictation/hardware
+matrices. Preserve existing distribution/signing decisions and local-gate policy.
+Use actual Windows/Mac evidence for platform claims. If an account, hardware or
+platform prerequisite is absent, keep the case open and continue other work.
+
 Update backlog/HANDOFF with actual results. Build/install only if application
 inputs changed and the assigned execution task includes installation. A source
 test pass is not native evidence. Do not claim Mac parity without a Mac run.
 Finish with an independent review of the integrated flow and a concise account
 of changes, checks, unresolved issues and evidence paths.
+Desktop completion needs the source contracts, no blocking safety findings,
+passing applicable gates and a source-bound installed payload with the named
+native/integration evidence. Never label unavailable evidence passed or begin
+Remote Agents automatically while this gate is incomplete. Its later team
+will extend existing D:\projects\packetrelay, preserving completed work.
 ```
 
 This prompt grants no new publication/account action by itself. The actual
@@ -77,7 +101,8 @@ new runtime modules/tests. You are not alone; preserve others' work. The
 coordinator exclusively integrates api_agent.rs/agentTaskStore.ts/shared
 DTOs, command registration and generated schema unless explicitly leased.
 
-Implement one local journal and the production-executor seam. Preserve
+Reuse the existing local journal and production-executor seam; finish their
+assigned incomplete contracts. Preserve
 usage.jsonl as raw accounting. Keep SQLite work off the UI thread. Validate
 operation IDs, payload digests and run epochs; journal effects before dispatch.
 Handle ambiguous completed mutations without automatic replay. Reserve and
@@ -124,9 +149,9 @@ owner's Composer/sidebar/context/header files; apply visual changes after the
 coordinator leases them. appStore.theme remains the only theme owner.
 
 Use the final App scale contract: all nonterminal fonts scale once; transcript
-size is a base preference. No nested CSS zoom/transform. Add the separately
-owned terminal text preference/control specified by the appearance design;
-do not assume one already shipped. Prove enlargement there too.
+size is a base preference. No nested CSS zoom/transform. Finish the separately
+owned terminal text preference/control and transient dialog migration against
+current source. Preserve shipped controls and prove enlargement there too.
 Separate tool verbosity/density from font size. Keep Inter initially, validate
 actual contrast surfaces and code themes, and retain useful execution context
 at narrow widths. Use brand helpers and theme tokens.

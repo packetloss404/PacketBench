@@ -2,7 +2,9 @@
 
 ## Current checkpoint — 2026-10-24
 
-Remote Agents is the owner's **top product priority**. Use
+Remote Agents resumes **after desktop/runtime completion and acceptance**.
+The later October 24 owner instruction supersedes the earlier first-priority
+order. Use [the desktop exit gate](../agent-experience/08-desktop-completion-before-remote-agents.md),
 [current status](../current-status.md), the
 [documentation audit](../documentation-audit-2026-10-24.md) and
 [backlog](../../backlog.md) for live ordering; the sprints below are the
@@ -24,7 +26,8 @@ deletion of the former Railway/database; current live topology, database and
 backup readiness were not checked. See the dated note in
 [02-architecture.md](./02-architecture.md#deployment-target-railway).
 
-Resume in this order:
+After that desktop gate, resume in this order. Extend the existing
+`D:/projects/packetrelay` service, preserving legacy protocol compatibility:
 
 1. Accept the bounded replay/ACK/high-water recovery, ticket reserve/finalize,
    signed hello and endpoint-to-endpoint E2EE contracts in

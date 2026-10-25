@@ -4,7 +4,8 @@
 > contract remains partial and journal paths default off. Read
 > [the implementation audit](../documentation-audit-2026-10-24.md) and
 > [current status](../current-status.md) before treating any target below as an
-> enabled guarantee. Remote Agents is the current top product priority.
+> enabled guarantee. The later owner decision puts desktop/runtime completion
+> and acceptance before Remote Agents; use [the completion plan](./08-desktop-completion-before-remote-agents.md).
 
 Status: proposed implementation design; no product implementation is authorized by this document alone.
 Design date: 2026-10-19 America/Chicago; narrow source verification and technical references retrieved 2026-10-20 UTC.

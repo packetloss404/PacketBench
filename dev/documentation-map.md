@@ -1,8 +1,8 @@
 # Complete Markdown catalog
 
-Reconciled October 24, 2026. One navigation inventory for 178 tracked Markdown files and newly added reconciliation documents. The inventory includes this catalog; ignored local instructions are separate.
+Reconciled October 24, 2026. One navigation inventory for 179 tracked Markdown files and newly added planning documents. The inventory includes this catalog; ignored local instructions are separate.
 
-Start at [the hub](./README.md) and [current status](./current-status.md). Remote Agents is first in the product roadmap. Listing a plan does not approve/complete/deploy it; historical records keep their own dates and evidence. Original paths are preserved.
+Start at [the hub](./README.md) and [current status](./current-status.md). Desktop/runtime completion and acceptance precede Remote Agents under the owner's later October 24 decision. Listing a plan does not approve/complete/deploy it; historical records keep their own dates and evidence. Original paths are preserved.
 
 Root AGENTS.md and CLAUDE.md are intentionally ignored local instructions, not published catalog entries. Read the available local instructions before repository work and preserve their parity.
 
@@ -19,7 +19,7 @@ Root AGENTS.md and CLAUDE.md are intentionally ignored local instructions, not p
 - [Complete Markdown catalog](documentation-map.md) — `dev/documentation-map.md`.
 - [Documentation location and audit records](../docs/README.md) — `docs/README.md`.
 
-## Remote Agents — top priority
+## Remote Agents — after desktop/runtime completion and acceptance
 
 - [01 - Product Scope](remoteagents/01-product-scope.md) — `dev/remoteagents/01-product-scope.md`.
 - [02 - Architecture](remoteagents/02-architecture.md) — `dev/remoteagents/02-architecture.md`.
@@ -41,9 +41,10 @@ Root AGENTS.md and CLAUDE.md are intentionally ignored local instructions, not p
 - [Agents flow: implementation specification](agent-experience/02-agents-flow.md) — `dev/agent-experience/02-agents-flow.md`.
 - [Appearance and accessibility implementation design](agent-experience/03-appearance-accessibility.md) — `dev/agent-experience/03-appearance-accessibility.md`.
 - [Responsiveness, usage and supported integration design](agent-experience/04-integrations-and-validation.md) — `dev/agent-experience/04-integrations-and-validation.md`.
-- [Future agent dispatch and acceptance](agent-experience/05-agent-dispatch-and-acceptance.md) — `dev/agent-experience/05-agent-dispatch-and-acceptance.md`.
+- [Desktop completion team dispatch and acceptance](agent-experience/05-agent-dispatch-and-acceptance.md) — `dev/agent-experience/05-agent-dispatch-and-acceptance.md`.
 - [R2b plan and decision record](agent-experience/06-r2b-decisions-and-plan.md) — `dev/agent-experience/06-r2b-decisions-and-plan.md`.
 - [Current transport limitations](agent-experience/07-sdk-limitations.md) — `dev/agent-experience/07-sdk-limitations.md`.
+- [Desktop/runtime completion before Remote Agents](agent-experience/08-desktop-completion-before-remote-agents.md) — `dev/agent-experience/08-desktop-completion-before-remote-agents.md`.
 - [Historical implementation notes through October 24, 2026](agent-experience/09-implementation-notes-through-2026-10-24.md) — `dev/agent-experience/09-implementation-notes-through-2026-10-24.md`.
 - [Agents and runtime implementation handoff](agent-experience/README.md) — `dev/agent-experience/README.md`.
 

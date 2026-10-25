@@ -2,20 +2,21 @@
 
 Last reconciled: October 24, 2026 (America/Chicago), source `922ddcc9`.
 
-**Start here for every document. Remote Agents is the highest product implementation priority.**
+**Start here for every document. Finish the existing desktop/runtime work and acceptance before Remote Agents.**
 The source is committed and pushed; the full agent-experience target and latest installed-source verification remain incomplete.
 
 ## Read in this order
 
 1. [Current product/delivery status](./current-status.md) — verified facts, enabled/default boundaries and remaining work.
-2. [ROADMAP](../ROADMAP.md) — Remote Agents first, dependencies and later work.
+2. [ROADMAP](../ROADMAP.md) — desktop/runtime completion and acceptance first, then Remote Agents.
 3. [backlog](../backlog.md) — the only live task/status ledger.
 4. [HANDOFF](../HANDOFF.md) — the next team restart point and installed evidence.
 5. [Full Markdown catalog](./documentation-map.md) — all tracked documents, grouped by purpose; local instructions identified separately.
 
 ## Current programs and operations
 
-- [Remote Agents](./remoteagents/README.md) — next product implementation; begin with transport/security decisions and internal presence.
+- [Desktop completion plan](./agent-experience/08-desktop-completion-before-remote-agents.md) and [team dispatch](./agent-experience/05-agent-dispatch-and-acceptance.md) — current implementation and acceptance order.
+- [Remote Agents](./remoteagents/README.md) — follows desktop completion/acceptance; later extend existing PacketRelay through transport/security contracts and internal presence.
 - [Agents/runtime target specification](./agent-experience/README.md) — committed implementation slices plus the remaining safety, flow and appearance work; Composer excluded.
 - [October 24 verification report](./documentation-audit-2026-10-24.md) — source/commit/installed-payload evidence, per-packet gaps and audit limits.
 - [Local quality gates](./local-quality-gates.md), [installer/SSH acceptance](./installer-ssh-acceptance.md), [multi-platform build](./multi-platform-build.md), [macOS plan](./macos-release-plan.md).
@@ -91,7 +92,7 @@ that as history.
 
 | Track                    | Canonical document                                                                                 | Current boundary                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Remote Agents            | [`remoteagents/README.md`](./remoteagents/README.md)                                               | **TOP PRIORITY; INCOMPLETE.** Desktop gates/PWA/relay routes remain fail-closed or scaffolded. Committed persistence substrate exists; historical Railway and later local datacenter notes are distinct from current live deployment proof.                                                                                                                                                                       |
+| Remote Agents            | [`remoteagents/README.md`](./remoteagents/README.md)                                               | **AFTER DESKTOP ACCEPTANCE; INCOMPLETE.** Desktop gates/PWA/relay routes remain fail-closed or scaffolded. Committed persistence substrate exists; historical Railway and later local datacenter notes are distinct from current live deployment proof.                                                                                                                                                           |
 | Remote provider parity   | [`sidecar-over-ssh-verification.md`](./sidecar-over-ssh-verification.md)                           | Surviving Claude Agent SDK/OpenAI Agents SDK pinned-SSH matrix remains                                                                                                                                                                                                                                                                                                                                            |
 | SSH/workspaces           | [`ssh-remote-loop.md`](./ssh-remote-loop.md)                                                       | S1-S8 shipped; Windows-OpenSSH and larger streamed transfers remain later/environment-gated                                                                                                                                                                                                                                                                                                                       |
 | Flight Reviewer          | [`bridgemind/reviewer-gate-loop.md`](./bridgemind/reviewer-gate-loop.md)                           | Source/automated proof complete; RG8 packaged local/SSH/manual gate remains                                                                                                                                                                                                                                                                                                                                       |

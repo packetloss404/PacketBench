@@ -8,8 +8,9 @@ with review/documentation changes that were uncommitted at preparation time.
 pushed through `922ddcc9`; the full target remains partial and latest installed
 source is not verified.** Read [current status](../current-status.md) and the
 [packet-by-packet audit](../documentation-audit-2026-10-24.md) before executing
-the remaining work. Remote Agents is now the highest product implementation
-priority. This document preserves the target design; it is not proof that all
+the remaining work. The owner's later October 24 decision puts desktop/runtime
+completion and acceptance before Remote Agents. Start [the completion plan](./08-desktop-completion-before-remote-agents.md).
+This document preserves the target design; it is not proof that all
 contracts are implemented/enabled. [backlog.md](../../backlog.md) is the task ledger.
 Packet definitions here specify the work; they are not another checked backlog.
 
@@ -34,6 +35,8 @@ Then read the track you own and the cross-track acceptance contract:
   decisions; the source extraction is committed.
 - [Current transport limitations](./07-sdk-limitations.md): actual opt-in and
   native/SDK evidence boundaries.
+- [Desktop completion before Remote Agents](./08-desktop-completion-before-remote-agents.md):
+  current owner sequencing, phased implementation and acceptance exit gate.
 - [Historical implementation notes](./09-implementation-notes-through-2026-10-24.md):
   former HANDOFF narrative; current audit/status supersedes stale claims.
 
@@ -188,6 +191,12 @@ through that owner; they do not each run a broad formatter or regenerate schema.
 See the dispatch document for the lease schedule.
 
 ## Work order and release boundaries
+
+The current [desktop completion plan](./08-desktop-completion-before-remote-agents.md)
+and live ledger govern the residuals. The original waves below describe design
+dependencies; they do not restart completed slices. Complete the desktop/runtime
+and its acceptance before resuming Remote Agents. Optional later integrations
+remain outside that completion gate.
 
 ### Wave 0: Rebase the plan onto reality
 

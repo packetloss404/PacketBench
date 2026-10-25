@@ -1,11 +1,13 @@
 # 10 - Pause and Resumption Record
 
-**Status: HISTORICAL RECORD — program active; Sprint 0 completed 2026-09-01.**
+**Status: HISTORICAL RECORD — program retained; Sprint 0 completed 2026-09-01.**
 The owner resumed the program on 2026-08-27 after an eleven-day pause. For live
 status, start with `README.md` and `09-open-decisions.md`; use this document for
 the pause/resumption history, invariants, and pickup context.
 
-**October 24 annotation:** The owner now puts Remote Agents first. Start with
+**Later October 24 sequencing annotation:** The owner now puts desktop/runtime
+completion and acceptance before new Remote Agents implementation. The earlier
+Remote-Agents-first instruction is superseded. Start with
 the [current-status map](../current-status.md),
 [documentation audit](../documentation-audit-2026-10-24.md), and
 [backlog](../../backlog.md). All pause/resumption decisions, Sprint 0 checks,

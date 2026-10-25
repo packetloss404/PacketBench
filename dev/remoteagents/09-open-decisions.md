@@ -1,11 +1,12 @@
 # 09 - Open Decisions
 
-Program status: **ACTIVE — resumed by owner decision 2026-08-27** (paused
-2026-08-16 to 2026-08-27). See [`10-pause-record.md`](./10-pause-record.md).
+Program retained; **implementation follows desktop/runtime completion and
+acceptance** under the owner's later October 24 instruction. The August
+16–27 pause/resumption remains historical. See [`10-pause-record.md`](./10-pause-record.md).
 
 ## Current reconciliation — 2026-10-24
 
-Remote Agents is now the owner's top product priority. The
+Remote Agents now follows the desktop completion gate. The
 [current-status map](../current-status.md),
 [documentation audit](../documentation-audit-2026-10-24.md) and
 [backlog](../../backlog.md) own current ordering/status. The decision log below

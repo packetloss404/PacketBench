@@ -3,7 +3,9 @@
 > October 24 verification: these are still target experiments/evidence packets,
 > not delivered integrations. The current process responds at rest; N1 navigation
 > diagnosis remains open. Read [current status](../current-status.md) and
-> [the audit](../documentation-audit-2026-10-24.md). Remote Agents takes priority.
+> [the audit](../documentation-audit-2026-10-24.md). Desktop/runtime completion
+> and acceptance now precede Remote Agents; optional integration experiments
+> remain outside [the desktop completion gate](./08-desktop-completion-before-remote-agents.md).
 
 Proposed design, October 19, 2026; primary docs retrieved October 20 UTC.
 Read the [package entry point](./README.md) and

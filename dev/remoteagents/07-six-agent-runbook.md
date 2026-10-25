@@ -4,9 +4,13 @@
 > completed a Sprint 0 planning checkpoint, not the later implementation or
 > deployment gates. Use [current status](../current-status.md), the
 > [documentation audit](../documentation-audit-2026-10-24.md), and
-> [backlog](../../backlog.md) before assigning work. Roles remain useful, but
-> refresh file ownership and dependencies against current source. Auth was
-> resolved in favor of owned passkey/magic-link on August 28; choosing an auth
+> [backlog](../../backlog.md) before assigning work. New Remote Agents
+> implementation follows desktop/runtime completion and
+> acceptance under the owner's later October 24 instruction. Extend existing
+> PacketRelay when this program resumes. The historical team map is not an
+> instruction to dispatch it alongside current desktop work.
+> Roles remain useful; refresh file ownership and dependencies against current
+> source. Auth was resolved in favor of owned passkey/magic-link on August 28; choosing an auth
 > provider is not new work. Railway observations are historical and later
 > local sibling operator records require reconciliation; this runbook does
 > not prove or choose a current deployment. The security review is required

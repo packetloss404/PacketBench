@@ -1,7 +1,8 @@
 # 02 - Architecture
 
-> **Source reconciliation 2026-10-24:** Remote Agents is the owner's top
-> priority, but the implementation remains gated. Use the
+> **Source reconciliation 2026-10-24; later sequencing update:** Remote Agents
+> follows desktop/runtime completion and acceptance. Its implementation remains
+> gated and must extend the existing PacketRelay Rust service. Use the
 > [current-status map](../current-status.md),
 > [documentation audit](../documentation-audit-2026-10-24.md), and
 > [backlog](../../backlog.md) for current sequencing. The Railway deployment

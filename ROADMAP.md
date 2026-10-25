@@ -1,28 +1,36 @@
 # PacketBench Roadmap
 
-Last reconciled: October 24, 2026. **Remote Agents is the highest product implementation priority.**
+Last reconciled: October 24, 2026, later owner sequencing decision. **Finish the existing desktop/runtime work and acceptance before Remote Agents.**
 
 [Current status](dev/current-status.md) records verified facts; [backlog](backlog.md) is the only task ledger. [The documentation hub](dev/README.md) links all programs, operations, evidence and archives.
 
-## Now — Remote Agents and its safety dependencies
+## Now — complete the existing desktop/runtime and acceptance
 
-1. Close the [Remote Agents transport/security contracts](dev/remoteagents/11-transport-contract-decisions.md): replay/ACK persistence, ticket reserve/finalize, authenticated hello and endpoint-to-endpoint encryption.
-2. Prove a small internal ticket → desktop host connection → PWA presence → revoke/reconnect slice. Reuse committed relay identity/ACL/persistence substrate; do not mistake scaffolded routes or schema builds for functioning auth/presence.
-3. Build backend-owned conversation projection/control and PWA streaming/approval/cancel/reconnect through the narrow Remote Agents protocol. Keep feature gates fail-closed until their evidence is earned.
-4. Resolve the directly supporting desktop/runtime safety gaps in parallel: immutable SSH/checkout authority, real launch/turn/recovery identity, unknown spend/effect liability, durable image ownership, truthful start failure and exact visible approvals. Remote Agents does not need every cosmetic task completed before work begins; it must not bypass these authority boundaries.
+Follow [the desktop completion plan](dev/agent-experience/08-desktop-completion-before-remote-agents.md), reusing committed slices and implementing only current residuals:
 
-Canonical program: [dev/remoteagents/README.md](dev/remoteagents/README.md). Product auth remains the resolved in-house passkey/magic-link direction; do not reopen it from historical proposals. Older Railway/PostgreSQL health records and later local datacenter notes are different evidence. Confirm current deployment, datastore and backup/recovery before rollout; no infrastructure was live verified by this documentation audit.
+1. Refresh source/package/state evidence and start N1 responsiveness diagnosis alongside independent fixes.
+2. Complete runtime authority, launch/turn/recovery transactions, typed continuation, uncertain spend/effect liability, manifests/context, durable assets and adapter strength.
+3. Finish truthful local/SSH launches, retained drafts, Flight history protection, visible approvals, search/reader continuity and IME behavior.
+4. Finish typography/scaling, terminal dialogs, sidebar ownership/reset, accessible controls, narrow layouts and actual composited contrast.
+5. Revalidate older bounded source findings; close applicable existing feature defects and provider/SDK/MCP/Memory/Flight/inbox/YOLO/Git host/Monitor/dictation interoperability proof.
+6. Run final local quality gates and source-bound installed local/Docker SSH journeys, plus named Windows/macOS/platform and hardware acceptance. Preserve unavailable cases as open gates, not passes.
 
-## Next — complete the existing experience and earn rollout
+Completion requires independent integrated review, no unresolved blocking safety findings, passing applicable gates and a source-bound installed payload with named native/integration evidence. Signing/updater/distribution retain existing owner decisions. Optional expansion is outside this gate. See backlog for task statuses.
 
-- Finish the [agent-experience residuals](dev/agent-experience/README.md), not a rewrite of the committed source: policy-compatible typed continuation, one root run per turn, real manifest identity, conservative budgets/context, safe asset GC/pins, SSH contextual New, failed-start draft retention and approval-over-review.
-- Complete scaling/control/accessible-name migration, terminal dialogs, one sidebar width/reset owner, narrow reflow and actual composed contrast. Keep Workspace CLI font/session ownership intact.
-- Bind a final installer to exact source/payload, then verify the installed local and pinned Linux SSH journey including Stop/restart/repair/review/delivery/archive. Windows IME/display/Monitor and separate Mac evidence remain. The current 0.14.9 executable is identified by hash, but deployment of latest HEAD is not proven.
-- Earn Remote Agents external-beta gates: owned auth/recovery, E2EE/Rust-browser vectors, revocation, redaction/security review before any external beta, datastore recovery, phone/PWA/push/artifact behavior and load/incident controls. Eleven desktop flags alone are not full beta readiness.
+## Next — Remote Agents, extending existing PacketRelay
+
+After desktop completion/acceptance, resume [the Remote Agents plan](dev/remoteagents/README.md):
+
+1. Close transport/replay/ACK/ticket/hello/E2EE contracts and prove internal authenticated host presence/revocation/reconnect.
+2. Extend the existing `D:/projects/packetrelay` Rust service and its identity/ACL/audit/persistence foundation. Preserve legacy protocol compatibility.
+3. Build backend-owned conversations and PWA stream/approval/cancel/reconnect control. Keep production fail-closed until evidence is earned.
+4. Earn external-beta gates: owned auth/recovery, E2EE/Rust-browser vectors, revocation, redacted audit/security review, datastore recovery, phone/push/artifacts and load/incident controls.
+
+Product auth remains the resolved in-house passkey/magic-link direction. Verify current deployment/datastore/backup reality before rollout; historical Railway evidence and later local datacenter notes are distinct. No infrastructure was live verified by the documentation audit.
 
 ## Existing proof work
 
-Keep these within their existing ledger scopes: live provider and SDK-over-SSH parity; cooperative Flight/inbox/YOLO integration proof; MCP/Memory/trust provenance; dictation/headset and Monitor hardware cases; macOS package acceptance and distribution signing/updater under existing owner decisions. Source complete and accepted in a real package are separate statuses.
+Existing provider, integration, hardware and platform proof is part of desktop completion within its named ledger scope. Refresh stale claims rather than repeat already accepted work or revive retired features. Source complete and accepted in a real package are separate statuses.
 
 The [October 24 audit](dev/documentation-audit-2026-10-24.md) verifies committed implementation slices through `922ddcc9`, default-off guards and remaining proof. Its source findings are not fresh product test results. The earlier Flight local/SSH walkthroughs and installer records retain their named historical scope.
 
@@ -31,7 +39,7 @@ The [October 24 audit](dev/documentation-audit-2026-10-24.md) verifies committed
 - Evidence-backed quota disclosure, scoped rendered-app verification and supported ChatGPT-plan transport feasibility, after the core safety/experience work.
 - Native iOS/TestFlight after the Remote Agents PWA earns its phone/relay/auth/push evidence.
 - Optional bounded improvements already in backlog only when selected; old product sketches are not an approved implementation queue.
-- Packet Control, delayed Global Undo, Monitor/SSH expansion and dictation benchmarks keep their existing boundaries; general Computer Use remains paused. These do not displace Remote Agents or silently become required feature expansion.
+- Packet Control, delayed Global Undo, Monitor/SSH expansion and dictation benchmarks keep their existing boundaries; general Computer Use remains paused. These do not become prerequisites for desktop completion or silently become required feature expansion.
 
 Composer/model-development research is owned by a separate thread and excluded from this completion plan. Retired ACP providers, the autonomous Flight planner, Syndicate execution-target integration and the Cost Dashboard stay retired.
 

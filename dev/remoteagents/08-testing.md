@@ -3,6 +3,9 @@
 ## Evidence boundary — 2026-10-24
 
 This is the target test plan, not a record that its matrices have passed. Start
+after desktop/runtime completion and acceptance under the owner's later
+October 24 sequence; use [the desktop gate](../agent-experience/08-desktop-completion-before-remote-agents.md)
+for the current team. For the later Remote Agents team, start
 with [current status](../current-status.md), the
 [documentation audit](../documentation-audit-2026-10-24.md), and
 [backlog](../../backlog.md). No tests/builds, sockets, phones, providers or

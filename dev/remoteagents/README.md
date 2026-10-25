@@ -2,7 +2,12 @@
 
 ## Current status — source reconciliation 2026-10-24
 
-**Remote Agents is the owner's top product priority.** Start with the
+**Remote Agents follows desktop/runtime completion and acceptance.** The later
+October 24 owner decision supersedes the earlier Remote-Agents-first ordering.
+Use [the desktop completion gate](../agent-experience/08-desktop-completion-before-remote-agents.md)
+before dispatching new Remote Agents implementation. Keep production fail-closed
+while waiting; the later team must extend existing `D:/projects/packetrelay` and
+reuse its committed foundation. Start with the
 [current-status map](../current-status.md), the
 [documentation audit](../documentation-audit-2026-10-24.md), and the authoritative
 [backlog](../../backlog.md). The dated checkpoint below remains evidence for

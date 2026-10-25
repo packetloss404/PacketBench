@@ -4,8 +4,9 @@
 
 Use [current status](../current-status.md), the
 [documentation audit](../documentation-audit-2026-10-24.md), and
-[backlog](../../backlog.md) for sequencing. Remote Agents is the owner's top
-priority; it remains disabled/fail-closed in the inspected source.
+[backlog](../../backlog.md) for sequencing. Remote Agents follows desktop/runtime
+completion and acceptance; it remains disabled/fail-closed while waiting. The
+sequencing change does not waive any security requirement below.
 
 The ratified in-house-auth decision in
 [09-open-decisions.md](./09-open-decisions.md#auth-provider--resolved-2026-08-28)

@@ -1,6 +1,6 @@
 # PacketBench Handoff
 
-Last reconciled: October 24, 2026 (source/commit/deployment audit; Remote Agents first).
+Last reconciled: October 24, 2026, later owner sequencing decision: desktop/runtime completion and acceptance before Remote Agents.
 
 This is the current restart document. Use `backlog.md` for outstanding work,
 `ROADMAP.md` for ordering, and `CHANGELOG.md` for shipped/build history.
@@ -12,7 +12,9 @@ the current contracts below supersede their older protocol and queue details.
 Read [dev/current-status.md](dev/current-status.md), [the verification report](dev/documentation-audit-2026-10-24.md), ROADMAP and backlog before the older records below.
 Application source `922ddcc928629e116215d899580f7e9370b2603d` is committed on main and matched live GitHub main at audit time. At audit start only the documentation index and separate Composer research were dirty; their edits were preserved. The subsequent publication commits the documentation reconciliation only; Composer research and its index-summary changes remain outside that commit.
 
-**Next product work: Remote Agents.** Start [its canonical plan](dev/remoteagents/README.md), close transport/E2EE/ticket/replay contracts, then prove an internal authenticated host/presence slice. Keep the feature fail-closed. Later local relay records differ from old Railway/PostgreSQL topology; verify actual infrastructure before rollout. Do not silently replace the resolved product-auth direction.
+**Next work: finish the existing desktop/runtime and its acceptance.** The owner's later October 24 instruction supersedes the Remote-Agents-first order in documentation commit `4da14806`. Start [the desktop completion plan](dev/agent-experience/08-desktop-completion-before-remote-agents.md) and [team dispatch](dev/agent-experience/05-agent-dispatch-and-acceptance.md). Refresh current source, reuse committed slices, diagnose N1 alongside independent repairs, then complete runtime/flow/readability residuals, existing feature hardening and integration/platform proof. Bind the installed package to source and run the native local/Docker SSH journey before claiming desktop completion. Missing platform/account/hardware evidence remains open; it does not become a pass.
+
+**Remote Agents follows desktop completion/acceptance.** Keep it fail-closed while waiting. Its later team must extend the existing `D:/projects/packetrelay` Rust service and reuse committed foundation work. Later local relay records differ from old Railway/PostgreSQL topology; verify actual infrastructure before rollout. Preserve the resolved product-auth/E2EE direction. Optional expansion and Composer research remain separate from this desktop gate.
 
 Agent-experience implementation is substantial but partial: the production runner is extracted and offline evaluation exists; the journal still defaults off, typed public resume is not provider continuation, and request-budget unknown-liability handling needs repair before stronger claims. The audit also records SSH contextual New, failed-start draft handling, approval-over-review, asset GC/pins and scaling/control residuals.
 

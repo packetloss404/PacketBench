@@ -6,9 +6,9 @@
 
 PacketBench brings CLI Workspaces, structured API-agent conversations, Flights, review, issues, memory and local/SSH execution into one Tauri desktop application.
 
-**Current priority: Remote Agents.** The source contains substantial committed Agents/runtime/readability work, but the complete target and native deployment evidence remain partial. See [current status](./dev/current-status.md), [ROADMAP](./ROADMAP.md) and [the task ledger](./backlog.md).
+**Current priority: finish the existing desktop/runtime work and acceptance before Remote Agents.** The source contains substantial committed Agents/runtime/readability work, but the complete target and native deployment evidence remain partial. Start [the desktop completion plan](./dev/agent-experience/08-desktop-completion-before-remote-agents.md), [current status](./dev/current-status.md), [ROADMAP](./ROADMAP.md) and [the task ledger](./backlog.md).
 
-As of October 24, main `922ddcc9` is committed and matches GitHub main. The installed 0.14.9 executable matches an available October 23 NSIS payload; no source/payload manifest proves that it includes the October 24 source. The process responds at rest, which is not a complete native walkthrough or resolution of the earlier navigation-stall observation. Exact hashes and evidence limits are in [HANDOFF](./HANDOFF.md) and [the audit](./dev/documentation-audit-2026-10-24.md).
+The October 24 audit verified application source `922ddcc9` as committed and pushed; documentation was then published in `4da14806`. The installed 0.14.9 executable matches an available October 23 NSIS payload; no source/payload manifest proves that it includes the audited application source. The process responded at rest during that audit, which is not a complete native walkthrough or resolution of the earlier navigation-stall observation. Exact hashes and evidence limits are in [HANDOFF](./HANDOFF.md) and [the audit](./dev/documentation-audit-2026-10-24.md).
 
 The journal/capability/context/budget paths remain opt-in; request-budget admission also needs a configured budget. Typed public recovery and uncertain billing handling are incomplete. Do not interpret a committed module, larger test count or the version string as a universal safety or deployment guarantee.
 

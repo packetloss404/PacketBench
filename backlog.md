@@ -2,29 +2,37 @@
 
 ## Current completion order — reconciled October 24, 2026
 
-**Remote Agents is the highest product implementation priority.** This is the
+**Finish the existing desktop/runtime work and acceptance before Remote Agents.**
+This later October 24 owner decision supersedes the Remote-Agents-first order
+published in `4da14806`. Follow [the completion plan](dev/agent-experience/08-desktop-completion-before-remote-agents.md).
+This is the
 single live task ledger. [Current status](dev/current-status.md) gives verified
 facts; [the source/deployment audit](dev/documentation-audit-2026-10-24.md) maps
 committed slices to missing target contracts. Checked historical source slices
 below do not close these residuals or prove deployment. Source `922ddcc9` is
 committed and pushed; latest installed-source identity remains unverified.
 
-1. **Remote Agents:** close transport/replay/ACK/ticket/hello/E2EE contracts,
-   then prove internal authenticated presence, backend-owned conversations and
-   PWA approvals/reconnect. Product auth, encrypted payloads, revocation,
-   datastore recovery, phone/push/security/load acceptance gate external beta.
-   Start [the canonical Remote Agents plan](dev/remoteagents/README.md). Its
-   detailed section below owns the same program; do not create another queue.
-2. **Runtime/desktop safety supporting that surface:** complete the actual
+1. **Runtime/desktop safety:** start N1 diagnosis and complete the actual
    backend launch/turn/recovery transaction, uncertain spend retention and
    typed policy/image recovery. Preserve host identity, drafts and approvals.
-3. **Complete source residuals and acceptance:** finish scale/control migration
-   and run source-identified native local/SSH, Windows/Mac/provider matrices;
-   bind final installers to source and payload before readiness claims.
-4. **Existing feature/release proof:** provider/SDK/MCP/Memory/Flight/inbox/YOLO,
-   dictation/Monitor hardware and platform/distribution work remain within
-   their named scopes and existing owner decisions.
-5. **Later integrations:** quota disclosure, scoped app verification and
+2. **Agents flow and readability:** finish retained assets, truthful SSH/start
+   behavior, authoritative history/attention, scale/control migration, reader
+   continuity and keyboard/IME proof. Reuse already-landed F/V slices.
+3. **Existing feature hardening/proof:** refresh older bounded source findings;
+   close applicable provider/SDK/MCP/Memory/Flight/inbox/YOLO/Git host issues,
+   dictation/Monitor hardware and platform cases within their existing scope.
+4. **Desktop completion/acceptance gate:** independent integrated review,
+   focused plus final full local quality gates, source-bound installers and
+   native local/Docker SSH Stop/restart/repair/review/delivery/archive evidence.
+   Windows/macOS/provider/hardware matrices retain named prerequisites; keep
+   unavailable evidence open. Signing/updater retain owner decisions.
+5. **Remote Agents, afterward:** close transport/replay/ACK/ticket/hello/E2EE
+   contracts, then internal presence and backend/PWA control. Extend existing
+   `D:/projects/packetrelay`; preserve its committed foundation and compatibility.
+   External beta still needs auth/recovery/encryption/revocation, datastore and
+   phone/push/security/load proof. Keep production fail-closed while waiting.
+   [The canonical plan](dev/remoteagents/README.md) retains its full requirements.
+6. **Later integrations:** quota disclosure, scoped app verification and
    supported-plan feasibility; native iOS follows the PWA. Composer research
    remains separately owned and excluded.
 
@@ -593,7 +601,10 @@ On October 6 the owner confirmed they have not dogfooded enough yet. Resume
 with reported defects, prioritizing Workspaces; no feature expansion or
 deployment is requested by the pre-tag review.
 
-The October 24 Remote Agents priority supersedes the old ordering above.
+The later October 24 owner decision puts desktop/runtime completion and
+acceptance before Remote Agents, superseding the earlier Remote-Agents-first
+order. The current completion plan scopes the work; this does not reactivate
+every historical or optional item above/below.
 Resolved choices below remain dated owner decisions; unresolved implementation
 and evidence work belongs in the current ledger sections, not this old pre-tag
 instruction.
@@ -747,7 +758,9 @@ The per-ID implementation and validation record is
 
 ## Remote Agents implementation
 
-**Top priority as of October 24.** Sprint 0 acceptance below is historical.
+**After desktop/runtime completion and acceptance, per the later October 24
+owner decision.** Keep production fail-closed while waiting and extend existing
+PacketRelay when implementation resumes. Sprint 0 acceptance below is historical.
 Committed relay identity/ACL/audit/PostgreSQL repository substrate exists, but
 auth sessions/tickets/replay/outbox, working routes and PWA sockets are not a
 completed Sprint 1. The desktop's eleven readiness gates remain unmet. Later

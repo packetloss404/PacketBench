@@ -1,6 +1,15 @@
 # Source, deployment and documentation verification
 
 Date: October 24, 2026, America/Chicago. UTC evidence paths can be dated October 25. This is a read-only application audit followed by documentation updates.
+
+> Historical audit snapshot. The owner's later October 24 decision replaces its
+> Remote-Agents-first ordering with desktop/runtime completion and acceptance
+> first. [Current status](./current-status.md), [ROADMAP](../ROADMAP.md) and
+> [the desktop completion plan](./agent-experience/08-desktop-completion-before-remote-agents.md)
+> govern current sequencing. The source, deployment and validation observations
+> below retain their original snapshot/date; no application evidence is rerun
+> by this documentation-only sequencing update.
+
 Three specialist agents reviewed runtime, F/V implementation and Remote Agents/
 documentation independently; the coordinator checked GitHub and installed bytes.
 The documentation pass inventories/classifies every tracked Markdown file and
@@ -162,7 +171,9 @@ partial status and focused follow-up; no application fix was made here.
 
 ## Remote Agents and deployment-record reconciliation
 
-Remote Agents is the owner's **highest product implementation priority**.
+At the time of this audit, Remote Agents was the owner's highest product
+implementation priority; the later desktop-first instruction supersedes that
+ordering.
 PacketBench's [remoteAgentsGate.ts](../src/lib/remoteAgentsGate.ts), lines 65/127,
 still records eleven unmet gates and requires both readiness plus opt-in.
 The [PWA](../remoteagents/pwa/src/App.tsx), line 25, is a static Sprint 0 surface.
@@ -205,7 +216,8 @@ requirements; do not silently substitute an auth provider or claim E2EE shipped.
   deploy or promise synchronization of that website.
 - Preserve Composer research and its pre-existing edits as a separate program.
 
-The current snapshot and ledger list completion work with Remote Agents first.
+The audit snapshot listed Remote Agents first; current status and the ledger
+now put desktop/runtime completion and acceptance before Remote Agents.
 The audit does not turn old future-product sketches into approved implementation
 or reopen retired products. Source fixes, live verification and installer work
 remain separate actions from this documentation reconciliation.
