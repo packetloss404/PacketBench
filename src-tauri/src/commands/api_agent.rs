@@ -30,6 +30,36 @@ async fn record_terminal_run_state(
         warn!(session_id = %session_id, error = %error, "Failed to record terminal run state");
     }
 }
+
+/// Prepare a fresh durable run for one turn and bind it (R1/R3
+/// one-root-run-per-turn). Called on every turn start — initial, follow-up and
+/// retry — so each user turn gets its own run linked to its predecessor, rather
+/// than reopening the session's first run. No-op unless the journal is enabled.
+async fn prepare_turn_run(state: &ApiAgentState, session_id: &str) -> Result<(), String> {
+    if !crate::core::runtime_journal::is_enabled() {
+        return Ok(());
+    }
+    let Some(session) = state.runtime_session(session_id).await else {
+        return Ok(());
+    };
+    let project_path = match &session.execution {
+        ExecutionTarget::Local { project_path } => project_path.clone(),
+        ExecutionTarget::Ssh { config } => config.remote_path.clone(),
+    };
+    let Some(binding) = super::agent_runtime::prepare_session_run(
+        session_id,
+        &session.provider,
+        &session.model,
+        &project_path,
+        &session.execution,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    state.bind_runtime_run(session_id, binding).await;
+    Ok(())
+}
 use crate::core::agent_runtime::{RunRequest, RuntimeFlags, RuntimeRunBinding, RuntimeSession};
 use crate::core::execution::{ExecutionTarget, SshConfig};
 use crate::core::llm_provider::{get_provider, IN_PROCESS_PROVIDERS};
@@ -1868,6 +1898,13 @@ pub async fn send_api_agent_message(
         state.finish_turn(&session_id, turn_id).await;
         return Err("The Flight follow-up was stopped.".into());
     }
+    // R1/R3: this follow-up is its own root turn, so prepare + bind a fresh run
+    // (linked to the previous turn) before it dispatches.
+    if let Err(error) = prepare_turn_run(&state, &session_id).await {
+        state.cancel_turn(&session_id).await;
+        state.finish_turn(&session_id, turn_id).await;
+        return Err(error);
+    }
     let state_clone = Arc::clone(&state.inner());
     let session_id_clone = session_id.clone();
 
@@ -2180,6 +2217,13 @@ pub async fn retry_last_turn(
         if let Some(cfg) = configs.get_mut(&session_id) {
             cfg.model = model;
         }
+    }
+
+    // R1/R3: a retry is a new root turn, so prepare + bind a fresh run (linked to
+    // the failed predecessor) before it dispatches.
+    if let Err(error) = prepare_turn_run(&state, &session_id).await {
+        state.finish_turn(&session_id, turn_id).await;
+        return Err(error);
     }
 
     let state_clone = Arc::clone(&state.inner());
