@@ -42,15 +42,10 @@ async fn prepare_turn_run(state: &ApiAgentState, session_id: &str) -> Result<(),
     let Some(session) = state.runtime_session(session_id).await else {
         return Ok(());
     };
-    let project_path = match &session.execution {
-        ExecutionTarget::Local { project_path } => project_path.clone(),
-        ExecutionTarget::Ssh { config } => config.remote_path.clone(),
-    };
     let Some(binding) = super::agent_runtime::prepare_session_run(
         session_id,
         &session.provider,
         &session.model,
-        &project_path,
         &session.execution,
     )
     .await?
@@ -1676,14 +1671,9 @@ async fn start_api_agent_session_inner(
     // R3b: when the runtime journal is enabled, prepare a durable run so the
     // runner can persist checkpoints. Disabled (the default), this is a no-op
     // and the path below is byte-identical to today.
-    let runtime_binding = super::agent_runtime::prepare_session_run(
-        &session_id,
-        &provider,
-        &model,
-        &project_path,
-        &execution,
-    )
-    .await?;
+    let runtime_binding =
+        super::agent_runtime::prepare_session_run(&session_id, &provider, &model, &execution)
+            .await?;
 
     // Claim the session before mutating its config/history. A duplicate start
     // cannot overwrite a live turn and inherit the old task's eventual cleanup.

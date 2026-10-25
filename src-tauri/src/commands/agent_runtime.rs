@@ -311,12 +311,18 @@ pub async fn prepare_session_run(
     session_id: &str,
     provider: &str,
     model: &str,
-    project_path: &str,
     execution: &ExecutionTarget,
 ) -> Result<Option<RuntimeRunBinding>, String> {
     if !journal::is_enabled() {
         return Ok(None);
     }
+    // Derive the project path from the execution target — the SAME source for
+    // the initial and every follow-up turn — so the owner `project_key` guard
+    // can never trip on a divergent path.
+    let project_path = match execution {
+        ExecutionTarget::Local { project_path } => project_path.clone(),
+        ExecutionTarget::Ssh { config } => config.remote_path.clone(),
+    };
     let operation_id = format!("op-{}-{}", session_id, Uuid::new_v4());
     let request_digest = runtime_checkpoint::hash_payload(&format!(
         "{}:{}:{}:{}",
