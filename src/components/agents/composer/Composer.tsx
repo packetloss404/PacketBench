@@ -4,7 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useAgentTaskStore, apiAgentProvider, type AgentCli } from "@/stores/agentTaskStore";
 import { useRuntimeGuardStore } from "@/stores/runtimeGuardStore";
-import { LAUNCH_DRAFT_KEY, useAgentDraftStore } from "@/stores/agentDraftStore";
+import { launchDraftKey, useAgentDraftStore } from "@/stores/agentDraftStore";
 import { useProfileStore } from "@/stores/profileStore";
 import { usePromptStore } from "@/stores/promptStore";
 import { useAppStore } from "@/stores/appStore";
@@ -117,8 +117,14 @@ export function Composer(props: ComposerProps) {
     (s) => isChat && (s.cancellingConversationIds?.has(conversationId) ?? false),
   );
 
+  // ─── Store wiring ─────────────────────────────────────────────────────
+  const selectedRepo = useAgentTaskStore((s) => s.selectedRepo);
+
   // ─── Draft text — always in the per-conversation draft store ─────────
-  const draftKey = isChat ? conversationId : LAUNCH_DRAFT_KEY;
+  // Launch drafts are scoped to the selected project so switching projects
+  // restores that project's own draft (F2/F5); a null project uses the legacy
+  // unbound launch slot.
+  const draftKey = isChat ? conversationId : launchDraftKey(selectedRepo);
   const input = useAgentDraftStore((s) => s.drafts[draftKey] ?? "");
   const setDraft = useAgentDraftStore((s) => s.setDraft);
   const setInput = useCallback((text: string) => setDraft(draftKey, text), [draftKey, setDraft]);
@@ -127,8 +133,6 @@ export function Composer(props: ComposerProps) {
   const textareaRef = launch ? launch.textareaRef : internalTextareaRef;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ─── Store wiring ─────────────────────────────────────────────────────
-  const selectedRepo = useAgentTaskStore((s) => s.selectedRepo);
   const setSelectedRepo = useAgentTaskStore((s) => s.setSelectedRepo);
   const chatActions = useAgentTaskStore(
     useShallow((s) => ({

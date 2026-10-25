@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LaunchConversationParams } from "@/lib/launchConversation";
 import { makeSshUri } from "@/lib/ssh-uri";
+import { launchDraftKey } from "@/stores/agentDraftStore";
 import { flagsForMode } from "@/components/agents/agentModeChipUtils";
 import type { ServerConfig } from "@/types/server";
 import type { AgentProfile } from "@/types/profiles";
@@ -85,6 +86,8 @@ vi.mock("@/lib/tauri", () => ({
 }));
 
 const SELECTED_REPO = "D:/projects/example";
+// Launch drafts are project-scoped; the launcher clears this key on success.
+const LAUNCH_KEY = launchDraftKey(SELECTED_REPO);
 
 function baseParams(overrides: Partial<LaunchConversationParams> = {}): LaunchConversationParams {
   return {
@@ -210,11 +213,11 @@ describe("launchConversation — fail-closed worktree provisioning (F1)", () => 
     getGitBranchMock.mockResolvedValue("main");
     createConversationWorktreeMock.mockRejectedValue(new Error("worktree add failed"));
 
-    const { useAgentDraftStore, LAUNCH_DRAFT_KEY } = await import("@/stores/agentDraftStore");
+    const { useAgentDraftStore } = await import("@/stores/agentDraftStore");
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    useAgentDraftStore.getState().setDraft(LAUNCH_DRAFT_KEY, "keep this prompt");
+    useAgentDraftStore.getState().setDraft(LAUNCH_KEY, "keep this prompt");
 
     const launched = await launchConversation(
       baseParams({ composerMode: "worktree", setLaunchError }),
@@ -232,7 +235,7 @@ describe("launchConversation — fail-closed worktree provisioning (F1)", () => 
     // The underlying git failure has to survive into the message — "it failed"
     // with no reason is barely better than silence.
     expect(message).toContain("worktree add failed");
-    expect(useAgentDraftStore.getState().drafts[LAUNCH_DRAFT_KEY]).toBe("keep this prompt");
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_KEY]).toBe("keep this prompt");
     warnSpy.mockRestore();
   });
 
@@ -561,11 +564,11 @@ describe("launchConversation — failed backend start (F4)", () => {
     const setLaunchError = vi.fn();
     const phases: string[] = [];
 
-    const { useAgentDraftStore, LAUNCH_DRAFT_KEY } = await import("@/stores/agentDraftStore");
+    const { useAgentDraftStore } = await import("@/stores/agentDraftStore");
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    useAgentDraftStore.getState().setDraft(LAUNCH_DRAFT_KEY, "keep this prompt");
+    useAgentDraftStore.getState().setDraft(LAUNCH_KEY, "keep this prompt");
 
     const launched = await launchConversation(
       baseParams({ setLaunchError, onPhase: (phase) => phases.push(phase) }),
@@ -587,19 +590,19 @@ describe("launchConversation — failed backend start (F4)", () => {
     // The failed conversation record still exists so the failure is inspectable…
     expect(useAgentTaskStore.getState().conversations[0]?.status).toBe("failed");
     // …but the user's draft is NOT cleared — it is theirs to retry.
-    expect(useAgentDraftStore.getState().drafts[LAUNCH_DRAFT_KEY]).toBe("keep this prompt");
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_KEY]).toBe("keep this prompt");
   });
 
   it("clears the draft only once a start actually succeeds", async () => {
-    const { useAgentDraftStore, LAUNCH_DRAFT_KEY } = await import("@/stores/agentDraftStore");
+    const { useAgentDraftStore } = await import("@/stores/agentDraftStore");
     const { launchConversation } = await import("@/lib/launchConversation");
 
-    useAgentDraftStore.getState().setDraft(LAUNCH_DRAFT_KEY, "send this");
+    useAgentDraftStore.getState().setDraft(LAUNCH_KEY, "send this");
 
     const launched = await launchConversation(baseParams());
 
     expect(launched).toBe(true);
-    expect(useAgentDraftStore.getState().drafts[LAUNCH_DRAFT_KEY]).toBeUndefined();
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_KEY]).toBeUndefined();
   });
 });
 

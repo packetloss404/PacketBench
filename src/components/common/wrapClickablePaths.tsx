@@ -6,7 +6,7 @@ import {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import { useAgentTaskStore } from "@/stores/agentTaskStore";
-import { LAUNCH_DRAFT_KEY, useAgentDraftStore } from "@/stores/agentDraftStore";
+import { launchDraftKey, useAgentDraftStore } from "@/stores/agentDraftStore";
 import { PathContextMenu } from "./PathContextMenu";
 
 /**
@@ -119,12 +119,13 @@ export function ClickablePathsRoot({
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   const handleAttach = useCallback((path: string) => {
-    const { selectedConversationId } = useAgentTaskStore.getState();
+    const { selectedConversationId, selectedRepo } = useAgentTaskStore.getState();
     // Both composers keep their text in the draft store: inside a chat the
     // mention lands in that conversation's draft; otherwise it goes to the
-    // launch composer's slot. Either way, no bleed across composers.
+    // launch composer's project-scoped slot. Either way, no bleed across
+    // composers.
     const { drafts, setDraft } = useAgentDraftStore.getState();
-    const key = selectedConversationId ?? LAUNCH_DRAFT_KEY;
+    const key = selectedConversationId ?? launchDraftKey(selectedRepo);
     const prev = drafts[key] ?? "";
     const sep = prev.length === 0 || prev.endsWith(" ") ? "" : " ";
     setDraft(key, `${prev}${sep}@${path} `);

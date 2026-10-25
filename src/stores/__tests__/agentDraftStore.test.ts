@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   gcOrphanDraftAssets,
   LAUNCH_DRAFT_KEY,
+  launchDraftKey,
   MAX_DRAFT_BYTES,
   useAgentDraftStore,
   type StagedAttachment,
@@ -67,6 +68,17 @@ describe("agentDraftStore", () => {
     store().setDraft("conv_a", "edited A");
     expect(store().drafts.conv_a).toBe("edited A");
     expect(store().drafts.conv_b).toBe("different draft for B");
+  });
+
+  it("scopes the launch draft key by project identity (F2/F5)", () => {
+    expect(launchDraftKey("D:/a")).toBe("__launch__:D:/a");
+    expect(launchDraftKey("D:/b")).toBe("__launch__:D:/b");
+    // No project yet -> the legacy unbound launch slot.
+    expect(launchDraftKey(null)).toBe(LAUNCH_DRAFT_KEY);
+    expect(launchDraftKey(undefined)).toBe(LAUNCH_DRAFT_KEY);
+    expect(launchDraftKey("")).toBe(LAUNCH_DRAFT_KEY);
+    // Two projects never share a key, and neither collides with a conversation.
+    expect(launchDraftKey("D:/a")).not.toBe(launchDraftKey("D:/b"));
   });
 
   it("keeps the launch composer's draft isolated from conversation drafts", () => {

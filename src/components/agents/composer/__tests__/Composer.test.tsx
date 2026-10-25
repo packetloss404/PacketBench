@@ -2,9 +2,12 @@ import { createRef } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "@/components/agents/composer/Composer";
-import { LAUNCH_DRAFT_KEY, useAgentDraftStore } from "@/stores/agentDraftStore";
+import { launchDraftKey, useAgentDraftStore } from "@/stores/agentDraftStore";
 import { useRuntimeGuardStore } from "@/stores/runtimeGuardStore";
 import type { AgentConversation } from "@/types/agent-conversation";
+
+// Launch drafts are project-scoped; the suite renders with this selected repo.
+const LAUNCH_KEY = launchDraftKey("D:\\projects\\PacketBench");
 
 const mocks = vi.hoisted(() => ({
   agentTaskState: {
@@ -260,7 +263,7 @@ beforeEach(() => {
 
 describe("Composer (launch variant) — image attachments", () => {
   it("keeps staged images when launch is rejected as a no-op", async () => {
-    useAgentDraftStore.getState().setDraft(LAUNCH_DRAFT_KEY, "describe this screenshot");
+    useAgentDraftStore.getState().setDraft(LAUNCH_KEY, "describe this screenshot");
     const onLaunch = vi.fn((_text: string, _attachments: unknown[]) => false);
     renderLaunch(onLaunch);
     await stageImage();
@@ -384,7 +387,7 @@ describe("Composer (launch variant) — image attachments", () => {
   it("blocks launch while a staged image is missing", async () => {
     useAgentDraftStore.setState({
       stagedAttachments: {
-        [LAUNCH_DRAFT_KEY]: [
+        [LAUNCH_KEY]: [
           {
             id: "m1",
             name: "gone.png",
@@ -417,7 +420,7 @@ describe("Composer (launch variant) — image attachments", () => {
   it("blocks launch when a ready ref's bytes cannot be read at send time (F2B)", async () => {
     useAgentDraftStore.setState({
       stagedAttachments: {
-        [LAUNCH_DRAFT_KEY]: [
+        [LAUNCH_KEY]: [
           {
             id: "u1",
             name: "unreadable.png",
@@ -452,7 +455,7 @@ describe("Composer (launch variant) — image attachments", () => {
     await waitFor(() => expect(onLaunch).not.toHaveBeenCalled());
     expect(await screen.findByText(/could not be read/)).toBeInTheDocument();
     expect(
-      useAgentDraftStore.getState().stagedAttachments[LAUNCH_DRAFT_KEY]?.[0]?.ref?.state,
+      useAgentDraftStore.getState().stagedAttachments[LAUNCH_KEY]?.[0]?.ref?.state,
     ).toBe("missing");
   });
 
@@ -474,7 +477,35 @@ describe("Composer (launch variant) — image attachments", () => {
     renderLaunch(vi.fn(() => false));
     const textarea = screen.getByPlaceholderText(/what would you like to work on/i);
     fireEvent.change(textarea, { target: { value: "half-typed launch prompt" } });
-    expect(useAgentDraftStore.getState().drafts[LAUNCH_DRAFT_KEY]).toBe("half-typed launch prompt");
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_KEY]).toBe("half-typed launch prompt");
+  });
+
+  it("scopes the launch draft to the selected project (F2/F5)", () => {
+    const element = () => (
+      <Composer
+        variant="launch"
+        textareaRef={createRef<HTMLTextAreaElement>()}
+        selectedAgent="api-minimax"
+        onAgentChange={vi.fn()}
+        onLaunch={vi.fn(() => false)}
+        selectedModel="MiniMax-M2.5"
+        onModelChange={vi.fn()}
+      />
+    );
+    const { rerender } = render(element());
+    const textarea = screen.getByPlaceholderText(/what would you like to work on/i);
+    fireEvent.change(textarea, { target: { value: "draft for A" } });
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_KEY]).toBe("draft for A");
+
+    // Switch the selected project: B shows its own (empty) draft while A's is
+    // preserved under its own key.
+    mocks.agentTaskState.selectedRepo = "D:/projects/other";
+    rerender(element());
+    expect(screen.getByPlaceholderText(/what would you like to work on/i)).toHaveValue("");
+    expect(useAgentDraftStore.getState().drafts[LAUNCH_KEY]).toBe("draft for A");
+    expect(
+      useAgentDraftStore.getState().drafts[launchDraftKey("D:/projects/other")],
+    ).toBeUndefined();
   });
 });
 
@@ -523,7 +554,7 @@ describe("Composer (chat variant) — per-conversation drafts + send (protected)
     const drafts = useAgentDraftStore.getState().drafts;
     expect(drafts["conv-1"]).toBe("typed in conv-1");
     expect(drafts["conv-other"]).toBe("other draft");
-    expect(drafts[LAUNCH_DRAFT_KEY]).toBeUndefined();
+    expect(drafts[LAUNCH_KEY]).toBeUndefined();
   });
 
   it("shows the persisted draft for its conversation on mount", () => {

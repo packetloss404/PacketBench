@@ -83,6 +83,17 @@ async function releaseAsset(attachmentId: string | undefined): Promise<void> {
  */
 export const LAUNCH_DRAFT_KEY = "__launch__";
 
+/**
+ * The draft key for the launch composer, scoped to the selected project so
+ * switching projects restores that project's own launch draft (F2/F5) instead
+ * of sharing one global box. A null/empty project (nothing chosen yet) uses the
+ * legacy unbound `__launch__` slot, which also keeps pre-scoping drafts
+ * readable. The `__` prefix can never collide with a generated `conv_*` id.
+ */
+export function launchDraftKey(projectRef: string | null | undefined): string {
+  return projectRef ? `__launch__:${projectRef}` : LAUNCH_DRAFT_KEY;
+}
+
 /** Aggregate cap for one draft's staged images (implementation default). */
 export const MAX_DRAFT_BYTES = 20 * 1024 * 1024;
 

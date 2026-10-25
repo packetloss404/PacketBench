@@ -6,7 +6,7 @@ import {
 import { requestConversationSave } from "@/stores/agentConversationPersistence";
 import { useProjectHistoryStore } from "@/stores/projectHistoryStore";
 import { useServerStore } from "@/stores/serverStore";
-import { LAUNCH_DRAFT_KEY, useAgentDraftStore } from "@/stores/agentDraftStore";
+import { launchDraftKey, useAgentDraftStore } from "@/stores/agentDraftStore";
 import { getDefaultModel } from "@/lib/api-models";
 import { createConversationWorktree, getGitBranch, type ImageAttachment } from "@/lib/tauri";
 import { generateId } from "@/lib/storage";
@@ -347,7 +347,7 @@ export function launchConversation({
       }
       // Clear the composer only once the launch actually succeeded, so a
       // failed launch keeps the user's typed prompt intact for a retry.
-      useAgentDraftStore.getState().clearDraft(LAUNCH_DRAFT_KEY);
+      useAgentDraftStore.getState().clearDraft(launchDraftKey(selectedRepo));
       return true;
     } catch (e) {
       setLaunchError(e instanceof Error ? e.message : "Failed to launch agent.");
