@@ -50,23 +50,27 @@ committed and pushed; latest installed-source identity remains unverified.
       system/tool/image input and required scope ownership, then earn activation
       and cap claims. Current journal is default-off and budgets are conditional;
       do not enable it merely because a prerequisite commit landed.
-- [ ] **P1 — F2 retained assets and delivery failure.** Guard future/unknown
-      envelopes during GC; pin message/submission/checkpoint owners and apply
-      grace/capacity rules. Reject unreadable materialization instead of silently
-      sending fewer images. Split launch drafts by project identity.
-- [ ] **P1 — F4/F5 wrong-target and failed-start behavior.** Contextual New must
-      preserve SSH server identity, not a plain remote path. Failed start must
-      retain the draft and report failure; phase labels do not substitute for
-      canonical backend preparation/cancellation acknowledgment.
-- [ ] **P1 — F3/F6 authoritative history and attention.** Enforce Flight mutation
-      restrictions in store/backend boundaries, not UI alone. Reveal the exact
-      permission above review from all global/header routes; preserve return
-      position and revalidate the target.
-- [ ] **P2 — V3–V8 final migration.** One rendered sidebar-width/reset owner,
-      transient terminal font updates, legacy typography/geometry scaling,
-      primary Send/Stop/mic/sidebar targets and accessible names, narrow header/
-      drawer/action lane and actual composited contrast remain. The source
-      token/control slices below are retained as completed partial work.
+- [~] **P1 — F2 retained assets and delivery failure.** DONE: GC never reclaims
+      assets whose v2 envelope is newer/unknown or corrupt (commits `02641d6e`,
+      `764cdbd5`). OPEN: message/submission/checkpoint ownership pins, grace/
+      capacity rules, unreadable-materialization rejection and project-scoped
+      launch drafts.
+- [~] **P1 — F4/F5 wrong-target and failed-start behavior.** DONE: contextual New
+      preserves SSH server identity via `makeSshUri`, and a rejected backend
+      start retains the draft and reports failure instead of claiming Running
+      (commit `02641d6e`). OPEN: canonical backend prepare/cancel/reconcile
+      acknowledgment (phase labels still substitute for it).
+- [~] **P1 — F3/F6 authoritative history and attention.** DONE: the exact
+      permission/plan/failure attention closes the review overlay so the target
+      is visible, and the return anchor survives (commit `02641d6e`). OPEN: Flight
+      transcript mutation restrictions at store/backend boundaries (UI gating
+      only).
+- [~] **P2 — V3–V8 final migration.** DONE: one rendered sidebar-width/reset
+      owner (`appearanceStore.agentSidebarWidthPx` with legacy migration) and the
+      transient terminal dialog now follows the terminal text preference;
+      mic/Stop/Send carry accessible names and 32px targets (commits `ae1d8ee7`,
+      `43c8d45a`). OPEN: legacy typography/geometry scaling, narrow header/drawer/
+      action lane and actual composited contrast.
 - [ ] **P2 — R4/R6/R7/R8 remaining contract/evidence.** Wire production manifest
       identity, context readout and conservative window/counting policy; complete
       child cancellation and SDK hooks/declarations. Retain offline v1 success
@@ -95,6 +99,46 @@ adds researched contracts, packets, dependencies/file leases, migrations,
 fault tests and dispatch prompts. The target remains incomplete despite the
 committed slices below. Composer research is in a separate thread and
 excluded from that team. H1 evaluation applies to the existing production runtime.
+
+### Desktop-completion tranche — October 24 (later), commits `02641d6e`, `ae1d8ee7`, `764cdbd5`, `43c8d45a`
+
+Coordinator pass over the source-confirmed residuals in
+[the audit](dev/documentation-audit-2026-10-24.md). Frontend flow/appearance
+only; **no Rust, build, install, provider or native/Docker run was performed**.
+All four commits are on `main`, staged selectively so the concurrent
+Composer/model-lab edits were preserved and excluded.
+
+- **F5 contextual New preserves SSH identity** — `AgentsView.handleNewAgent`
+  rebuilds `ssh://<serverId>?path=<remotePath>` via `makeSshUri` instead of
+  handing a bare remote path to `setSelectedRepo` (which would launch locally);
+  worktree conversations still resolve to their base checkout.
+- **F4 failed start retains the draft** — `launchConversation` detects the
+  `failed` conversation that `createApiConversation` returns after a rejected
+  backend start, reports failure and keeps the draft/attachments instead of
+  showing Running and clearing the composer.
+- **F2 conservative draft-asset GC** — `gcOrphanDraftAssets` reads the raw v2
+  envelope and refuses to reclaim when it is newer/unknown or corrupt, so an
+  unreadable envelope can never yield an empty keep set and wipe its images.
+- **F6 approval visibility** — permission/plan/failure attention closes the
+  review overlay (the return anchor survives) so the exact card is visible.
+- **V3/V7 single sidebar-width owner** — `appearanceStore.agentSidebarWidthPx`
+  is the one rendered owner; the drag/keyboard separator and Appearance reset
+  write it. A legacy `agent-sidebar-prefs.width` is adopted once (also when
+  appearance prefs exist, while the width is still default) and then consumed.
+- **V3 transient terminal font** — `TransientPtyModal` follows
+  `terminalSettingsStore.terminalFontSizePx` and updates live.
+- **V5/V6 primary controls** — mic/Stop/Send gained `aria-label`s and 32px
+  targets.
+
+Evidence: focused Vitest (launchConversation, AgentsView, agentDraftStore,
+agentAttention, AgentSidebar, appearanceStore) plus a full local `vitest run`
+(330 files / 3286 tests), `tsc --noEmit`, `eslint src` (0 errors) and
+`format:check` all pass on this source. An independent read-only review of the
+commits found no blocking defects; its non-blocking findings (legacy width
+adoption, failure wording, remote URI fallback) were fixed in `43c8d45a`.
+Open: Phase 1 runtime/recovery/spend, the remaining F2/F3/F6/V3–V8 items, N1
+diagnosis, and every build/install/native/Docker acceptance case — no native
+evidence was produced here.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
       rendered, automated Agents navigation timed out, the next capture showed
