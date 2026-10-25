@@ -80,10 +80,11 @@ committed and pushed; latest installed-source identity remains unverified.
       disclosure and a hash-verified latest-snapshot store, commit `88d34a54`)
       and explicit R7 child cancellation (a per-turn cancellation token threaded
       into the child loop; `SubagentStatus::Cancelled`; commits `6d3498e5`,
-      corrected `b2cb653b`). OPEN:
-      production manifest identity (R4), conservative window/counting policy for
-      non-Anthropic routes (the static table resolves an unknown window that
-      never blocks), and SDK hooks/declarations. Retain offline v1 success
+      corrected `b2cb653b`), and production R4 manifest recording (identity
+      derived at turn start and inserted into the `manifests` table, commit
+      `8187c8a3`). OPEN: the conservative window/counting policy for non-Anthropic
+      routes (the static table resolves an unknown window that never blocks) and
+      SDK hooks/declarations. Retain offline v1 success
       separately from unimplemented live/repeated/isolated task evidence. No
       model-training or Composer research is included.
 - [ ] **P1 — Installed-source and native verification.** The October 23 installed
@@ -207,9 +208,20 @@ boundary, so a long child *tool dispatch* delays it (bounded by the 5s grace),
 and there is no runner-level integration test for the parent select shape.
 
 Evidence: full lib suite **1294 passed / 0 failed**, runtime-eval **12/12**, fmt
-clean. Open: R1/R3 production transaction/typed resume, R4 production manifest,
-conservative window policy for non-Anthropic routes, and the remaining R8
-evidence; the journal is still default-off.
+clean.
+
+**R4 production manifest recording, commit `8187c8a3`.** `run_turn` calls
+`RuntimeServices::record_manifest` once per turn before dispatch; the Tauri host
+derives the identity from the frozen session binding — endpoint (resolved base
+URL, provider id fallback), model, harness hash (effective system prompt),
+tool-policy hash (reused from the checkpoint compatibility context), repository
+revision (local git HEAD, else an explicit `unresolved` marker), context version
+— and inserts a content-addressed `RunManifest` (fail-closed when enabled and
+bound). `core::git::get_head_revision` is the new HEAD resolver. Evidence: full
+lib suite **1296 passed / 0 failed** (manifest-identity + runner-call tests),
+runtime-eval **12/12**, fmt clean. Open: R1/R3 production transaction/typed
+resume, conservative window policy for non-Anthropic routes, and the remaining
+R8 evidence; the journal is still default-off.
 
 - [ ] **P1 — Isolate installed Windows unresponsiveness (N1).** Flight Deck
       rendered, automated Agents navigation timed out, the next capture showed
