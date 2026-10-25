@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://packetbench.app/schemas/evaluation-case-v1.schema.json",
+  "title": "PacketBench EvaluationCase v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "caseId",
+    "version",
+    "title",
+    "taskInput",
+    "executionBinding",
+    "harnessConfigDigest",
+    "verifier",
+    "outcomeCriteria",
+    "script"
+  ],
+  "properties": {
+    "v": { "const": 1 },
+    "caseId": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "version": { "type": "integer", "minimum": 1 },
+    "title": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "taskInput": { "type": "string" },
+    "executionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "transport"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "model": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "transport": { "type": "string", "minLength": 1, "pattern": "\\S" }
+      }
+    },
+    "harnessConfigDigest": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limitUsdMicros": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "verifier": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "outcomeCriteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expect"],
+      "properties": {
+        "expect": { "enum": ["completed", "failed", "cancelled"] },
+        "expectSettles": { "type": "integer", "minimum": 0 },
+        "expectContextBlock": { "type": "boolean" },
+        "expectToolExecuted": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "expectToolDenied": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "expectErrorContains": { "type": "string", "minLength": 1 }
+      }
+    },
+    "script": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "chunks"],
+            "properties": {
+              "kind": { "const": "chunks" },
+              "chunks": { "type": "array", "items": { "type": "object" } }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "chunks"],
+            "properties": {
+              "kind": { "const": "chunksThenBlock" },
+              "chunks": { "type": "array", "items": { "type": "object" } }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "message"],
+            "properties": {
+              "kind": { "const": "fail" },
+              "message": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "permissionMode": { "enum": ["auto", "ask_for_risky", "allow_all", "deny_all"] },
+        "allowedTools": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" } }
+          ]
+        },
+        "autoAllowedTools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "pattern": "\\S" }
+        },
+        "permissionDecision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": ["allowOnce", "allow_once", "allowAlways", "allow_always", "deny"]
+            },
+            "reason": { "type": "string" }
+          }
+        },
+        "admission": { "enum": ["reserved", "refused"] },
+        "scriptedActualUsdMicros": { "type": "integer", "minimum": 0 },
+        "scriptedAccountError": { "type": "string", "minLength": 1 },
+        "capabilityGuardEnabled": { "type": "boolean" },
+        "contextWindowTokens": { "type": "integer", "minimum": 0 },
+        "checkpointFault": {
+          "enum": [
+            "user_turn_accepted",
+            "pre_request",
+            "tool_intent",
+            "tool_receipt",
+            "assistant_receipt"
+          ]
+        },
+        "pendingAttachments": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "repositoryFixture": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1, "pattern": "\\S" }
+      ]
+    },
+    "startingCommit": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1, "pattern": "\\S" }
+      ]
+    }
+  }
+}

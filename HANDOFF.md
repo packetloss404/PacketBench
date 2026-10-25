@@ -84,7 +84,9 @@ request_id bridge, gated on a configured budget (1228/0, full gates green). R6
 added context projection + `blocked_context` overflow blocking (journal v5 +
 `core/runtime_context.rs`, 1244/0). R7 added the explicit subagent role resolver
 
-- child budget parity (1264/0). R8 (offline runtime-eval harness) remains.
+- child budget parity (1264/0). R8 added the offline same-executor eval lane
+  (`runtime-eval` bin + versioned case/result schema + 12 fixtures + acceptance
+  helper + gate, 1275/0); the live held-out-trial lane remains deferred.
   V1/V2 followed: shared type tokens raised to comfortable sizes
   (UI 13/20, meta 12/16, transcript 15/24, composer 15/22, code 13/20) and
   muted/faint text now clears 4.5:1 on every surface in both themes, gated by a

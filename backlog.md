@@ -270,6 +270,26 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       duplicated cost derivation) all fixed. **Known gap:** the child loop has no
       cancellation token (a Stop during a child tool round is not honored) —
       pre-existing, follow-up.
+- [x] **P2 — Offline same-executor eval lane (R8 v1).** New `runtime-eval` Cargo
+      feature + `src-tauri/src/bin/runtime-eval.rs` driving the SAME `run_turn`
+      via the `FakeServices`/`ScriptedProvider` deterministic lane (no second
+      loop). `src-tauri/src/runtime_eval/` holds versioned `EvaluationCase v1`/
+      `RunResult v1` (all spec fields, actual/provisional/unknown spend split), a
+      fixture loader with a load-bearing `harnessConfigDigest`, deterministic
+      grading from harness observations (never model text), and an honest
+      redaction guard. 12 JSON fixtures cover text/tool/permission/cancel/
+      provider-error/budget refusal+settle/context overflow/checkpoint crash/
+      journal fail-closed/ledger-append-failure; two JSON Schemas + a consistency
+      test. Offline-by-default; `--live` hard-refuses (explicit provider/account/
+      spend-policy required). New `scripts/acceptance/runtime-eval.mjs` +
+      `acceptance:runtime-eval` + a `runtime:eval` gate. 1275/0; all 7 gates
+      green; review findings (missing repo-fixture/starting-commit fields,
+      unenforced schemas, shallow fixtures, empty sourceIdentity, placeholder
+      digest) all fixed. **Deferred (live lane):** 20–30 held-out tasks × 3 trials
+      against a real provider/account under a predeclared spend policy and
+      OS/container isolation; the remaining offline checkpoint-layer cases
+      (duplicate/out-of-order tool ids, newer-schema quarantine); and the SDK-lane
+      limitation declarations.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "caseId": "case-06-budget-refusal",
+  "version": 1,
+  "title": "A budget refusal blocks before dispatch",
+  "taskInput": "Do work under a refused budget.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:c28c4c04e82817f3301d6366a13476ab1b80f99cfe42de5e0457d7b413d0e0d1",
+  "budget": { "limitUsdMicros": 1000000 },
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": { "expect": "failed", "expectContextBlock": false },
+  "lane": { "admission": "refused" },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "TextDelta", "text": "should never run" },
+        {
+          "type": "Done",
+          "input_tokens": 2,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

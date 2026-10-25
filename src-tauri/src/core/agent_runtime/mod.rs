@@ -29,7 +29,7 @@ use crate::core::tool_tasks::SessionTasks;
 
 pub mod runner;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "runtime-eval"))]
 pub mod testing;
 
 /// Where durable/progress events go. The Tauri adapter emits `api-agent:*`;

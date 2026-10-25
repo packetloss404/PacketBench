@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "caseId": "case-09-checkpoint-crash",
+  "version": 1,
+  "title": "A crash before the tool receipt fails the turn",
+  "taskInput": "Run a tool that crashes before its receipt.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:58da638bb865547ab392d175b114ba435226503444aa0491a92d00ccfb0392ad",
+  "budget": {},
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": { "expect": "failed", "expectContextBlock": false },
+  "lane": { "autoAllowedTools": ["bash"], "checkpointFault": "tool_receipt" },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "ToolUseStart", "id": "t1", "name": "bash" },
+        { "type": "ToolUseInputDelta", "delta": "{\"command\":\"echo hi\"}" },
+        { "type": "ToolUseEnd", "id": "t1", "name": "bash", "arguments": { "command": "echo hi" } },
+        {
+          "type": "Done",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

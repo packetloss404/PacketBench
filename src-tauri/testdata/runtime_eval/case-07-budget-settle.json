@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "caseId": "case-07-budget-settle",
+  "version": 1,
+  "title": "A reserved budget settles with the actual on Done",
+  "taskInput": "Do work under a reserved budget.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:d899dc53dc7e588d1ddf74e6cf4db01b62917a67a304d9ecd950e11026ed57de",
+  "budget": { "limitUsdMicros": 1000000 },
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": { "expect": "completed", "expectSettles": 1, "expectContextBlock": false },
+  "lane": { "admission": "reserved", "scriptedActualUsdMicros": 1234 },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "TextDelta", "text": "ok" },
+        {
+          "type": "Done",
+          "input_tokens": 2,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

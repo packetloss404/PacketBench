@@ -9,16 +9,20 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, Notify};
 
+#[cfg(test)]
 use crate::core::agent_runtime::runner::{run_turn, MAX_OUTPUT_TOKENS};
 use crate::core::agent_runtime::{
     BudgetAdmission, CheckpointBoundary, CheckpointStore, CheckpointWrite, EditDecision, EventSink,
     FlightStatusSink, HistoryStore, PermissionBroker, PermissionDecision, PermissionMode,
-    RecordingEventSink, RunOutcome, RunRequest, RuntimeFlags, RuntimeServices, RuntimeSession,
-    ToolExecContext,
+    RecordingEventSink, RuntimeFlags, RuntimeServices, RuntimeSession, ToolExecContext,
 };
+#[cfg(test)]
+use crate::core::agent_runtime::{RunOutcome, RunRequest};
 use crate::core::execution::ExecutionTarget;
 use crate::core::hooks::HookConfig;
 use crate::core::llm_provider::LlmProvider;
@@ -26,7 +30,10 @@ use crate::core::llm_types::{
     ChatMessage, ImageAttachment, LlmRequest, StreamChunk, ToolCall, ToolResult,
 };
 use crate::core::mcp_session::NativeMcpSession;
-use crate::core::runtime_context::{estimate_text_tokens, ContextSnapshot, IMAGE_TOKEN_ESTIMATE};
+use crate::core::runtime_context::ContextSnapshot;
+#[cfg(test)]
+use crate::core::runtime_context::{estimate_text_tokens, IMAGE_TOKEN_ESTIMATE};
+#[cfg(test)]
 use crate::core::tool_runtime;
 use crate::core::tool_tasks::SessionTasks;
 
@@ -405,6 +412,13 @@ impl FakeServices {
     pub fn recorded_events(&self) -> Vec<(String, Value)> {
         self.sink.events()
     }
+
+    /// The tool names the runner actually executed, in order. A denied or
+    /// plan-mode-blocked tool is never passed to `execute_tool`, so it does not
+    /// appear here.
+    pub fn executed_tools(&self) -> Vec<String> {
+        self.executed_tools.lock().expect("executed tools").clone()
+    }
 }
 
 #[async_trait::async_trait]
@@ -674,6 +688,7 @@ impl RuntimeServices for FakeServices {
     }
 }
 
+#[cfg(test)]
 fn done(input: u64, output: u64) -> StreamChunk {
     StreamChunk::Done {
         input_tokens: input,
@@ -683,6 +698,7 @@ fn done(input: u64, output: u64) -> StreamChunk {
     }
 }
 
+#[cfg(test)]
 fn bash_call_script() -> ScriptStep {
     ScriptStep::Chunks(vec![
         StreamChunk::ToolUseStart {
@@ -701,6 +717,7 @@ fn bash_call_script() -> ScriptStep {
     ])
 }
 
+#[cfg(test)]
 fn text_script(text: &str) -> ScriptStep {
     ScriptStep::Chunks(vec![
         StreamChunk::TextDelta {
@@ -710,6 +727,7 @@ fn text_script(text: &str) -> ScriptStep {
     ])
 }
 
+#[cfg(test)]
 fn attachment() -> ImageAttachment {
     ImageAttachment {
         media_type: "image/png".to_string(),
@@ -717,6 +735,7 @@ fn attachment() -> ImageAttachment {
     }
 }
 
+#[cfg(test)]
 fn run_request(session_id: &str) -> RunRequest {
     RunRequest {
         session_id: session_id.to_string(),

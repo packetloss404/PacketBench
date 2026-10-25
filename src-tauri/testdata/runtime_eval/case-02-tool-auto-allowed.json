@@ -1,0 +1,47 @@
+{
+  "v": 1,
+  "caseId": "case-02-tool-auto-allowed",
+  "version": 1,
+  "title": "Auto-allowed tool call executes without prompting",
+  "taskInput": "Run the echo command.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:587d830732e5553ea7fb8bb9255d1e76a2de3531d8a1ee8205f8eb6c9d21874a",
+  "budget": {},
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": {
+    "expect": "completed",
+    "expectContextBlock": false,
+    "expectToolExecuted": "bash"
+  },
+  "lane": { "autoAllowedTools": ["bash"] },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "ToolUseStart", "id": "t1", "name": "bash" },
+        { "type": "ToolUseInputDelta", "delta": "{\"command\":\"echo hi\"}" },
+        { "type": "ToolUseEnd", "id": "t1", "name": "bash", "arguments": { "command": "echo hi" } },
+        {
+          "type": "Done",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "TextDelta", "text": "all done" },
+        {
+          "type": "Done",
+          "input_tokens": 2,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

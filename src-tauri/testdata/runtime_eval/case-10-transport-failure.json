@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "caseId": "case-10-transport-failure",
+  "version": 1,
+  "title": "A ScriptStep::Fail surfaces the provider error text",
+  "taskInput": "Trigger a transport failure.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:52588d20383292e5983fa7e4729a9ca57f614c77a79e36c2c3e61d748a3dced7",
+  "budget": {},
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": {
+    "expect": "failed",
+    "expectContextBlock": false,
+    "expectErrorContains": "transport refused"
+  },
+  "script": [{ "kind": "fail", "message": "transport refused" }]
+}

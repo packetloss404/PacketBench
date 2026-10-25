@@ -3,6 +3,11 @@ mod claude;
 mod commands;
 pub mod core;
 mod mcp_server;
+// R8 (H1): offline-by-default same-executor evaluation lane. Compiled only for
+// tests or the opt-in `runtime-eval` feature, so the shipped app carries none
+// of it.
+#[cfg(any(test, feature = "runtime-eval"))]
+pub mod runtime_eval;
 
 use commands::agent_sidecar::SidecarManager;
 use commands::api_agent::ApiAgentState;

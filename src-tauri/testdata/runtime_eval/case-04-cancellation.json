@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "caseId": "case-04-cancellation",
+  "version": 1,
+  "title": "Stop during a parked stream yields Cancelled",
+  "taskInput": "Stream forever.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:652f9fc732d84868a48cd456a0596dcf6d4347057f8eac8fac02dc18100c239f",
+  "budget": {},
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": { "expect": "cancelled", "expectContextBlock": false },
+  "script": [
+    {
+      "kind": "chunksThenBlock",
+      "chunks": [{ "type": "TextDelta", "text": "partial" }]
+    }
+  ]
+}

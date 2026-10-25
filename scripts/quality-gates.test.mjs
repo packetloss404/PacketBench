@@ -79,13 +79,16 @@ describe("gate catalog", () => {
 
 describe("resource locks", () => {
   it("serialises every cargo gate against every other cargo gate", () => {
-    // All three shell out to cargo and would block on the shared target-dir
+    // All of them shell out to cargo and would block on the shared target-dir
     // lock; running them concurrently buys nothing and hides the real cost.
-    const cargoGates = ["rust:check", "rust:test", "check:tauri-schema"].map(gateById);
+    const cargoGates = ["rust:check", "rust:test", "check:tauri-schema", "runtime:eval"].map(
+      gateById,
+    );
     const table = new ResourceTable();
     table.acquire(cargoGates[0].locks);
     expect(table.available(cargoGates[1].locks)).toBe(false);
     expect(table.available(cargoGates[2].locks)).toBe(false);
+    expect(table.available(cargoGates[3].locks)).toBe(false);
     table.release(cargoGates[0].locks);
     expect(table.available(cargoGates[1].locks)).toBe(true);
   });

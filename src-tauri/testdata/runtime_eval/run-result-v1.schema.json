@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://packetbench.app/schemas/run-result-v1.schema.json",
+  "title": "PacketBench RunResult v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "caseId",
+    "caseVersion",
+    "manifestId",
+    "repetitions",
+    "seed",
+    "correctness",
+    "infrastructureErrors",
+    "status",
+    "interventions",
+    "durationMs",
+    "spend",
+    "redacted",
+    "environment"
+  ],
+  "properties": {
+    "v": { "const": 1 },
+    "caseId": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "caseVersion": { "type": "integer", "minimum": 1 },
+    "manifestId": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "repetitions": { "type": "integer", "minimum": 1 },
+    "seed": { "type": "integer", "minimum": 0 },
+    "correctness": { "enum": ["pass", "fail"] },
+    "infrastructureErrors": { "type": "array", "items": { "type": "string" } },
+    "status": { "enum": ["completed", "incomplete", "blocked", "failed", "cancelled"] },
+    "interventions": { "type": "integer", "minimum": 0 },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "spend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actualUsdMicros", "provisionalUsdMicros", "unknownUsdMicros"],
+      "properties": {
+        "actualUsdMicros": { "type": "integer", "minimum": 0 },
+        "provisionalUsdMicros": { "type": "integer", "minimum": 0 },
+        "unknownUsdMicros": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "redacted": { "const": true },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "sourceIdentity"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "arch": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "sourceIdentity": { "type": "string" }
+      }
+    },
+    "failureReason": { "type": "string", "minLength": 1 }
+  }
+}

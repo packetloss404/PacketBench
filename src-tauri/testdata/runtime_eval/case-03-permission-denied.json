@@ -1,0 +1,50 @@
+{
+  "v": 1,
+  "caseId": "case-03-permission-denied",
+  "version": 1,
+  "title": "A denied permission does not execute the tool",
+  "taskInput": "Run the echo command.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:c871ccbbf4accea1c71d6551289b450d4821687148544e781f1d7c0a990c4f1e",
+  "budget": {},
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": {
+    "expect": "completed",
+    "expectContextBlock": false,
+    "expectToolDenied": "bash"
+  },
+  "lane": {
+    "permissionMode": "ask_for_risky",
+    "permissionDecision": { "kind": "deny", "reason": "stop" }
+  },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "ToolUseStart", "id": "t1", "name": "bash" },
+        { "type": "ToolUseInputDelta", "delta": "{\"command\":\"echo hi\"}" },
+        { "type": "ToolUseEnd", "id": "t1", "name": "bash", "arguments": { "command": "echo hi" } },
+        {
+          "type": "Done",
+          "input_tokens": 5,
+          "output_tokens": 4,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    },
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "TextDelta", "text": "acknowledged" },
+        {
+          "type": "Done",
+          "input_tokens": 2,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

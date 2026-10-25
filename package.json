@@ -61,6 +61,7 @@
     "gates:install-hook": "node scripts/quality-gates.mjs --install-hook",
     "gates:uninstall-hook": "node scripts/quality-gates.mjs --uninstall-hook",
     "acceptance:build": "node scripts/acceptance/build-windows.mjs",
+    "acceptance:runtime-eval": "node scripts/acceptance/runtime-eval.mjs",
     "acceptance:ssh": "node scripts/validate-live-ssh.mjs",
     "acceptance:workspace": "playwright test e2e/workspace-performance.spec.ts --workers=1",
     "release:readiness": "node scripts/release-readiness.mjs",

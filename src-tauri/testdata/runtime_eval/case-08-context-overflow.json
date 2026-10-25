@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "caseId": "case-08-context-overflow",
+  "version": 1,
+  "title": "A context overflow blocks before dispatch",
+  "taskInput": "Send a request that cannot fit.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:e8b05715521b9c8e00af2ca5b78ac383abd77379e65f11224493a9b2013e4047",
+  "budget": {},
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": { "expect": "failed", "expectContextBlock": true },
+  "lane": { "capabilityGuardEnabled": true, "contextWindowTokens": 1 },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "TextDelta", "text": "should never run" },
+        {
+          "type": "Done",
+          "input_tokens": 2,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

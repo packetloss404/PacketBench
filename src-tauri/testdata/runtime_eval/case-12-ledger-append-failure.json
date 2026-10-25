@@ -1,0 +1,33 @@
+{
+  "v": 1,
+  "caseId": "case-12-ledger-append-failure",
+  "version": 1,
+  "title": "A ledger append failure leaves the reservation reserved",
+  "taskInput": "Fail the usage ledger append on Done.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:d899dc53dc7e588d1ddf74e6cf4db01b62917a67a304d9ecd950e11026ed57de",
+  "budget": { "limitUsdMicros": 1000000 },
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": {
+    "expect": "failed",
+    "expectContextBlock": false,
+    "expectSettles": 0,
+    "expectErrorContains": "ledger append failed"
+  },
+  "lane": { "admission": "reserved", "scriptedAccountError": "ledger append failed" },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [
+        { "type": "TextDelta", "text": "ok" },
+        {
+          "type": "Done",
+          "input_tokens": 2,
+          "output_tokens": 1,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      ]
+    }
+  ]
+}

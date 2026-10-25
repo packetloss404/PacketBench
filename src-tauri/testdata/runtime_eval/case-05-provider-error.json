@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "caseId": "case-05-provider-error",
+  "version": 1,
+  "title": "A provider StreamChunk::Error fails the turn",
+  "taskInput": "Trigger a provider error.",
+  "executionBinding": { "provider": "fake", "model": "fake-model", "transport": "native" },
+  "harnessConfigDigest": "sha256:1606e8e9e941589bd21d047d9eb56ee7281c72e8492b0237a9638cf2a8ee3fe8",
+  "budget": {},
+  "verifier": "deterministic-lane",
+  "outcomeCriteria": {
+    "expect": "failed",
+    "expectContextBlock": false,
+    "expectErrorContains": "boom"
+  },
+  "script": [
+    {
+      "kind": "chunks",
+      "chunks": [{ "type": "Error", "message": "boom" }]
+    }
+  ]
+}

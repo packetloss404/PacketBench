@@ -253,3 +253,12 @@ Native path; gated on the journal + a configured budget for child reservation.
 2. **Structured outcome:** only `Completed` is a non-error tool call; `Incomplete`/`Blocked`/`Failed` return as errors so the parent sees a failure (preserves pre-R7 `is_error` semantics).
 3. **Child budget:** child model requests reserve/settle under the parent's root scope via a `ChildBudgetHook` on `ParentLlm` (inherited by nested children), reusing the runner's admission path. Journal-off is byte-identical; journal-on/no-budget adds one read and no reservation.
 4. **Known gap:** no cancellation token in the child loop (pre-existing); deferred.
+
+## R8 addendum (autonomous, 2026-10-24)
+
+Offline lane only; the live lane is guarded and deferred.
+
+1. **Same executor:** the `runtime-eval` binary drives the real `run_turn` via the `FakeServices`/`ScriptedProvider` deterministic lane (feature-gated open with `runtime-eval`). No second request/tool loop. Offline-by-default; no network/keyring/MCP/ledger/journal path is reachable.
+2. **Schema:** `EvaluationCase v1` / `RunResult v1` JSON with the spec fields; `harnessConfigDigest` is load-bearing (the loader rejects a mismatch); grading is from harness observations, never model text. JSON Schemas + a consistency test are the load-bearing check (full JSON-Schema validation deferred).
+3. **Live lane deferred:** `--live` hard-refuses (explicit provider/account/target + spend policy required). The 20-30 held-out tasks x 3 trials, container/OS isolation, the remaining checkpoint-layer offline cases, and the SDK-lane limitation declarations are follow-ups.
+4. **Gate:** `runtime:eval` (full tier, cargo-exclusive) runs the offline lane; `acceptance:runtime-eval` archives redacted results under `test-results/`.

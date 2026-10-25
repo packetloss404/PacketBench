@@ -11,6 +11,20 @@ default-run = "packetbench"
 name = "packetbench_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+[features]
+# R8 (H1): opt-in feature that opens the deterministic evaluation lane
+# (`core::agent_runtime::testing`) and builds the offline `runtime-eval` binary.
+# Off by default so ordinary builds compile neither the lane nor the bin.
+runtime-eval = []
+
+# The offline H1 evaluation CLI. `required-features` makes cargo skip it in a
+# normal build; only `cargo run --features runtime-eval --bin runtime-eval`
+# (or an explicit `--all-features` build) produces it.
+[[bin]]
+name = "runtime-eval"
+path = "src/bin/runtime-eval.rs"
+required-features = ["runtime-eval"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

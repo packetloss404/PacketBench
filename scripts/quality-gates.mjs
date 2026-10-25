@@ -264,6 +264,19 @@ const GATES = [
     affectedBy: ["src-tauri/", "Cargo.toml", "Cargo.lock", "rust-toolchain"],
   },
   {
+    id: "runtime:eval",
+    script: "acceptance:runtime-eval",
+    tiers: ["full"],
+    weight: 120_000,
+    // Builds and runs a cargo bin, so it joins the target-dir lock. Runs after
+    // the cargo chain (default priority), not inside it.
+    locks: [
+      [RESOURCES.cargo, EXCLUSIVE],
+      [RESOURCES.cpu, SHARED],
+    ],
+    affectedBy: ["src-tauri/", "scripts/"],
+  },
+  {
     id: "check:tauri-schema",
     script: "check:tauri-schema",
     tiers: ["full"],
