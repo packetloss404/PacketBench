@@ -67,6 +67,13 @@ before any external beta.
 
 ## What It Does
 
+Current end-to-end acceptance varies by provider, platform, hardware and
+external integration. The [advertised-feature acceptance inventory](./dev/advertised-feature-acceptance-2026-10-25.md)
+maps the claims below to automated coverage and the remaining native/live
+checks. Browser tests drive the React UI in Chromium with a simulated Tauri
+bridge; they do not launch real PTYs or prove paid-provider, SSH, keyring,
+microphone, installer, or external deployment behavior.
+
 - Create and supervise structured conversations with fourteen API-agent provider rows
   in the first-class **Agents** surface — Claude Agent SDK/API, OpenAI
   API/Agents SDK, MiniMax, OpenRouter, local Ollama,
@@ -182,8 +189,10 @@ Auth status is probed live and shown as a badge next to each row (`ready` / `mis
 
 **Agents** owns new GUI-agent creation, the cross-project conversation and
 attention list, one large active conversation, and its inspector. Every
-provider shares one composer, two interchangeable backends (in-process Rust +
-Node sidecar), and one event contract. When writes stack up, the
+provider shares one composer and one event contract across the in-process Rust
+and Node sidecar backends. Their request-budget, recovery, context, and
+cancellation guarantees differ; see [current transport limitations](./dev/agent-experience/07-sdk-limitations.md).
+When writes stack up, the
 **ReviewBar** opens the canonical **ReviewSurface**; when work settles, the
 explicit Git handoff opens the authoritative **WorktreeLifecycleBar** for the
 same conversation and worktree.
@@ -225,7 +234,7 @@ handoffs, and deep links never materialize wrapper Workspaces.
 - **Cross-tool unified Project Rules editor** in `Settings → Workspaces & Terminal → Project Rules` reads + writes both `AGENTS.md` and `CLAUDE.md` on save so a single rule set works for both Claude Code and Codex
 - **Plan-with-Claude → Execute-with-OpenAI** one-click handoff: PlanPanel "Hand off to OpenAI" button spawns a fresh OpenAI Agents SDK conversation seeded with the distilled spec + plan; "← back to plan" link in the child's chat header
 - **Old-model pinning** per profile via the `pinnedModel` field — locks a known-good model so future provider auto-upgrades don't silently switch away
-- **Auto-resume across restarts**: hydrated conversations capture the provider's resume token and lazily re-establish the session on next send
+- **Conversation continuation after restart**: hydrated conversations retain available provider resume tokens and lazily re-establish a provider session on the next send. This is not automatic recovery of interrupted tool effects or typed in-flight requests; [typed recovery remains incomplete](./dev/agent-experience/07-sdk-limitations.md).
 - **Onboarding overlay** on first visit explaining the core affordances; one-time, persisted in localStorage
 
 ### Sidecar Protocol
@@ -411,22 +420,29 @@ The Claude Agent SDK and OpenAI Agents SDK providers run in a Node sidecar that 
 - PAT or GitHub OAuth **device-flow** authentication, persisted in the OS keyring per connection (no re-prompt after restart)
 - Repository listing and selection
 - Issue browsing with search, labels, and import-to-board
-- Pull request browsing with diff viewer, inline review comments, reviews, merge, and draft/label/reviewer actions
+- Pull request browsing with diff viewer, reviews, merge, labels and reviewer
+  actions. Inline review comments, draft toggles and check-runs are GitHub-only;
+  Gitea/Forgejo does not expose those actions through PacketBench.
 - Releases view and a notifications inbox (with background polling for a live badge)
 - AI investigation of issues through the selected API provider with read-only project file tools (GitHub only)
 
 ### Budget guardrails & History
 
-- Spend caps that actually stop work: daily, monthly, per-session, per-provider,
-  and per-Flight limits with a warning threshold and a hard stop that blocks a
-  launch over budget, configured in `Settings → Automation → Flights & Autonomy`
-- Bounded-autonomy Flights carry their own cost ceiling and halt when they reach it
+- Configurable daily, monthly, per-session, per-provider, and per-Flight
+  thresholds warn or block launches based on recorded usage, configured in
+  `Settings → Automation → Flights & Autonomy`.
+- Bounded-autonomy Flights check their configured cost ceiling between actions.
+  These checks are not a proven hard dollar cap: in-flight requests, missing
+  usage, provider pricing, and SDK internal calls can exceed recorded usage.
+  Native per-request admission additionally requires the opt-in runtime journal
+  and a configured budget; its remaining limits are documented in
+  [current transport limitations](./dev/agent-experience/07-sdk-limitations.md).
 - A History view for browsing prior session activity
 
-> PacketBench deliberately ships **no cost reporting surface** — no dashboard, no
-> spend chip, no per-turn dollar figures. Cost is measured and used to enforce
-> budgets; it is not reported back to you. Token counts are still shown per turn
-> and per session.
+> PacketBench has no dedicated cost dashboard or general spend chip.
+> Available usage feeds budget checks; token counts and some provider/Flight
+> evidence still display usage.
+> Missing usage must not be interpreted as zero cost.
 
 ### Project Operations
 
@@ -568,6 +584,24 @@ The sidecar work is complete across the original four v2 tiers and the v3–v11 
 PacketBench is developed on Windows but is designed to ship on macOS and Linux as well. For per-platform prerequisites, supported target triples, and cross-compilation notes, see [`dev/multi-platform-build.md`](./dev/multi-platform-build.md). Builds and releases are produced locally — there is no GitHub Actions CI in this repo.
 
 ### Beta Distribution Status
+
+**Later October 25 dogfood update:** at the owner's request, the verified
+`04cd0e16` build was installed on the workstation and opened successfully.
+All 8,683 expected installed payload hashes and the bundled sidecar probe
+passed. See [current status](./dev/current-status.md) for the installed hash
+and the limits of this startup observation. The preparation-only receipt below
+retains its original scope; full native/live acceptance remains open.
+
+**October 25: verified unsigned Windows x64 installers are prepared from clean
+source `04cd0e16`.** Both NSIS/MSI delivered copies passed 8,683 payload hashes,
+their own executable hash/version, bundled Node `v24.15.0`, sidecar protocol 12
+and two exact echo turns. The [acceptance receipt](./dev/advertised-feature-acceptance-2026-10-25.md#successful-clean-retry-and-delivered-installer-receipt)
+records artifact paths/hashes and source identity. This receipt is a later
+documentation-only update; the installers remain attributed to `04cd0e16`.
+There was no reinstall, installer/main-app launch, public release, new tag or
+site update. Live provider, installed whole-flow, hardware and platform cases
+remain open. GitHub had no statuses, check runs or Actions runs for the pushed
+build source; local verification supplies the test evidence.
 
 **October 24 verification: source `922ddcc9` is committed/pushed, while current
 installed-source identity is incomplete.** The installed 0.14.9 executable

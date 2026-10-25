@@ -19,6 +19,7 @@ The source is committed and pushed; the full agent-experience target and latest 
 - [Remote Agents](./remoteagents/README.md) — follows desktop completion/acceptance; later extend existing PacketRelay through transport/security contracts and internal presence.
 - [Agents/runtime target specification](./agent-experience/README.md) — committed implementation slices plus the remaining safety, flow and appearance work; Composer excluded.
 - [October 24 verification report](./documentation-audit-2026-10-24.md) — source/commit/installed-payload evidence, per-packet gaps and audit limits.
+- [October 25 advertised-feature acceptance](./advertised-feature-acceptance-2026-10-25.md) — README feature inventory, browser/source/native evidence boundaries and this team's fresh results. It does not promote historical tests to current native acceptance.
 - [Local quality gates](./local-quality-gates.md), [installer/SSH acceptance](./installer-ssh-acceptance.md), [multi-platform build](./multi-platform-build.md), [macOS plan](./macos-release-plan.md).
 - [Operations runbook](../docs/runbooks.md) — September 2026 source snapshot; verify commands against current source before operating.
 - [SDK limitations](./agent-experience/07-sdk-limitations.md) — actual current transport limits, distinct from the target design.

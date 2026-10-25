@@ -36,6 +36,7 @@ export const mockTauriInitScript = `
   const persistedState = {
     version: 1,
     flights: [],
+    issues: [],
     agents: [],
     settings: {
       maxParallelSessions: 3,
@@ -86,6 +87,10 @@ export const mockTauriInitScript = `
     load_settings: () => ({}),
     save_agents_slice: () => null,
     save_flights_slice: () => null,
+    save_issues_slice: (args) => {
+      persistedState.issues = args.issues;
+      return null;
+    },
     save_memory_slice: () => null,
     // v0.8-H — memory inline surfaces: pin-toggle endpoint. Mock returns
     // null for "not found" so tests don't depend on a real backing store.

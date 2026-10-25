@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { APP_NAME_LOWER } from "../../src/lib/brand.ts";
 import { root, config, hash, sourceIdentity } from "./common.mjs";
@@ -61,14 +61,23 @@ try {
   addTree(path.join(root, "agent-sidecar/dist"), "agent-sidecar/dist");
   addTree(path.join(root, "agent-sidecar/node_modules"), "agent-sidecar/node_modules");
   add(path.join(root, "agent-sidecar/package.json"), "agent-sidecar/package.json");
+  add(path.join(root, "LICENSE"), "LICENSE");
+  add(path.join(root, "NOTICE"), "NOTICE");
   const installers = [
     path.join(release, "bundle/nsis", `${config.productName}_${config.version}_x64-setup.exe`),
     path.join(release, "bundle/msi", `${config.productName}_${config.version}_x64_en-US.msi`),
-  ].map((file) => ({
-    path: file,
-    sha256: hash(file),
-    executableSha256: file.endsWith(".msi") ? binaryHashes.msi : binaryHashes.nsis,
-  }));
+  ].map((file) => {
+    // Keep the evidence usable after another build replaces release/bundle.
+    const archived = path.join(output, path.basename(file));
+    copyFileSync(file, archived);
+    const sha256 = hash(file);
+    assert.equal(hash(archived), sha256, `installer copy differs: ${archived}`);
+    return {
+      path: archived,
+      sha256,
+      executableSha256: file.endsWith(".msi") ? binaryHashes.msi : binaryHashes.nsis,
+    };
+  });
   const manifest = {
     schemaVersion: 1,
     builtAt: new Date().toISOString(),

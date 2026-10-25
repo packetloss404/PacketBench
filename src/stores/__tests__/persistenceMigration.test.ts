@@ -287,7 +287,7 @@ describe("orphaned localStorage keys from cut stores are silently ignored", () =
     expect(Object.keys(states).sort()).toEqual(registryIds);
     expect(states).not.toHaveProperty("ideation");
     expect(states.quality?.enabled).toBe(true);
-  }, 15_000);
+  });
 });
 
 describe("legacy conversation hydration strips mirror fields and canonicalizes agent ids", () => {

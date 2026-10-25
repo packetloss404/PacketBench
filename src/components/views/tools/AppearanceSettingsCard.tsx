@@ -141,10 +141,10 @@ export function AppearanceSettingsCard() {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="flex flex-col gap-1.5">
+    <div role="group" aria-label={label} className="flex flex-col gap-1.5">
       <span className="text-ui font-medium text-text-secondary">{label}</span>
       {children}
-    </label>
+    </div>
   );
 }
 

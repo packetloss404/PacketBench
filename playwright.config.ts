@@ -54,7 +54,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm exec vite --host 127.0.0.1 --port ${port} --strictPort`,
+    // Use the installed Vite entry point so an offline browser run does not
+    // ask Corepack to download a package manager just to start its server.
+    command: `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

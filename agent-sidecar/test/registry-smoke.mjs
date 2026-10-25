@@ -8,12 +8,10 @@
 //
 // Pass criteria per provider:
 //   - echo            → expects `done` for its sessionId (real round-trip)
-//   - claude-oauth    → `done`, `error`, OR timeout after accepting the start
-//                       (no Unknown-provider error). The SDK may wait on live
-//                       auth/network on developer machines; this smoke only
-//                       proves registration.
-//   - openai-agents   → `done`, `error`, OR timeout after accepting the start
-//                       (same rationale)
+//   - claude-oauth    → actionable missing Anthropic API-key error
+//   - openai-agents   → missing OpenAI API-key error
+//                       No key is supplied: neither provider may reach a live
+//                       service or pass merely because it timed out.
 //   - openai-codex    → MUST be `error` "Unknown provider:" — the ChatGPT
 //                       subscription row was removed in 2026-07 and must not
 //                       silently resolve to some other provider
@@ -21,7 +19,7 @@
 //                       "Unknown provider:" (proves the registry rejects
 //                       unknown names). A `done` here is FAIL.
 //
-// Each session has a 5-second individual timeout. Overall test prints a
+// Each session has a 20-second individual timeout. Overall test prints a
 // per-provider outcome table, then exits 0 if every outcome matches
 // expectations, else exits 1.
 
@@ -46,9 +44,7 @@ const sidecarEntry = resolve(__dirname, "..", "dist", "index.js");
 
 if (!existsSync(sidecarEntry)) {
   console.error(`[registry-smoke] sidecar entry not found at ${sidecarEntry}`);
-  console.error(
-    `[registry-smoke] run 'pnpm sidecar:install && pnpm sidecar:build' first`,
-  );
+  console.error(`[registry-smoke] run 'pnpm sidecar:install && pnpm sidecar:build' first`);
   process.exit(1);
 }
 
@@ -73,19 +69,15 @@ const CASES = [
     provider: "claude-oauth",
     sessionId: "registry-smoke-claude",
     verifyNoRetainedStartError: true,
-    // With or without auth — done/error proves a terminal path, while timeout
-    // still proves it was registered because unknown providers fail
-    // synchronously before any live SDK work begins.
     classify: (term) => {
-      if (term.kind === "done") return { ok: true, outcome: "done" };
-      if (term.kind === "error")
+      if (term.kind === "error" && /No Anthropic API key was provided/.test(term.message))
         return {
           ok: true,
           outcome: `error: ${term.message}`,
         };
       return {
-        ok: true,
-        outcome: `timeout after ${PER_SESSION_TIMEOUT_MS}ms (registered, no terminal event)`,
+        ok: false,
+        outcome: `expected missing Anthropic API key error, got ${term.kind}${term.message ? `: ${term.message}` : ""}`,
       };
     },
   },
@@ -94,15 +86,14 @@ const CASES = [
     sessionId: "registry-smoke-openai-agents",
     verifyNoRetainedStartError: true,
     classify: (term) => {
-      if (term.kind === "done") return { ok: true, outcome: "done" };
-      if (term.kind === "error")
+      if (term.kind === "error" && /No OpenAI API key was provided/.test(term.message))
         return {
           ok: true,
           outcome: `error: ${term.message}`,
         };
       return {
-        ok: true,
-        outcome: `timeout after ${PER_SESSION_TIMEOUT_MS}ms (registered, no terminal event)`,
+        ok: false,
+        outcome: `expected missing OpenAI API key error, got ${term.kind}${term.message ? `: ${term.message}` : ""}`,
       };
     },
   },
@@ -118,8 +109,7 @@ const CASES = [
       if (term.kind === "error" && /^Unknown provider:/.test(term.message ?? "")) {
         return { ok: true, outcome: `error: ${term.message}` };
       }
-      if (term.kind === "error")
-        return { ok: false, outcome: `wrong error: ${term.message}` };
+      if (term.kind === "error") return { ok: false, outcome: `wrong error: ${term.message}` };
       if (term.kind === "done")
         return { ok: false, outcome: "done (retired provider still registered!)" };
       return { ok: false, outcome: `timeout after ${PER_SESSION_TIMEOUT_MS}ms` };
@@ -139,8 +129,7 @@ const CASES = [
           outcome: `error (wrong message): ${term.message}`,
         };
       }
-      if (term.kind === "done")
-        return { ok: false, outcome: "unexpected done for bogus provider" };
+      if (term.kind === "done") return { ok: false, outcome: "unexpected done for bogus provider" };
       return { ok: false, outcome: `timeout after ${PER_SESSION_TIMEOUT_MS}ms` };
     },
     verifyNoRetainedSession: true,
@@ -260,31 +249,13 @@ async function run() {
     const waiter = waitForTerminal(c.sessionId);
     sendStart(c);
 
-    // For real providers (echo / claude-oauth / openai-codex) we want a
-    // terminal event ASAP even when the machine has live auth. Sending a
-    // `cancel` right after `start_session` short-circuits any real roundtrip:
-    //   - echo usually `done`s before the cancel arrives, which is fine.
-    //   - claude / codex abort with an error, which still proves registration.
-    // We skip the cancel for the bogus provider — the registry rejects it
-    // synchronously with "Unknown provider:" before any session exists, and
-    // a follow-up cancel would just produce a spurious "No active session"
-    // error that could race the real one.
-    if (c.provider !== "bogus-provider") {
-      // Tiny delay so the sidecar observes the start_session before cancel.
-      await new Promise((r) => setTimeout(r, 50));
-      sendCancel(c.sessionId);
-    }
-
     const term = await waiter;
     const classified = c.classify(term);
     if (classified.ok && c.verifyNoRetainedStartError && term.kind === "error") {
       const cleanupWaiter = waitForTerminal(c.sessionId);
       sendCancel(c.sessionId);
       const cleanupTerm = await cleanupWaiter;
-      if (
-        cleanupTerm.kind !== "error" ||
-        !cleanupTerm.message.startsWith("No active session:")
-      ) {
+      if (cleanupTerm.kind !== "error" || !cleanupTerm.message.startsWith("No active session:")) {
         classified.ok = false;
         classified.outcome += `; retained session after start error (${cleanupTerm.kind}${
           cleanupTerm.message ? `: ${cleanupTerm.message}` : ""
@@ -295,10 +266,7 @@ async function run() {
       const cleanupWaiter = waitForTerminal(c.sessionId);
       sendCancel(c.sessionId);
       const cleanupTerm = await cleanupWaiter;
-      if (
-        cleanupTerm.kind !== "error" ||
-        !cleanupTerm.message.startsWith("No active session:")
-      ) {
+      if (cleanupTerm.kind !== "error" || !cleanupTerm.message.startsWith("No active session:")) {
         classified.ok = false;
         classified.outcome += `; retained session after failed start (${cleanupTerm.kind}${
           cleanupTerm.message ? `: ${cleanupTerm.message}` : ""
@@ -310,18 +278,11 @@ async function run() {
 
   // Print outcome table.
   const pad = (s, n) => (s.length >= n ? s : s + " ".repeat(n - s.length));
-  const widthProvider = Math.max(
-    "provider".length,
-    ...results.map((r) => r.provider.length),
-  );
+  const widthProvider = Math.max("provider".length, ...results.map((r) => r.provider.length));
   const widthStatus = 6; // "PASS" / "FAIL"
   console.log("");
-  console.log(
-    `${pad("provider", widthProvider)}  ${pad("status", widthStatus)}  outcome`,
-  );
-  console.log(
-    `${"-".repeat(widthProvider)}  ${"-".repeat(widthStatus)}  ${"-".repeat(40)}`,
-  );
+  console.log(`${pad("provider", widthProvider)}  ${pad("status", widthStatus)}  outcome`);
+  console.log(`${"-".repeat(widthProvider)}  ${"-".repeat(widthStatus)}  ${"-".repeat(40)}`);
   for (const r of results) {
     console.log(
       `${pad(r.provider, widthProvider)}  ${pad(r.ok ? "PASS" : "FAIL", widthStatus)}  ${r.outcome}`,
@@ -329,11 +290,9 @@ async function run() {
   }
   console.log("");
 
-  const allOk = results.every((r) => r.ok) && !sawFatalProtocolError;
+  const allOk = results.every((r) => r.ok) && gotReady && !sawFatalProtocolError;
   if (!gotReady) {
-    console.error(
-      `[registry-smoke] WARNING: never saw 'ready' event at startup`,
-    );
+    console.error(`[registry-smoke] FAIL: never saw 'ready' event at startup`);
   }
   if (sawFatalProtocolError) {
     console.error(`[registry-smoke] FAIL: saw non-JSON stdout line`);

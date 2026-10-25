@@ -1,4 +1,4 @@
-//! `runtime-eval` — offline-by-default H1 same-executor evaluation CLI.
+//! `runtime-eval` — gated offline H1 same-executor developer example CLI.
 //!
 //! Runs versioned fixture cases through the production agent runner via the
 //! deterministic fake lane. It is offline always: no provider, keyring, ambient

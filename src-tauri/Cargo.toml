@@ -13,16 +13,16 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [features]
 # R8 (H1): opt-in feature that opens the deterministic evaluation lane
-# (`core::agent_runtime::testing`) and builds the offline `runtime-eval` binary.
-# Off by default so ordinary builds compile neither the lane nor the bin.
+# (`core::agent_runtime::testing`) and builds the offline developer example.
+# Off by default so ordinary builds compile neither the lane nor the example.
 runtime-eval = []
 
-# The offline H1 evaluation CLI. `required-features` makes cargo skip it in a
-# normal build; only `cargo run --features runtime-eval --bin runtime-eval`
-# (or an explicit `--all-features` build) produces it.
-[[bin]]
+# The offline H1 evaluation CLI must be an example, not a binary target:
+# Tauri bundles every binary target Cargo advertises, even when Cargo skips
+# compiling a required-feature binary. Keep developer tools out of installers.
+[[example]]
 name = "runtime-eval"
-path = "src/bin/runtime-eval.rs"
+path = "examples/runtime_eval.rs"
 required-features = ["runtime-eval"]
 
 [build-dependencies]

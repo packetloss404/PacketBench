@@ -151,6 +151,7 @@ export function IssueBoard() {
       if (filterText) {
         const q = filterText.toLowerCase();
         const labelMatch = issue.labels.some((l) => l.toLowerCase().includes(q));
+        const assigneeMatch = issue.assignee?.toLowerCase().includes(q) ?? false;
         const flight = flights.find((f) => f.issueIds.includes(issue.id));
         const flightMatch = flight ? flight.title.toLowerCase().includes(q) : false;
         if (
@@ -158,6 +159,7 @@ export function IssueBoard() {
           !issue.description.toLowerCase().includes(q) &&
           !issue.ticketId.toLowerCase().includes(q) &&
           !labelMatch &&
+          !assigneeMatch &&
           !flightMatch
         ) {
           return false;

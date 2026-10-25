@@ -1,5 +1,53 @@
 # Current product and delivery status
 
+**October 25 dogfood follow-up:** the owner subsequently requested installation
+and launch of the verified build. NSIS installed source `04cd0e16` successfully;
+all 8,683 expected installed file hashes, bundled Node `v24.15.0`, protocol 12
+and two echo turns passed. The installed executable hashes to
+`7e7472f6d77e3621f332e1a2ab677f6d8b3a4197097a9866c3fa89964f49cbf5`.
+The app opened to Agents with 20 existing conversations visible. Version remains
+`0.14.9`; the source/hash identifies this newer local build. Installation and
+startup evidence is beside the delivered artifacts in `installation.json`,
+`packaged-sidecar.json` and `dogfood-launch.json`. This supersedes the earlier
+preparation-only workstation state below, without closing the full native,
+provider or hardware acceptance matrix.
+
+The [October 25 advertised-feature audit](./advertised-feature-acceptance-2026-10-25.md)
+records an 82-group feature inventory and isolated validation from audit commit
+`2dd33b98` plus a test-timeout/documentation correction. The latest result for
+all twelve local gates is green: 3,296 Vitest tests, 24 Chromium cases, 1,300 Rust
+library tests, 12 offline evaluation cases, schema and the remaining checks.
+The original scheduler had one cold-import timeout; its complete Vitest rerun
+passed with all assertions intact. A disposable Linux SSH matrix also passed
+15/15 native sidecar/PTY cases. Exact logs, source identity, ignored tests and
+live-provider skips are in the report. The earlier shared-checkout gate run was
+unstable because another task edited Rust source and is not final evidence.
+
+The owner's requested **verified installers without reinstalling** are ready.
+The first clean build at `fd2135d7` failed before installer creation because
+Tauri discovered an optional developer binary. Moving it to a feature-gated
+Cargo example passed four target regressions, metadata/default-production
+checks, the release gate and a fresh 12/12 offline run. The clean retry at
+`04cd0e16b7eb0cf312af7c384c0197c69819a20d` then produced unsigned Windows x64
+NSIS/MSI installers. Both delivered copies passed all 8,683 application payload
+hashes, their format-specific executable/version, extracted Node `v24.15.0`,
+protocol 12 and two exact sidecar echo turns. Artifact paths, sizes, hashes,
+clean source fingerprint and logs are in the audit receipt. Sidecar development
+dependencies were restored. Readiness passed with zero failures and 17 disclosed
+warnings; existing signing/updater deferrals remain.
+
+GitHub checks for pushed build source `04cd0e16` returned zero statuses, check
+runs and Actions runs, consistent with this repository's deliberate absence of
+hosted CI. This final receipt is documentation only and follows the installer
+source commit. There was no reinstall, installer execution, main-app launch,
+public release, new tag or site update. The installed executable still hashes
+to `b91c617d44be753ff3f2b47ff1020c5bedca9d66e4fdcbe4b3e02deb0cfaa1f9`.
+Its earlier navigation smoke uses that existing payload. Real provider/account,
+installed whole-flow, hardware/platform and external-integration cases remain
+open. The October 24 facts below retain their original snapshot; subsequent
+runtime/flow commits and remaining work are recorded in [backlog](../backlog.md)
+and [HANDOFF](../HANDOFF.md).
+
 Reconciled October 24, 2026 (America/Chicago). Source audited:
 `922ddcc928629e116215d899580f7e9370b2603d` on `main`.
 The [verification report](./documentation-audit-2026-10-24.md) records evidence

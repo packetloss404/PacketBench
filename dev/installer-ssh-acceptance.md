@@ -1,7 +1,8 @@
 # Installer and live SSH acceptance
 
-This runbook closes the consolidation's two proof gaps: packaging the current
-source, and testing protocol-v12/project trust over an actual SSH transport.
+This runbook provides procedures for packaging the current source and testing
+protocol-v12/project trust over an actual SSH transport. Record each actual run
+and its source identity before closing either evidence gap.
 It does not substitute echo tests for paid-provider, GUI, microphone, Flight,
 or independently hosted server acceptance.
 
@@ -169,6 +170,62 @@ reply claim. Parser/error regressions can run without contacting a provider:
 ```powershell
 pnpm exec vitest run scripts/acceptance/provider-ssh-result.test.mjs --maxWorkers=1
 ```
+
+## Prepare verified Windows installers without reinstalling
+
+Use this path when the requested result is verified installer artifacts and the
+current installation must stay untouched. Prerequisites: Windows x64, the build
+toolchain and dependencies, 7-Zip, and Windows Installer's read-only COM API.
+
+When another build may run concurrently, set `CARGO_TARGET_DIR` to a private
+artifact directory for the entire build/verification run. A separate source
+worktree alone does not prevent shared output files being replaced after
+Cargo's lock releases. Dependency caches may be seeded; exclude application
+binaries, application build directories and application fingerprints so the app
+compiles fresh. The wrapper resolves the selected target through Cargo metadata.
+
+```powershell
+pnpm acceptance:build
+# Build prints the absolute manifest path. Pass that exact path below.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/validate-installer-payloads.ps1 -Manifest '<manifest.json>'
+```
+
+The build wrapper rejects source drift and archives hash-verified NSIS/MSI
+copies beside its timestamped manifest under
+`test-results/acceptance/windows/<timestamp>/`. Subsequent builds can replace
+the Cargo bundle directory without replacing those evidence artifacts.
+Keep developer-only CLIs out of Cargo's production binary targets:
+`runtime-eval` is a feature-gated example invoked with `--example runtime-eval`.
+A successful `cargo check` or offline evaluation cannot replace a real Tauri
+bundle attempt; bundle discovery must succeed with default production features.
+The manifest binds the source fingerprint, installer files, format-specific
+application executable hashes, bundled Node, sidecar resources, licenses and
+all production dependency files. Keep source unchanged during the build.
+
+The payload verifier checks both installer archive hashes, rejects unsafe
+archive paths/links, extracts them with 7-Zip and compares every application
+payload file with the manifest. MSI's read-only File/Component/Directory tables
+map cabinet file IDs back to installed paths. The verifier checks each
+format's executable version/hash, runs the extracted bundled Node version probe
+and starts only the extracted Node/sidecar in an isolated HOME for protocol-v12
+and two exact echo turns. It neither runs the installer nor starts PacketBench,
+performs MSI install actions, or changes the user's installed profile.
+
+If `7z.exe` is unavailable on PATH and outside its standard Program Files
+location, supply `-SevenZip '<absolute-path-to-7z.exe>'`. Evidence is written to
+`test-results/acceptance/payloads-<GUID>/report.json`; each format has its own
+`nsis/packaged-sidecar.json` or `msi/packaged-sidecar.json`. Helpers can be
+checked without building or installing:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/acceptance/installer-payloads.test.ps1
+```
+
+Passing proves archive integrity and extracted sidecar viability. It does not
+prove installer actions, GUI/native supervisor behavior, real providers,
+credentials, PTYs, SSH or hardware acceptance. Use the exact archived artifacts
+and hashes for the handoff; do not label the current installed app updated.
+Unsigned owner-only artifacts retain the existing signing/updater limitations.
 
 ## Build and verify the Windows upgrade
 

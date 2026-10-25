@@ -38,6 +38,30 @@ committed and pushed; latest installed-source identity remains unverified.
 
 ### Verified agent-experience residuals
 
+- [~] **P1 — Current-source advertised-feature acceptance.** The October 25
+      team audit maps the README's advertised operations to source/browser
+      coverage and named native/live prerequisites in
+      [the acceptance inventory](dev/advertised-feature-acceptance-2026-10-25.md).
+      DONE: the latest isolated result for all twelve local gates passes
+      (3,296 Vitest, 24 Chromium, 1,300 Rust library tests, 12 offline evaluator
+      cases); a complete Vitest rerun closes the initial cold-import timeout
+      without removing assertions. Disposable Linux SSH passed 15/15 native
+      sidecar/PTY cases. The report preserves exact source/evidence identities;
+      the concurrent-source shared-checkout run is exploratory only.
+      Browser journeys use a simulated Tauri bridge; sidecar SDK doubles,
+      shared-protocol/PWA builds, fixture SSH and old installed navigation do
+      not close real provider, production-host SSH, installed GUI/PTY, keyring,
+      hardware or host-integration acceptance. DONE: clean build source
+      `04cd0e16` produced both unsigned Windows x64 installers; both delivered
+      copies passed all 8,683 payload hashes plus bundled Node/protocol/two-turn
+      echo checks. Exact source/artifact hashes and retained logs are in the
+      audit receipt. Readiness passed with zero failures and 17 disclosed
+      warnings; no installer or main app was executed. GitHub had zero statuses,
+      check runs and Actions runs for that pushed build source. The owner
+      requested verified installers without reinstalling; installed native and
+      full named live integration acceptance remain open. Signing/updater
+      deferrals retain their existing owner-only scope.
+
 - [~] **P1 — R1/R3 production transaction and recovery.** DONE: the public
       resume path now derives and verifies the live policy context, so a
       compatible checkpoint offers `typed` (commit `f6cc73ae`); the run manifest
@@ -588,7 +612,7 @@ still default-off.
       cancellation token (a Stop during a child tool round is not honored) —
       pre-existing, follow-up.
 - [x] **P2 — Offline same-executor eval lane (R8 v1).** New `runtime-eval` Cargo
-      feature + `src-tauri/src/bin/runtime-eval.rs` driving the SAME `run_turn`
+      feature + `src-tauri/examples/runtime_eval.rs` driving the SAME `run_turn`
       via the `FakeServices`/`ScriptedProvider` deterministic lane (no second
       loop). `src-tauri/src/runtime_eval/` holds versioned `EvaluationCase v1`/
       `RunResult v1` (all spec fields, actual/provisional/unknown spend split), a
@@ -607,6 +631,16 @@ still default-off.
       OS/container isolation; the remaining offline checkpoint-layer cases
       (duplicate/out-of-order tool ids, newer-schema quarantine); and the SDK-lane
       limitation declarations.
+      **October 25 packaging correction:** the developer CLI is a feature-gated
+      Cargo example, invoked with `--example runtime-eval`, so Tauri does not
+      try bundling an optional executable absent from the production build.
+      The first clean packaging attempt found this blocker before producing
+      installers. Four target regressions, actual Cargo metadata, the release
+      gate, production `cargo check --bins` and a fresh 12/12 offline example
+      run pass. The clean `04cd0e16` retry subsequently produced both installer
+      formats, and both delivered copies passed complete noninstalling payload
+      checks. Exact source/evidence is in the acceptance inventory; this does
+      not claim installed GUI or live-model acceptance.
 - [x] **P1 — Journal default-on prerequisites + SDK declaration.** Added a
       single-instance guard (`tauri-plugin-single-instance`, registered first; a
       second launch focuses the existing window) — the ADR-4 prerequisite before
