@@ -147,6 +147,22 @@ export function failTurn(
   if (failed) scheduleSave(failed);
 }
 
+/**
+ * F3: a conversation that is the runtime-owned builder or reviewer for a Flight
+ * attempt must not be forked or rewound — even programmatically — because that
+ * would evade the Flight's review/scope/cost identity. The UI already disables
+ * the controls; the store enforces the same rule at the mutation boundary so no
+ * other entry point can bypass it. Returns false when the conversation is
+ * Flight-owned (mutation refused). Dynamic imports avoid a store import cycle.
+ */
+async function historyMutationAllowed(conversationId: string): Promise<boolean> {
+  const [{ useFlightStore }, { isFlightOwnedConversation }] = await Promise.all([
+    import("@/stores/flightStore"),
+    import("@/lib/flightOwnership"),
+  ]);
+  return !isFlightOwnedConversation(conversationId, useFlightStore.getState().flights);
+}
+
 export type ApiAgentCli =
   | "api-claude-oauth"
   | "api-claude"
@@ -1714,6 +1730,8 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     if (!text) return null;
     const parent = get().conversations.find((c) => c.id === id);
     if (!parent || parent.mode !== "api") return null;
+    // F3: refuse to fork a Flight-owned builder/reviewer conversation.
+    if (!(await historyMutationAllowed(id))) return null;
     if (parent.status === "active" || parent.messages.some((m) => m.isStreaming)) {
       return null;
     }
@@ -1770,6 +1788,8 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
   rewindConversation: async (id, messageId) => {
     let conv = get().conversations.find((c) => c.id === id);
     if (!conv) return false;
+    // F3: refuse to rewind a Flight-owned builder/reviewer conversation.
+    if (!(await historyMutationAllowed(id))) return false;
     const idx = conv.messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return false;
 

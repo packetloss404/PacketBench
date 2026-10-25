@@ -187,6 +187,24 @@ describe("agentTaskStore.forkConversation", () => {
     expect(child!.mcpTrustSnapshot).toEqual(parent.mcpTrustSnapshot);
   });
 
+  it("refuses to fork a Flight-owned conversation (F3 mutation boundary)", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const { useFlightStore } = await import("@/stores/flightStore");
+    seedConversation(useAgentTaskStore, conversation());
+    useFlightStore.setState({
+      flights: [
+        { id: "flight-1", attempts: [{ id: "att-1", sessionId: "conv-A" }] } as never,
+      ],
+    });
+
+    const childId = await useAgentTaskStore
+      .getState()
+      .forkConversation("conv-A", "msg-3", "edited content");
+
+    expect(childId).toBeNull();
+    expect(useAgentTaskStore.getState().conversations).toHaveLength(1);
+  });
+
   it("does not start anything for whitespace-only content", async () => {
     const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
     seedConversation(useAgentTaskStore, conversation());
@@ -300,6 +318,21 @@ describe("agentTaskStore.rewindConversation", () => {
     loadConversationsMock.mockResolvedValue([]);
     closeApiAgentSessionMock.mockResolvedValue(undefined);
     startApiAgentSessionMock.mockResolvedValue(undefined);
+  });
+
+  it("refuses to rewind a Flight-owned conversation (F3 mutation boundary)", async () => {
+    const { useAgentTaskStore } = await import("@/stores/agentTaskStore");
+    const { useFlightStore } = await import("@/stores/flightStore");
+    seedConversation(useAgentTaskStore, conversation());
+    useFlightStore.setState({
+      flights: [{ id: "flight-1", attempts: [{ id: "att-1", sessionId: "conv-A" }] } as never],
+    });
+
+    const rewound = await useAgentTaskStore.getState().rewindConversation("conv-A", "msg-3");
+
+    expect(rewound).toBe(false);
+    const updated = useAgentTaskStore.getState().conversations.find((c) => c.id === "conv-A");
+    expect(updated!.transcriptRevisions).toBeUndefined();
   });
 
   it("saves a revision and truncates through the selected turn without sending", async () => {
