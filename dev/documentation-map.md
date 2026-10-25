@@ -1,6 +1,6 @@
 # Complete Markdown catalog
 
-Reconciled October 24, 2026. One navigation inventory for 179 tracked Markdown files and newly added planning documents. The inventory includes this catalog; ignored local instructions are separate.
+Inventory reconciled October 24, 2026; October 25 adds the advertised-feature acceptance report. This navigation inventory covers tracked Markdown files and newly added planning documents, including this catalog; ignored local instructions are separate.
 
 Start at [the hub](./README.md) and [current status](./current-status.md). Desktop/runtime completion and acceptance precede Remote Agents under the owner's later October 24 decision. Listing a plan does not approve/complete/deploy it; historical records keep their own dates and evidence. Original paths are preserved.
 
@@ -16,6 +16,7 @@ Root AGENTS.md and CLAUDE.md are intentionally ignored local instructions, not p
 - [PacketBench Documentation Hub](README.md) — `dev/README.md`.
 - [Current product and delivery status](current-status.md) — `dev/current-status.md`.
 - [Source, deployment and documentation verification](documentation-audit-2026-10-24.md) — `dev/documentation-audit-2026-10-24.md`.
+- [Advertised-feature acceptance audit](advertised-feature-acceptance-2026-10-25.md) — `dev/advertised-feature-acceptance-2026-10-25.md`.
 - [Complete Markdown catalog](documentation-map.md) — `dev/documentation-map.md`.
 - [Documentation location and audit records](../docs/README.md) — `docs/README.md`.
 

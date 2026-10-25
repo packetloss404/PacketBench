@@ -9,7 +9,8 @@ describes, and is the recommended entry point for anything larger than a
 one-gate check.
 
 - `pnpm gates:fast` — format, lint, typecheck, Vitest.
-- `pnpm gates:full` — everything `pnpm check` covers, plus typecheck.
+- `pnpm gates:full` — everything `pnpm check` covers, plus typecheck and the
+  offline `runtime:eval` gate.
 - `pnpm gates:changed` — full tier, minus gates no changed file can affect.
 - `pnpm gates -- --dry-run` prints the schedule without running anything;
   `--list` prints the catalog; `--json` emits a machine-readable summary.
@@ -51,12 +52,14 @@ directly when you want a single signal.
 2. **Check: full local release confidence**
    - Use the full check command before release-oriented work or larger changes.
    - Run `pnpm check`.
-   - It covers the complete local quality surface: preflight, Playwright, sidecar checks and smoke tests, schema validation, Rust check, and Rust tests.
+   - It covers preflight, Playwright, sidecar checks and smoke tests, schema validation, Rust check, and Rust tests.
+   - `pnpm gates:full` additionally runs explicit typecheck and the offline
+     runtime evaluator. `pnpm check` itself does not include `runtime:eval`.
 
 3. **Release readiness: beta distribution gate**
    - Use the readiness check after producing local Tauri bundles. It now executes the quality gates itself, so climb the ladder in order rather than running the suite twice: `pnpm check` for the full suite, then `pnpm run release:readiness --skip-gates` for the distribution surface alone.
    - Run `pnpm run release:readiness`.
-   - It reports release metadata, signing signals, updater manifest readiness, and bundle artifact presence, then executes the full quality-gate suite for the release handoff.
+   - It reports release metadata, signing signals, updater manifest readiness, and bundle artifact presence, then executes the ten leaf gates underlying `pnpm check`. It does not run `runtime:eval` or the runner's separate typecheck gate.
    - Run `pnpm run release:readiness:report` when you only need a non-failing status snapshot during setup. `--report-only` implies `--skip-gates` and additionally suppresses the non-zero exit, so it can never report a failure.
 
 ## Individual Gates
@@ -83,6 +86,11 @@ directly when you want a single signal.
   - Run `pnpm rust:check` for fast Rust compile confidence.
   - Run `pnpm rust:test` for Rust tests.
   - Run Rust tests locally when backend command, provider, state, or orchestration behavior changes.
+
+- **Offline runtime evaluation**
+  - Run `pnpm acceptance:runtime-eval` for the scripted fixtures using the production turn runner with fake services.
+  - The full runner schedules this as `runtime:eval`; `pnpm check` and `release:readiness` do not include it.
+  - This is deterministic offline fault/contract coverage. It does not prove live-model quality, a paid provider, an actual SSH executor or installed-app recovery.
 
 - **Sidecar smoke scripts**
   - Run `pnpm sidecar:check` after changes to `agent-sidecar/`, provider routing, protocol types, or supervisor integration.

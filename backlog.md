@@ -38,6 +38,16 @@ committed and pushed; latest installed-source identity remains unverified.
 
 ### Verified agent-experience residuals
 
+- [~] **P1 — Current-source advertised-feature acceptance.** The October 25
+      team audit maps the README's advertised operations to source/browser
+      coverage and named native/live prerequisites in
+      [the acceptance inventory](dev/advertised-feature-acceptance-2026-10-25.md).
+      Browser journeys use a simulated Tauri bridge; sidecar SDK doubles,
+      shared-protocol/PWA builds and old installed navigation do not close live
+      provider/SSH/PTY/keyring/hardware/host-integration acceptance. Keep the
+      source-bound build/install and full named integration matrix open until
+      exercised; do not reinterpret absent hosted CI as a successful CI run.
+
 - [~] **P1 — R1/R3 production transaction and recovery.** DONE: the public
       resume path now derives and verifies the live policy context, so a
       compatible checkpoint offers `typed` (commit `f6cc73ae`); the run manifest

@@ -1,5 +1,12 @@
 # Current product and delivery status
 
+The [October 25 advertised-feature audit](./advertised-feature-acceptance-2026-10-25.md)
+adds current browser/source validation and an explicit feature inventory. Its
+native smoke uses the existing installed payload, not a newly source-bound
+package. The October 24 facts below retain their original snapshot; subsequent
+runtime/flow commits and remaining work are recorded in [backlog](../backlog.md)
+and [HANDOFF](../HANDOFF.md).
+
 Reconciled October 24, 2026 (America/Chicago). Source audited:
 `922ddcc928629e116215d899580f7e9370b2603d` on `main`.
 The [verification report](./documentation-audit-2026-10-24.md) records evidence

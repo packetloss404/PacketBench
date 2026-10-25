@@ -1,16 +1,15 @@
-// End-to-end smoke test for the PacketBench agent sidecar.
+// Deterministic subprocess/NDJSON smoke test for the agent sidecar.
 //
-// Spawns `node agent-sidecar/dist/index.js` directly, sends a single
-// `start_session` request for the `echo` provider, and validates the
-// emitted NDJSON event stream.
+// Spawns `node agent-sidecar/dist/index.js` directly, sends an initial turn
+// and a Unicode/multiline follow-up for the `echo` provider, and validates
+// both complete NDJSON transcripts. This does not call a live AI provider.
 //
 // Pass criteria:
 //   - >= 1 `ready` event at startup (sessionId not required)
-//   - >= 1 `chunk` event for sessionId "smoke-1" whose text is a substring
-//     of the initial message "hello world" (the echo provider streams the
-//     message in fragments)
-//   - exactly 1 `done` event for sessionId "smoke-1"
-//   - all this within 5 seconds
+//   - each turn's chunks reproduce its entire input, in order
+//   - one natural `done` event per turn, with no errors
+//   - ready advertises the required protocol and the subprocess pid
+//   - all this within 20 seconds
 //
 // Exits 0 and prints "OK" on success, prints diagnostics and exits 1 on
 // failure.
@@ -26,6 +25,7 @@ const __dirname = dirname(__filename);
 
 const SESSION_ID = "smoke-1";
 const INITIAL_MESSAGE = "hello world";
+const FOLLOWUP_MESSAGE = "second turn: café 🚀\nnext line";
 // Headroom for a BUSY machine, not for a slow sidecar. Booting dist/index.js
 // (which eagerly imports the Anthropic, OpenAI and MCP SDKs) takes ~0.9s on an
 // idle box, so the old 3-5s budgets were fine in isolation — and failed anyway
@@ -55,6 +55,8 @@ const stderrChunks = [];
 const unknownEvents = [];
 
 let finished = false;
+let completedTurns = 0;
+let turnChunkStart = 0;
 
 function finish(code, reason) {
   if (finished) return;
@@ -86,17 +88,13 @@ function finish(code, reason) {
     console.error(`[smoke] done events:   ${doneEvents.length}`);
     console.error(`[smoke] error events:  ${errorEvents.length}`);
     if (chunkEvents.length > 0) {
-      console.error(
-        `[smoke] chunk texts: ${JSON.stringify(chunkEvents.map((e) => e.text))}`,
-      );
+      console.error(`[smoke] chunk texts: ${JSON.stringify(chunkEvents.map((e) => e.text))}`);
     }
     if (errorEvents.length > 0) {
       console.error(`[smoke] errors: ${JSON.stringify(errorEvents)}`);
     }
     if (unknownEvents.length > 0) {
-      console.error(
-        `[smoke] unexpected events: ${JSON.stringify(unknownEvents.slice(0, 5))}`,
-      );
+      console.error(`[smoke] unexpected events: ${JSON.stringify(unknownEvents.slice(0, 5))}`);
     }
     if (stderrChunks.length > 0) {
       console.error(`[smoke] stderr:\n${stderrChunks.join("")}`);
@@ -169,47 +167,54 @@ function validateAndFinish() {
     finish(1, "expected at least one 'ready' event at startup, got 0");
     return;
   }
+  if (readyEvents[0].protocolVersion !== 12 || readyEvents[0].pid !== child.pid) {
+    finish(1, "ready handshake must advertise protocol 12 and the child pid");
+    return;
+  }
 
-  // at least one chunk for our session whose text is a substring of the
-  // initial message (echo provider streams fragments)
-  const ourChunks = chunkEvents.filter((e) => e.sessionId === SESSION_ID);
+  // Validate every fragment, in order, for this turn alone.
+  const expectedMessage = completedTurns === 0 ? INITIAL_MESSAGE : FOLLOWUP_MESSAGE;
+  const ourChunks = chunkEvents.slice(turnChunkStart).filter((e) => e.sessionId === SESSION_ID);
   if (ourChunks.length < 1) {
-    finish(
-      1,
-      `expected at least one 'chunk' event for sessionId '${SESSION_ID}', got 0`,
-    );
+    finish(1, `expected at least one 'chunk' event for sessionId '${SESSION_ID}', got 0`);
     return;
   }
-  const hasEchoedChunk = ourChunks.some((e) => {
-    if (typeof e.text !== "string" || e.text.length === 0) return false;
-    return INITIAL_MESSAGE.includes(e.text);
-  });
-  if (!hasEchoedChunk) {
+  const transcript = ourChunks.map((event) => event.text).join("");
+  if (transcript !== expectedMessage) {
     finish(
       1,
-      `expected at least one 'chunk' whose text is a substring of ${JSON.stringify(INITIAL_MESSAGE)}, got ${JSON.stringify(ourChunks.map((e) => e.text))}`,
+      `expected complete transcript ${JSON.stringify(expectedMessage)}, got ${JSON.stringify(transcript)}`,
     );
     return;
   }
 
-  // exactly one done for our session
+  // exactly one additional natural completion for this turn
   const ourDones = doneEvents.filter((e) => e.sessionId === SESSION_ID);
-  if (ourDones.length !== 1) {
+  if (ourDones.length !== completedTurns + 1 || ourDones.at(-1).cancelled === true) {
     finish(
       1,
-      `expected exactly one 'done' event for sessionId '${SESSION_ID}', got ${ourDones.length}`,
+      `expected ${completedTurns + 1} natural completions for session '${SESSION_ID}', got ${JSON.stringify(ourDones)}`,
     );
     return;
   }
 
   if (errorEvents.length > 0) {
-    finish(
-      1,
-      `received ${errorEvents.length} 'error' event(s): ${JSON.stringify(errorEvents)}`,
-    );
+    finish(1, `received ${errorEvents.length} 'error' event(s): ${JSON.stringify(errorEvents)}`);
     return;
   }
 
+  completedTurns++;
+  if (completedTurns === 1) {
+    turnChunkStart = chunkEvents.length;
+    child.stdin.write(
+      JSON.stringify({
+        type: "send_message",
+        sessionId: SESSION_ID,
+        content: FOLLOWUP_MESSAGE,
+      }) + "\n",
+    );
+    return;
+  }
   finish(0, "ok");
 }
 

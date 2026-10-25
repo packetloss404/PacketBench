@@ -23,6 +23,11 @@ pnpm build        # -> dist/index.js
 pnpm dev          # tsc --watch
 ```
 
+`pnpm build` removes the package's checked `dist/` directory before compiling,
+so deleted source modules cannot linger in a release payload. It refuses linked
+or non-directory output paths. The watch command remains incremental; use a
+full build before bundling or validating an artifact.
+
 The supervisor launches the sidecar by running `node <path-to-dist/index.js>`.
 It finds the entry point via the `PACKETBENCH_SIDECAR_PATH` environment variable
 (set by the Rust side; falls back to a known bundled location in release
@@ -38,6 +43,15 @@ That chain includes `sidecar:remote-project-smoke`, a regression smoke that
 starts the echo provider with a POSIX remote-looking `projectPath`. It does not
 open SSH; it verifies the sidecar protocol accepts paths that are meaningful on
 a remote host and may not exist on the desktop running the test.
+
+The echo smoke asserts the complete initial and Unicode/multiline follow-up
+transcripts through a real sidecar subprocess. The registry smoke supplies no
+API key and requires the SDK providers to reject startup with their missing-key
+errors; a timeout or an unknown-provider error fails. These checks establish
+offline transport and auth-boundary behavior. They do not prove live model
+responses, SSH transport, the native supervisor, or packaged resource discovery.
+The live Anthropic multi-turn case is skipped unless
+`PACKETBENCH_LIVE_ANTHROPIC_SMOKE=1` is explicitly configured with a usable key.
 
 ## Providers
 
@@ -87,10 +101,12 @@ The factory lives in `src/session-registry.ts`. Currently wired:
 
 ## Protocol summary
 
-**Protocol version: 11**. The version is advertised
+**Protocol version: 12**. The version is advertised
 in the `ready` event's `protocolVersion` field at startup, and the Rust
-supervisor's `EXPECTED_PROTOCOL_VERSION` constant must match (negotiation is
-warn-only: a version mismatch logs but doesn't block the connection). v2
+supervisor's `EXPECTED_PROTOCOL_VERSION` constant matches it. Negotiation is
+asymmetric: a newer version logs a warning, while a missing version or one
+below `MINIMUM_PROTOCOL_VERSION` (currently 12) marks the sidecar incompatible
+and blocks session startup. v2
 added `set_permission_mode`, `set_model`, and `retry`; v3 added typed
 attachments, per-hunk edit acceptance payloads, richer tool/plan/token
 events, and resume tokens on `done`; v4 added `cancel_pending_tools`, which
@@ -102,7 +118,11 @@ the planner-amputation refactor) deleted the entire in-process Flight Planner
 MCP surface — `planner_tool`, `planner_tool_result`, and `mcpKind:"planner"`
 are gone; v8 added remote-owned MCP filesystem sourcing and `mcp_sources`; v9
 added required `toolUseId` correlation on `edit_response`, so a response resolves
-one pending edit rather than draining the session. Providers advertise support by implementing the matching handler
+one pending edit rather than draining the session; v10 added the explicit
+`cancelled` terminal marker; v11 froze each session's `mcpTrustSnapshot`; v12
+added `projectTrustDataDir` and requires the execution host's trusted-projects
+list before remote project MCP configuration is merged or probed.
+Providers advertise support by implementing the matching handler
 methods on `ProviderHandler`; the registry emits a clean "not supported"
 error when a provider skips one.
 
