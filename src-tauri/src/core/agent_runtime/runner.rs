@@ -651,6 +651,23 @@ pub async fn run_turn<R: RuntimeServices>(
             .await;
             return Err(error);
         }
+        // R5: the request is about to leave for the provider. Mark it dispatched
+        // so a later cancel/error or a crash retains its reservation as uncertain
+        // liability instead of freeing headroom the provider may already have
+        // billed. Marked AFTER the last pre-dispatch failure point
+        // (`ensure_usage_healthy`), so a request that never left is still freed.
+        if pending_reservation {
+            if let Err(error) = services.mark_request_dispatched(session_id, &request_id).await {
+                release_pending_reservation(
+                    services,
+                    session_id,
+                    &request_id,
+                    &mut pending_reservation,
+                )
+                .await;
+                return Err(error);
+            }
+        }
         // Stream the response
         let (tx, mut rx) = mpsc::channel::<StreamChunk>(64);
         let api_key_clone = api_key.clone();

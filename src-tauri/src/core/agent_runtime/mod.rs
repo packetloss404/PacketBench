@@ -402,8 +402,22 @@ pub trait RuntimeServices:
         Ok(())
     }
     /// Release a reservation that will not be settled (cancel, error, refusal
-    /// after admission). Default is a no-op for hosts that never reserve.
+    /// after admission). Default is a no-op for hosts that never reserve. A host
+    /// that reserved should also implement [`Self::mark_request_dispatched`] so
+    /// a release of a dispatched request retains uncertain liability (R5).
     async fn release_request(&self, _session_id: &str, _request_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+    /// Mark a reserved request as actually dispatched to the provider, the
+    /// moment it leaves for the network. Default is a no-op for hosts that never
+    /// reserve. When set, a later release or a startup reconcile retains the
+    /// reservation as uncertain liability instead of freeing headroom the
+    /// provider may already have billed (R5).
+    async fn mark_request_dispatched(
+        &self,
+        _session_id: &str,
+        _request_id: &str,
+    ) -> Result<(), String> {
         Ok(())
     }
     /// Durable checkpoint sink for this turn, or `None` when the runtime journal

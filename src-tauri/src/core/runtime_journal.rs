@@ -30,11 +30,15 @@ use super::runtime_types::{
 /// add the `manifests` and `capability_snapshots` tables. R5a (H4 budget
 /// admission) bumps it from 3 to 4 to add the `requests` and
 /// `budget_reservations` tables. R6a (H3 context accounting) bumps it from 4 to
-/// 5 to add the `context_snapshots` table. This is the JOURNAL migration target;
-/// it is deliberately separate from `runtime_types::RUNTIME_SCHEMA_VERSION`,
-/// which is the `RuntimeRunSummary` wire version (still 1). A file written by a
-/// newer build is refused, never downgraded.
-pub const JOURNAL_SCHEMA_VERSION: i64 = 5;
+/// 5 to add the `context_snapshots` table. R5c (uncertain liability) bumps it
+/// from 5 to 6 to add a `dispatched_at` marker to `requests` and
+/// `budget_reservations`, so a reservation whose request actually reached the
+/// provider is never released as if it cost nothing. This is the JOURNAL
+/// migration target; it is deliberately separate from
+/// `runtime_types::RUNTIME_SCHEMA_VERSION`, which is the `RuntimeRunSummary` wire
+/// version (still 1). A file written by a newer build is refused, never
+/// downgraded.
+pub const JOURNAL_SCHEMA_VERSION: i64 = 6;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -281,6 +285,21 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                  COMMIT;",
             )
             .map_err(|e| format!("Failed to migrate runtime journal to v5: {e}"))?;
+    }
+    if version < 6 {
+        // Additive columns only. `dispatched_at` is set when a request actually
+        // leaves for the provider; a reservation with it set may have been
+        // billed even when no usage row survived, so reconcile retains it as
+        // uncertain liability instead of freeing the headroom.
+        connection
+            .execute_batch(
+                "BEGIN;\n\
+                 ALTER TABLE requests ADD COLUMN dispatched_at INTEGER;\n\
+                 ALTER TABLE budget_reservations ADD COLUMN dispatched_at INTEGER;\n\
+                 PRAGMA user_version = 6;\n\
+                 COMMIT;",
+            )
+            .map_err(|e| format!("Failed to migrate runtime journal to v6: {e}"))?;
     }
     Ok(())
 }
@@ -1110,11 +1129,16 @@ mod tests {
     #[test]
     fn fresh_journal_is_at_current_version_with_all_tables() {
         let connection = open_at(&temp_db()).unwrap();
-        assert_eq!(JOURNAL_SCHEMA_VERSION, 5);
+        assert_eq!(JOURNAL_SCHEMA_VERSION, 6);
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, JOURNAL_SCHEMA_VERSION);
+        // v6 adds the dispatch marker to both budget tables.
+        assert!(column_names(&connection, "requests").contains(&"dispatched_at".to_string()));
+        assert!(
+            column_names(&connection, "budget_reservations").contains(&"dispatched_at".to_string())
+        );
         for table in [
             "checkpoints",
             "manifests",
@@ -1295,8 +1319,48 @@ mod tests {
     }
 
     #[test]
-    fn v4_journal_migrates_to_v5_additively() {
+    fn v4_journal_migrates_to_current_additively() {
         let connection = open_at(&temp_db()).unwrap();
+        // Simulate a file written by the v4 build: the v5 `context_snapshots`
+        // table is absent, and the v4 `requests`/`budget_reservations` tables do
+        // not yet carry the v6 `dispatched_at` column.
+        connection
+            .execute_batch(
+                "DROP TABLE context_snapshots; \
+                 DROP TABLE budget_reservations; DROP TABLE requests; \
+                 CREATE TABLE requests (\n\
+                   request_id TEXT PRIMARY KEY,\n\
+                   run_id TEXT NOT NULL,\n\
+                   epoch INTEGER NOT NULL,\n\
+                   scope_key TEXT NOT NULL,\n\
+                   provider TEXT NOT NULL,\n\
+                   model TEXT NOT NULL,\n\
+                   estimated_usd_micros INTEGER NOT NULL,\n\
+                   reserved_usd_micros INTEGER NOT NULL,\n\
+                   settled_usd_micros INTEGER,\n\
+                   state TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL,\n\
+                   settled_at INTEGER,\n\
+                   FOREIGN KEY (run_id) REFERENCES runs(run_id)\n\
+                 );\n\
+                 CREATE INDEX idx_requests_run ON requests(run_id, epoch);\n\
+                 CREATE INDEX idx_requests_scope ON requests(scope_key, state);\n\
+                 CREATE TABLE budget_reservations (\n\
+                   reservation_id TEXT PRIMARY KEY,\n\
+                   request_id TEXT NOT NULL UNIQUE,\n\
+                   scope_key TEXT NOT NULL,\n\
+                   limit_usd_micros INTEGER NOT NULL,\n\
+                   reserved_usd_micros INTEGER NOT NULL,\n\
+                   settled_usd_micros INTEGER,\n\
+                   state TEXT NOT NULL,\n\
+                   created_at INTEGER NOT NULL,\n\
+                   settled_at INTEGER,\n\
+                   FOREIGN KEY (request_id) REFERENCES requests(request_id)\n\
+                 );\n\
+                 CREATE INDEX idx_budget_reservations_scope ON budget_reservations(scope_key, state);\n\
+                 PRAGMA user_version = 4;",
+            )
+            .unwrap();
         // Seed v4 rows so the additive migration's "no data touched" claim is
         // asserted for the tables that already existed at v4.
         connection
@@ -1314,16 +1378,17 @@ mod tests {
                 [],
             )
             .unwrap();
-        // Simulate a file written by the v4 build: the v5 table does not exist.
-        connection
-            .execute_batch("DROP TABLE context_snapshots; PRAGMA user_version = 4;")
-            .unwrap();
         migrate(&connection).unwrap();
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, JOURNAL_SCHEMA_VERSION);
         assert!(table_exists(&connection, "context_snapshots"));
+        // The v6 migration added `dispatched_at` to both budget tables.
+        assert!(column_names(&connection, "requests").contains(&"dispatched_at".to_string()));
+        assert!(
+            column_names(&connection, "budget_reservations").contains(&"dispatched_at".to_string())
+        );
         // The new table starts empty.
         let snapshots: i64 = connection
             .query_row("SELECT COUNT(*) FROM context_snapshots", [], |row| {
@@ -1331,11 +1396,20 @@ mod tests {
             })
             .unwrap();
         assert_eq!(snapshots, 0, "context_snapshots must start empty");
-        // The seeded v4 rows survive the additive migration.
+        // The seeded v4 rows survive the additive migration, and the added
+        // column defaults to NULL (unknown) — a migrated row is not dispatched.
         let requests: i64 = connection
             .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
             .unwrap();
         assert_eq!(requests, 1);
+        let dispatched: Option<i64> = connection
+            .query_row(
+                "SELECT dispatched_at FROM requests WHERE request_id = 'req-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dispatched, None);
         let runs: i64 = connection
             .query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))
             .unwrap();

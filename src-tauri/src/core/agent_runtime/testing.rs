@@ -194,6 +194,7 @@ pub struct FakeServices {
     admit_calls: Mutex<Vec<(String, String, String, String, u64)>>,
     settle_calls: Mutex<Vec<(String, String, i64)>>,
     release_calls: Mutex<Vec<(String, String)>>,
+    mark_dispatched_calls: Mutex<Vec<(String, String)>>,
     context_window: Mutex<Option<u64>>,
     recorded_snapshots: Mutex<Vec<ContextSnapshot>>,
     pending_attachment_count_calls: Mutex<usize>,
@@ -250,6 +251,7 @@ impl FakeServices {
             admit_calls: Mutex::new(Vec::new()),
             settle_calls: Mutex::new(Vec::new()),
             release_calls: Mutex::new(Vec::new()),
+            mark_dispatched_calls: Mutex::new(Vec::new()),
             context_window: Mutex::new(None),
             recorded_snapshots: Mutex::new(Vec::new()),
             pending_attachment_count_calls: Mutex::new(0),
@@ -319,6 +321,14 @@ impl FakeServices {
     /// `(session_id, request_id)` per release.
     pub fn release_calls(&self) -> Vec<(String, String)> {
         self.release_calls.lock().expect("release calls").clone()
+    }
+
+    /// `(session_id, request_id)` per dispatch mark (R5).
+    pub fn mark_dispatched_calls(&self) -> Vec<(String, String)> {
+        self.mark_dispatched_calls
+            .lock()
+            .expect("mark dispatched calls")
+            .clone()
     }
 
     /// How many times the runner drained queued attachments.
@@ -684,6 +694,18 @@ impl RuntimeServices for FakeServices {
         self.release_calls
             .lock()
             .expect("release calls")
+            .push((session_id.to_string(), request_id.to_string()));
+        Ok(())
+    }
+
+    async fn mark_request_dispatched(
+        &self,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<(), String> {
+        self.mark_dispatched_calls
+            .lock()
+            .expect("mark dispatched calls")
             .push((session_id.to_string(), request_id.to_string()));
         Ok(())
     }
@@ -1273,6 +1295,11 @@ async fn budget_configured_settles_the_reservation_with_the_actual_on_done() {
     assert_eq!(settles[0].1, admits[0].1, "settles the admitted request");
     assert_eq!(settles[0].2, 1234);
     assert!(services.release_calls().is_empty());
+    // R5: the request is marked dispatched before it leaves for the provider.
+    let marks = services.mark_dispatched_calls();
+    assert_eq!(marks.len(), 1, "one dispatch mark for the one request");
+    assert_eq!(marks[0].0, "s-budget-settle");
+    assert_eq!(marks[0].1, admits[0].1);
 }
 
 #[tokio::test]
@@ -1345,6 +1372,11 @@ async fn budget_configured_releases_the_reservation_on_cancellation() {
     assert_eq!(releases.len(), 1);
     assert_eq!(releases[0].0, "s-budget-cancel");
     assert_eq!(releases[0].1, services.admit_calls()[0].1);
+    // The request was dispatched before the cancel, so a real store retains the
+    // reservation as uncertain rather than freeing the headroom.
+    let marks = services.mark_dispatched_calls();
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].1, services.admit_calls()[0].1);
 }
 
 #[tokio::test]
@@ -1370,6 +1402,8 @@ async fn no_budget_reserves_nothing_and_leaves_the_event_stream_unchanged() {
     assert_eq!(admits.len(), 1);
     assert!(services.settle_calls().is_empty());
     assert!(services.release_calls().is_empty());
+    // No reservation -> no dispatch marker either.
+    assert!(services.mark_dispatched_calls().is_empty());
     let events = services.recorded_events();
     assert_eq!(events.len(), 2);
     assert_eq!(
@@ -1396,6 +1430,8 @@ async fn budget_refusal_fails_before_dispatch_and_reserves_nothing() {
     assert!(services.recorded_events().is_empty());
     assert!(services.settle_calls().is_empty());
     assert!(services.release_calls().is_empty());
+    // A refused request never dispatched, so nothing is marked.
+    assert!(services.mark_dispatched_calls().is_empty());
 }
 
 #[tokio::test]
@@ -1426,6 +1462,11 @@ async fn a_multi_iteration_turn_settles_each_request_without_releasing() {
     assert_eq!(settles[0].2, 50);
     assert_eq!(settles[1].2, 50);
     assert!(services.release_calls().is_empty());
+    // Each provider iteration marks its own request dispatched before streaming.
+    let marks = services.mark_dispatched_calls();
+    assert_eq!(marks.len(), 2);
+    assert_eq!(marks[0].1, admits[0].1);
+    assert_eq!(marks[1].1, admits[1].1);
 }
 
 #[tokio::test]

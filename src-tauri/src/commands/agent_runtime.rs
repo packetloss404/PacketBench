@@ -643,9 +643,21 @@ impl RuntimeServices for TauriRuntimeServices {
     }
 
     /// Best-effort release of an unsettled reservation. An absent reservation is
-    /// ignored (release may race a settle); other errors surface.
+    /// ignored (release may race a settle); other errors surface. A request that
+    /// was dispatched is retained as uncertain liability by the store.
     async fn release_request(&self, _session_id: &str, request_id: &str) -> Result<(), String> {
         release_reservation(request_id).await
+    }
+
+    /// Mark the reservation dispatched the instant the request leaves for the
+    /// provider, so a later cancel/release or a crash retains uncertain
+    /// liability rather than freeing headroom that may already be billed.
+    async fn mark_request_dispatched(
+        &self,
+        _session_id: &str,
+        request_id: &str,
+    ) -> Result<(), String> {
+        mark_reservation_dispatched(request_id).await
     }
 
     /// The real store only when the journal is enabled AND this session is bound
@@ -800,10 +812,28 @@ async fn release_reservation(request_id: &str) -> Result<(), String> {
     on_blocking(move || {
         journal::with_journal(|connection| {
             match runtime_budget::release(connection, &request_id_owned, now) {
-                Ok(()) => Ok(()),
+                // Released (never dispatched) or Uncertain (dispatched; headroom
+                // retained) are both successful outcomes for the caller.
+                Ok(_outcome) => Ok(()),
                 Err(BudgetError::NotFound { .. }) => Ok(()),
                 Err(error) => Err(error.to_string()),
             }
+        })
+    })
+    .await
+}
+
+/// Mark a reservation dispatched. No-op unless the runtime journal is enabled.
+async fn mark_reservation_dispatched(request_id: &str) -> Result<(), String> {
+    if !journal::is_enabled() {
+        return Ok(());
+    }
+    let now = now_ms();
+    let request_id_owned = request_id.to_string();
+    on_blocking(move || {
+        journal::with_journal(|connection| {
+            runtime_budget::mark_dispatched(connection, &request_id_owned, now)
+                .map_err(String::from)
         })
     })
     .await
@@ -831,6 +861,7 @@ pub fn reconcile_budget_on_startup() -> Result<(), String> {
     tracing::info!(
         settled = report.settled,
         released = report.released,
+        uncertain = report.uncertain,
         "Reconciled stranded budget reservations on startup"
     );
     Ok(())

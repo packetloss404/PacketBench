@@ -197,7 +197,10 @@ pub struct ReserveRequest<'a> {
 }
 
 /// A durable reservation. `settled_usd_micros` stays `None` until the request
-/// settles; a released request never carries a settled amount.
+/// settles; a released request never carries a settled amount. `dispatched_at`
+/// is set the moment the request actually leaves for the provider — a
+/// reservation with it set may have been billed even if no usage row survived,
+/// so it is never released as if it cost nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetReservation {
     pub reservation_id: String,
@@ -208,6 +211,7 @@ pub struct BudgetReservation {
     pub settled_usd_micros: Option<i64>,
     pub state: String,
     pub created_at: i64,
+    pub dispatched_at: Option<i64>,
 }
 
 /// The result of settling a reservation. An overage is labelled, never silently
@@ -370,6 +374,7 @@ pub fn reserve(
                 settled_usd_micros: None,
                 state: "reserved".to_string(),
                 created_at: request.now,
+                dispatched_at: None,
             })
         }
         Err(error) => {
@@ -466,14 +471,32 @@ pub fn settle(
     }
 }
 
-/// Release a reserved request without a settled amount, freeing its headroom.
-/// The reservation is not deleted; its state records why the scope reopened.
-pub fn release(connection: &Connection, request_id: &str, now: i64) -> Result<(), BudgetError> {
+/// What a [`release`] actually did. A reservation that was never dispatched is
+/// freed; one whose request reached the provider keeps its headroom as uncertain
+/// liability, because a dispatched request may have been billed without a
+/// recorded usage row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseOutcome {
+    /// The request was never dispatched; its headroom is free again.
+    Released,
+    /// The request was dispatched; headroom is retained as uncertain liability.
+    Uncertain,
+}
+
+/// Release a reserved request without a settled amount. A request that was
+/// **never dispatched** frees its headroom (`released`); one that was dispatched
+/// transitions to `uncertain`, which still counts toward the scope's committed
+/// spend. The reservation is not deleted; its state records why.
+pub fn release(
+    connection: &Connection,
+    request_id: &str,
+    now: i64,
+) -> Result<ReleaseOutcome, BudgetError> {
     connection
         .execute_batch("BEGIN IMMEDIATE")
         .map_err(|e| BudgetError::Store(e.to_string()))?;
 
-    let result = (|| -> Result<(), BudgetError> {
+    let result = (|| -> Result<ReleaseOutcome, BudgetError> {
         let reservation = load_reservation(connection, request_id)?;
         if reservation.state != "reserved" {
             return Err(BudgetError::Conflict {
@@ -482,11 +505,20 @@ pub fn release(connection: &Connection, request_id: &str, now: i64) -> Result<()
             });
         }
 
+        // R5: a dispatched request may already have been billed. Retain its
+        // liability as `uncertain` (which keeps counting toward committed spend)
+        // instead of freeing headroom the provider may have consumed.
+        let (next_state, outcome) = if reservation.dispatched_at.is_some() {
+            ("uncertain", ReleaseOutcome::Uncertain)
+        } else {
+            ("released", ReleaseOutcome::Released)
+        };
+
         let changed = connection
             .execute(
-                "UPDATE budget_reservations SET state = 'released', settled_at = ?1 \
-                 WHERE request_id = ?2 AND state = 'reserved'",
-                params![now, request_id],
+                "UPDATE budget_reservations SET state = ?1, settled_at = ?2 \
+                 WHERE request_id = ?3 AND state = 'reserved'",
+                params![next_state, now, request_id],
             )
             .map_err(|e| BudgetError::Store(e.to_string()))?;
         if changed != 1 {
@@ -497,9 +529,9 @@ pub fn release(connection: &Connection, request_id: &str, now: i64) -> Result<()
         }
         let changed = connection
             .execute(
-                "UPDATE requests SET state = 'released', settled_at = ?1 \
-                 WHERE request_id = ?2 AND state = 'reserved'",
-                params![now, request_id],
+                "UPDATE requests SET state = ?1, settled_at = ?2 \
+                 WHERE request_id = ?3 AND state = 'reserved'",
+                params![next_state, now, request_id],
             )
             .map_err(|e| BudgetError::Store(e.to_string()))?;
         if changed != 1 {
@@ -508,15 +540,15 @@ pub fn release(connection: &Connection, request_id: &str, now: i64) -> Result<()
                 reason: "request is no longer reserved".to_string(),
             });
         }
-        Ok(())
+        Ok(outcome)
     })();
 
     match result {
-        Ok(()) => {
+        Ok(outcome) => {
             connection
                 .execute_batch("COMMIT")
                 .map_err(|e| BudgetError::Store(e.to_string()))?;
-            Ok(())
+            Ok(outcome)
         }
         Err(error) => {
             let _ = connection.execute_batch("ROLLBACK");
@@ -525,21 +557,56 @@ pub fn release(connection: &Connection, request_id: &str, now: i64) -> Result<()
     }
 }
 
+/// Mark a reserved request as actually dispatched to the provider. Idempotent
+/// (the first timestamp wins) and a no-op for a row that is no longer reserved.
+/// This is the durable marker [`release`] and [`reconcile_reserved`] use to
+/// decide between freeing headroom and retaining uncertain liability.
+pub fn mark_dispatched(
+    connection: &Connection,
+    request_id: &str,
+    now: i64,
+) -> Result<(), BudgetError> {
+    let changed = connection
+        .execute(
+            "UPDATE budget_reservations SET dispatched_at = COALESCE(dispatched_at, ?1) \
+             WHERE request_id = ?2 AND state = 'reserved'",
+            params![now, request_id],
+        )
+        .map_err(|e| BudgetError::Store(e.to_string()))?;
+    if changed == 0 {
+        // Already settled/released/uncertain, or unknown — nothing to mark.
+        return Ok(());
+    }
+    connection
+        .execute(
+            "UPDATE requests SET dispatched_at = COALESCE(dispatched_at, ?1) \
+             WHERE request_id = ?2 AND state = 'reserved'",
+            params![now, request_id],
+        )
+        .map_err(|e| BudgetError::Store(e.to_string()))?;
+    Ok(())
+}
+
 /// The outcome of a [`reconcile_reserved`] pass: how many stranded reservations
 /// were settled against the usage ledger and how many were released.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconcileReport {
     pub settled: usize,
     pub released: usize,
+    /// Rows whose request was dispatched but absent from the ledger: their
+    /// headroom is retained as uncertain liability rather than freed.
+    pub uncertain: usize,
 }
 
 /// Reconcile reservations stranded by a crash between the usage-ledger append
 /// and the journal settle. Every `reserved` row is revisited: one whose
-/// `request_id` appears in `ledger` is settled at the ledger's actual, and one
-/// absent from `ledger` is released (it never produced usage). A row already
-/// reconciled concurrently (`NotFound`/`Conflict`) is skipped, not counted; any
-/// other [`BudgetError`] aborts the pass. Only safe under the single-instance
-/// guard (ADR-4); runs once at startup.
+/// `request_id` appears in `ledger` is settled at the ledger's actual. One
+/// absent from `ledger` is released only when its request was **never
+/// dispatched**; a dispatched request (see [`mark_dispatched`]) is instead
+/// retained as `uncertain`, because it may have been billed without a recorded
+/// usage row. A row already reconciled concurrently (`NotFound`/`Conflict`) is
+/// skipped, not counted; any other [`BudgetError`] aborts the pass. Only safe
+/// under the single-instance guard (ADR-4); runs once at startup.
 pub fn reconcile_reserved(
     connection: &Connection,
     ledger: &HashMap<String, i64>,
@@ -562,6 +629,7 @@ pub fn reconcile_reserved(
     let mut report = ReconcileReport {
         settled: 0,
         released: 0,
+        uncertain: 0,
     };
     for request_id in request_ids {
         match ledger.get(&request_id) {
@@ -573,7 +641,8 @@ pub fn reconcile_reserved(
                 }
             }
             None => match release(connection, &request_id, now) {
-                Ok(()) => report.released += 1,
+                Ok(ReleaseOutcome::Released) => report.released += 1,
+                Ok(ReleaseOutcome::Uncertain) => report.uncertain += 1,
                 Err(BudgetError::NotFound { .. }) | Err(BudgetError::Conflict { .. }) => {}
                 Err(error) => return Err(error),
             },
@@ -606,7 +675,7 @@ pub fn load_reservation(
     connection
         .query_row(
             "SELECT reservation_id, request_id, scope_key, limit_usd_micros, reserved_usd_micros, \
-             settled_usd_micros, state, created_at \
+             settled_usd_micros, state, created_at, dispatched_at \
              FROM budget_reservations WHERE request_id = ?1",
             params![request_id],
             |row| {
@@ -619,6 +688,7 @@ pub fn load_reservation(
                     settled_usd_micros: row.get(5)?,
                     state: row.get(6)?,
                     created_at: row.get(7)?,
+                    dispatched_at: row.get(8)?,
                 })
             },
         )
@@ -932,6 +1002,88 @@ mod tests {
     }
 
     #[test]
+    fn release_of_a_dispatched_request_retains_uncertain_liability() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(900)).unwrap();
+        mark_dispatched(&connection, "req-1", 1_500).unwrap();
+
+        let outcome = release(&connection, "req-1", 2_000).unwrap();
+        assert_eq!(outcome, ReleaseOutcome::Uncertain);
+
+        let loaded = load_reservation(&connection, "req-1").unwrap();
+        assert_eq!(loaded.state, "uncertain");
+        assert_eq!(loaded.settled_usd_micros, None);
+        assert_eq!(loaded.dispatched_at, Some(1_500));
+        // The retained liability still consumes the scope: a second reservation
+        // that would exceed the limit is refused (headroom was NOT freed).
+        assert!(reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(900)).is_err());
+    }
+
+    #[test]
+    fn release_of_an_undispatched_request_frees_headroom() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(900)).unwrap();
+
+        let outcome = release(&connection, "req-1", 2_000).unwrap();
+        assert_eq!(outcome, ReleaseOutcome::Released);
+        let loaded = load_reservation(&connection, "req-1").unwrap();
+        assert_eq!(loaded.state, "released");
+        assert_eq!(loaded.dispatched_at, None);
+        // Freed headroom admits a fresh reservation.
+        reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(900)).unwrap();
+    }
+
+    #[test]
+    fn mark_dispatched_is_idempotent_and_ignores_non_reserved_rows() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(100)).unwrap();
+        mark_dispatched(&connection, "req-1", 1_500).unwrap();
+        mark_dispatched(&connection, "req-1", 9_999).unwrap();
+        // The first timestamp wins.
+        assert_eq!(
+            load_reservation(&connection, "req-1")
+                .unwrap()
+                .dispatched_at,
+            Some(1_500)
+        );
+        // Marking an unknown request is a harmless no-op, not an error.
+        mark_dispatched(&connection, "missing", 1).unwrap();
+        // After settle the row is no longer reserved, so a late mark is ignored.
+        settle(&connection, "req-1", 50, 2_000).unwrap();
+        mark_dispatched(&connection, "req-1", 9_999).unwrap();
+        assert_eq!(
+            load_reservation(&connection, "req-1")
+                .unwrap()
+                .dispatched_at,
+            Some(1_500)
+        );
+    }
+
+    #[test]
+    fn reconcile_retains_a_dispatched_row_absent_from_the_ledger_as_uncertain() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+        mark_dispatched(&connection, "req-1", 1_500).unwrap();
+
+        let report = reconcile_reserved(&connection, &HashMap::new(), 2_000).unwrap();
+        assert_eq!(
+            report,
+            ReconcileReport {
+                settled: 0,
+                released: 0,
+                uncertain: 1,
+            }
+        );
+        let loaded = load_reservation(&connection, "req-1").unwrap();
+        assert_eq!(loaded.state, "uncertain");
+        assert_eq!(loaded.settled_usd_micros, None);
+    }
+
+    #[test]
     fn reserved_total_for_an_unknown_scope_is_zero() {
         let connection = open_at(&temp_db()).unwrap();
         assert_eq!(reserved_total(&connection, "local:never-seen").unwrap(), 0);
@@ -1060,6 +1212,7 @@ mod tests {
             ReconcileReport {
                 settled: 1,
                 released: 0,
+                uncertain: 0,
             }
         );
         let loaded = load_reservation(&connection, "req-1").unwrap();
@@ -1080,6 +1233,7 @@ mod tests {
             ReconcileReport {
                 settled: 0,
                 released: 1,
+                uncertain: 0,
             }
         );
         let loaded = load_reservation(&connection, "req-1").unwrap();
@@ -1104,6 +1258,7 @@ mod tests {
             ReconcileReport {
                 settled: 1,
                 released: 0,
+                uncertain: 0,
             }
         );
         let loaded = load_reservation(&connection, "req-1").unwrap();
@@ -1131,6 +1286,7 @@ mod tests {
             ReconcileReport {
                 settled: 0,
                 released: 0,
+                uncertain: 0,
             }
         );
         let settled = load_reservation(&connection, "req-1").unwrap();
@@ -1159,6 +1315,7 @@ mod tests {
             ReconcileReport {
                 settled: 1,
                 released: 1,
+                uncertain: 0,
             }
         );
         assert_eq!(
@@ -1194,6 +1351,7 @@ mod tests {
             ReconcileReport {
                 settled: 0,
                 released: 0,
+                uncertain: 0,
             }
         );
         assert_eq!(
