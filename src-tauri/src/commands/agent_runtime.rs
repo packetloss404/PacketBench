@@ -1076,6 +1076,22 @@ async fn mark_reservation_dispatched(request_id: &str) -> Result<(), String> {
 /// releases every stranded reservation. Safe only under the single-instance
 /// guard (ADR-4). A ledger read/parse failure is surfaced, not swallowed —
 /// reconciliation is best-effort at startup but must appear in the log.
+/// Startup reconciliation of runs stranded by a crash (R1/R3). No-op unless the
+/// runtime journal is enabled. Marks every non-terminal run
+/// `needs_reconciliation` so a restart never leaves a run looking live.
+pub fn reconcile_runs_on_startup() -> Result<(), String> {
+    if !journal::is_enabled() {
+        return Ok(());
+    }
+    journal::with_journal(|connection| {
+        let count = journal::reconcile_runs_on_startup(connection)?;
+        if count > 0 {
+            tracing::info!(count, "Reconciled stranded runs on startup");
+        }
+        Ok(())
+    })
+}
+
 pub fn reconcile_budget_on_startup() -> Result<(), String> {
     if !journal::is_enabled() {
         return Ok(());

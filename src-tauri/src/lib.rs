@@ -277,6 +277,12 @@ pub fn run() {
                 tracing::warn!("Budget reconciliation on startup failed: {}", e);
             }
 
+            // R1/R3: mark runs stranded by a crash `needs_reconciliation` so a
+            // restart never leaves a run looking live. Non-fatal.
+            if let Err(e) = commands::agent_runtime::reconcile_runs_on_startup() {
+                tracing::warn!("Run reconciliation on startup failed: {}", e);
+            }
+
             // Best-effort teardown of the worktrees belonging to attempts a
             // previous run left mid-flight (see the recovery pass above).
             // Detached: git/SSH removal is slow and must not delay the window.

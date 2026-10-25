@@ -456,7 +456,19 @@ pub fn prepare_operation(
                 return Err("No conversation owner exists for an existing turn".to_string())
             }
             ("initial", None) => None,
-            ("existing", Some((_, _, latest))) => latest.clone(),
+            ("existing", Some((owner_project_key, _, latest))) => {
+                // Unrelated-owner guard: an existing turn must belong to the
+                // project that owns the conversation. A mismatch would extend a
+                // conversation under a different project/authority.
+                if owner_project_key != &input.launch.project_key {
+                    return Err(format!(
+                        "Conversation {} is owned by project \"{owner_project_key}\"; refusing an \
+                         existing turn for project \"{}\"",
+                        input.conversation_id, input.launch.project_key
+                    ));
+                }
+                latest.clone()
+            }
             _ => unreachable!(),
         };
 
@@ -732,6 +744,47 @@ pub fn finish_run(
         )?;
     }
     Ok(())
+}
+
+/// Reconcile runs stranded by a crash. The journal is single-instance (ADR-4), so
+/// a freshly started process owns it and any run still in a non-terminal state
+/// belongs to a dead process. Mark each `needs_reconciliation` and append a
+/// `reconciled` event, so a restart never leaves a run looking live and an
+/// unresolved outcome stays visible. Already-terminal or already-reconciled runs
+/// are left alone. Returns the number of runs reconciled.
+pub fn reconcile_runs_on_startup(connection: &Connection) -> Result<usize, String> {
+    let stranded: Vec<(String, i64)> = {
+        let mut statement = connection
+            .prepare(
+                "SELECT run_id, epoch FROM runs \
+                 WHERE state NOT IN ('cancelled','completed','failed','needs_reconciliation') \
+                 ORDER BY run_id",
+            )
+            .map_err(|e| format!("Failed to read stranded runs: {e}"))?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| format!("Failed to read stranded runs: {e}"))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| format!("Failed to read stranded runs: {e}"))?
+    };
+    for (run_id, epoch) in &stranded {
+        connection
+            .execute(
+                "UPDATE runs SET state = 'needs_reconciliation' \
+                 WHERE run_id = ?1 \
+                 AND state NOT IN ('cancelled','completed','failed','needs_reconciliation')",
+                params![run_id],
+            )
+            .map_err(|e| format!("Failed to reconcile run: {e}"))?;
+        insert_event(
+            connection,
+            run_id,
+            *epoch,
+            "reconciled",
+            "{\"reason\":\"process restart\"}",
+        )?;
+    }
+    Ok(stranded.len())
 }
 
 /// What `inspect_runtime_resume` reports: the permitted resume modes plus every
@@ -1787,6 +1840,38 @@ mod tests {
         let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
         assert!(finish_run(&connection, &prepared.run_id, 0, "nonsense").is_err());
         assert!(finish_run(&connection, "missing", 0, "completed").is_err());
+    }
+
+    #[test]
+    fn reconcile_runs_on_startup_marks_non_terminal_runs_and_leaves_terminal_ones() {
+        let connection = open_at(&temp_db()).unwrap();
+        let first = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let mut follow = input("op-2", &digest(2));
+        follow.kind = "existing".to_string();
+        let second = prepare_operation(&connection, &follow).unwrap();
+        finish_run(&connection, &second.run_id, 0, "completed").unwrap();
+
+        assert_eq!(reconcile_runs_on_startup(&connection).unwrap(), 1);
+        assert_eq!(
+            get_run(&connection, &first.run_id).unwrap().state,
+            "needs_reconciliation"
+        );
+        assert_eq!(
+            get_run(&connection, &second.run_id).unwrap().state,
+            "completed"
+        );
+        // A second pass finds nothing already reconciled.
+        assert_eq!(reconcile_runs_on_startup(&connection).unwrap(), 0);
+    }
+
+    #[test]
+    fn existing_turn_rejects_a_different_project_owner() {
+        let connection = open_at(&temp_db()).unwrap();
+        prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let mut other = input("op-2", &digest(2));
+        other.kind = "existing".to_string();
+        other.launch.project_key = "local:/other".to_string();
+        assert!(prepare_operation(&connection, &other).is_err());
     }
 
     #[test]
