@@ -1,6 +1,6 @@
 # Complete Markdown catalog
 
-Inventory reconciled October 24, 2026; October 25 adds the advertised-feature acceptance report. This navigation inventory covers tracked Markdown files and newly added planning documents, including this catalog; ignored local instructions are separate.
+Inventory reconciled October 24, 2026; October 25 adds the advertised-feature acceptance report and desktop GUI follow-up plan (BridgeMind, Cursor, Codex and Claude). This navigation inventory covers tracked Markdown files and newly added planning documents, including this catalog; ignored local instructions are separate.
 
 Start at [the hub](./README.md) and [current status](./current-status.md). Desktop/runtime completion and acceptance precede Remote Agents under the owner's later October 24 decision. Listing a plan does not approve/complete/deploy it; historical records keep their own dates and evidence. Original paths are preserved.
 
@@ -63,6 +63,7 @@ Root AGENTS.md and CLAUDE.md are intentionally ignored local instructions, not p
 
 ## Other feature contracts and program specifications
 
+- [Desktop GUI Feature Gaps And Phased Follow-Up](bridgemind/feature-gap-plan-2026-10-25.md) — `dev/bridgemind/feature-gap-plan-2026-10-25.md`; consolidated BridgeMind/Cursor/Codex/Claude scope, desktop acceptance first, existing Remote Agents next, then optional follow-up.
 - [Packaged Acceptance Matrix — currently targeting 0.13.2](acceptance.md) — `dev/acceptance.md`.
 - [YOLO / Bounded Autonomy Policy — Cross-Cutting Loop](bridgemind/autonomy-policy-loop.md) — `dev/bridgemind/autonomy-policy-loop.md`.
 - [Cooperative Flight Task Graph — Scoped Loop](bridgemind/cooperative-flight-graph-loop.md) — `dev/bridgemind/cooperative-flight-graph-loop.md`.

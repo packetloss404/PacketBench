@@ -36,6 +36,12 @@ committed and pushed; latest installed-source identity remains unverified.
    supported-plan feasibility; native iOS follows the PWA. Composer research
    belongs to the separate packetbench-model-lab project and remains excluded.
 
+The [October 25 desktop GUI follow-up plan](dev/bridgemind/feature-gap-plan-2026-10-25.md)
+preserves this order: desktop acceptance, existing Remote Agents, then bounded
+workflow, preview/results and review additions. It covers BridgeMind, Cursor,
+Codex and Claude; BM1–BM5 and GUI1–GUI5 are below. Existing N1, F3/F6, H8/H9,
+Remote Agents, Packet Control and PacketAgent work retain their current owners.
+
 ### Verified agent-experience residuals
 
 - [~] **P1 — Current-source advertised-feature acceptance.** The October 25
@@ -130,6 +136,146 @@ committed and pushed; latest installed-source identity remains unverified.
       binds it to `922ddcc9`. N1 navigation diagnosis, native IME/appearance/
       restart and local/SSH whole-flow acceptance remain. The current process
       responding at rest does not close these cases.
+
+## BridgeMind follow-up — October 25, 2026
+
+Expanded October 25 with the Cursor, Codex and Claude GUI review. Planning
+only; no application changes or new acceptance results. The
+[phased plan](dev/bridgemind/feature-gap-plan-2026-10-25.md) records source
+evidence, dependencies and exit criteria. This backlog remains the only task
+ledger. All BM/GUI items follow desktop completion and the existing Remote
+Agents program; none expands the current desktop completion gate.
+
+- [ ] **P2 — BM1 exact CLI conversation recovery.** Extend existing named
+      Claude Code/Codex PTY panes with a provider-supported conversation identity
+      distinct from the transient PTY id. Bind recovery to the original CLI
+      account/config directory, checkout/worktree and local/SSH host identity.
+      Offer explicit Resume/Start fresh and a truthful recovery outcome; retain
+      failed/missing/unsupported resumes without falling back to another account,
+      folder or conversation. Do not replay an unconfirmed prompt. Acceptance:
+      packaged restart and closed-pane reopen; missing transcript/account/folder,
+      changed SSH identity and CLI update/failure; no duplicate process or send.
+      Reuse multi-account and workspace persistence. R1/R3 API-agent continuation
+      remains its own existing item; this does not keep a process alive on quit.
+- [ ] **P2 — BM2 destination-aware issue and prompt delivery.** Extend the
+      existing Issue dispatch and Prompt Library with one target-selection
+      contract for an existing terminal/conversation or an explicitly launched
+      Flight attempt. Saved prompts insert a retained draft by default; adding
+      drag/drop must use the same path and have a keyboard-accessible equivalent.
+      Distinguish inserted, queued, accepted, failed and delivery-unconfirmed;
+      never infer agent acceptance from a successful PTY write. Change issue
+      status only on confirmed execution acceptance. Preserve exact input and
+      target on failure, prevent duplicate pending delivery and revalidate the
+      account/host/worktree before submission. Acceptance covers busy/exited
+      targets, approval dialogs, partial writes, stale targets and retry/reload.
+      Extend this same delivery path with explicit queue/steer behavior only
+      where the adapter supports it; edits must send the saved version, and
+      cancelling a queued prompt returns its text/attachments to the draft.
+      Preserve the Workspace/Agents ownership contract and authoritative
+      Issue-to-Flight linkage; no new conversation attachments to Workspaces.
+- [ ] **P2 — BM3 consistent cross-surface attention.** Extend existing
+      Fleet/Agents/Flight attention projections, approval stores, notifications
+      and Coordination Inbox with shared ordering, reason, age and exact-target
+      navigation. Reuse authoritative event/decision identities to deduplicate;
+      do not create another queue or approval authority. Pending decisions and
+      failures remain visible ahead of ordinary activity/review. Label heuristic
+      stalls and unknown PTY state honestly; quiet output alone is not failure.
+      Acceptance covers multiple workspaces/Flights, late/out-of-order events,
+      cancelled decisions, review overlays, reader return anchors and reconnect.
+      Existing F3/F6 repairs and PacketAgent PH9 proof remain under their owners;
+      this item owns only the additional cross-surface integration.
+- [ ] **P3 — BM4 persistent teammate design.** Later bounded product design
+      over existing profiles, conversations, project Memory and skills/MCP trust:
+      define stable teammate identity, per-teammate history/memory scope,
+      approved folders, engine-change behavior and inspect/edit/forget controls.
+      Deliver a reuse/migration proposal and explicit go/no-go before any new
+      runtime or UI mode. Do not duplicate Memory/MCP programs, silently broaden
+      authority or turn a reusable profile into an always-on worker. Routine
+      execution continues to belong to PacketAgent; evaluate schedule/result
+      visibility through its existing handoff, with no desktop cron scheduler.
+- [ ] **P3 — BM5 background PTY host feasibility.** After BM1, evaluate the
+      additional value of preserving an existing CLI process through desktop
+      quit/update against the PacketAgent handoff. Deliver an architecture and
+      explicit go/no-go covering single ownership, authenticated local attach,
+      duplicate prevention, scrollback privacy/retention, process-tree cleanup,
+      update/crash/reboot behavior and per-platform acceptance. Preserve current
+      quit cleanup until a separately selected implementation earns those gates.
+      This is research, not a new daemon commitment or PacketAgent replacement.
+
+### Cursor, Codex and Claude additions
+
+- [ ] **P2 — GUI1 task-linked result viewers.** Extend existing file/editor
+      and review surfaces with task-linked report, image, PDF, table and
+      generated-file viewers, download/export and links back to source/run/
+      revision. Reuse durable-asset ownership, provenance and Packet Control
+      evidence references; do not create another artifact store or capture
+      runtime. Start with read-only supported formats. Isolate active HTML or
+      interactive content from privileged host APIs before enabling it.
+      Acceptance covers local/SSH materialization, large/malformed/missing
+      files, stale revisions, restart and per-view position restoration.
+      Unavailable formats/remote access must be explicit. H8 owns browser
+      capture; Packet Control keeps its existing terminal-evidence scope.
+- [ ] **P2 — GUI2 conversation/worktree handoff and recoverable cleanup.**
+      Add explicit movement of the same logical conversation between its local
+      checkout and a managed worktree, preserving context and staged work.
+      Reuse current worktree lifecycle and BM1 identities. Quiesce the active
+      run and prepare a new immutable execution binding for continuation;
+      never retarget an in-flight run. Preserve dirty/untracked work, enforce
+      branch ownership and provide recoverable, bounded snapshots before
+      managed cleanup. Verify snapshot persistence before deletion; protect
+      active/pinned work and keep ignored/secret files outside implicit copies.
+      Acceptance covers dirty destinations, branch conflicts, interrupted
+      transfer/restore, duplicate handoff and missing snapshots. Cross-host
+      migration requires a separate capability/authority design; neither SSH
+      nor cloud migration is implied. This is distinct from BM1 resume and
+      existing Merge/Keep/Discard, not a replacement worktree implementation.
+- [ ] **P2 — GUI3 persistent security findings.** Extend Code Quality,
+      Reviewer Gate and existing review-comment/diff surfaces with stable
+      findings bound to repository/base/head and scanner/reviewer identity.
+      Retain attack-path evidence, assumptions, triage/dismissal reasons and
+      fix links; revalidate against the changed revision before claiming fixed.
+      Preserve findings across reviews without duplicate issues or another
+      review engine. Acceptance covers moved code, repeated scans, stale
+      verdicts, changed threat context and false-positive decisions. A review
+      reporting no findings is not a clean-security guarantee. Use bounded
+      fixtures and existing permission/budget gates for verification.
+- [ ] **P2 — GUI4 opt-in PR follow-up.** Extend existing Git host integration,
+      review freshness and bounded remediation with an explicitly enabled
+      follow-up for one PR's failing checks or new review feedback. Freeze
+      repository/host/PR/head identity, authority, spend/retry limits and Stop;
+      deduplicate events and revalidate after human changes, force-push or
+      closure. Incoming comments/check logs are untrusted evidence, not new
+      authorization. Reuse PacketAgent for durable triggers beyond app lifetime;
+      do not add a desktop scheduler, full CI dashboard or hosted CI for this
+      repository. Show proposed repairs/results and retain deliberate publish,
+      ready-for-review and merge actions. Acceptance covers stale heads,
+      duplicate/replayed events, unavailable host capabilities and cap exhaustion.
+      Existing Flight repair/review proof remains under its current owner.
+- [ ] **P3 — GUI5 deployment-health feasibility.** Later design only: map
+      user-project deployment events to an exact commit, environment and bounded
+      observation window, with expected signals and explicit inconclusive
+      outcomes when telemetry is missing. Reuse PacketAgent trigger/lifecycle
+      ownership, existing deploy integration and Packet Control evidence;
+      avoid a second monitor daemon or review store. Deliver an integration/
+      capability proposal and go/no-go with healthy/regressed/inconclusive
+      evidence criteria, noisy/late-event handling and approval boundaries.
+      Do not enable telemetry connections, automatic rollback or remediation
+      from this planning entry. Existing Monitor UI expansion remains separate.
+
+Existing work extended by this review, without duplicate task rows:
+
+- N1 owns responsiveness diagnosis and measured visible/hidden-window behavior.
+- F3/F6 and current flow/appearance acceptance own restoration of existing
+  file/diff/transcript/draft/focus state; BM2 owns queue/steer delivery semantics.
+- H8 owns scoped preview, optional element/CSS context and bounded visual
+  verification; H9 continues to own evidence-backed usage disclosure.
+- Remote Agents owns phone approval controls; PacketAgent W9/PH10 owns durable
+  continuation proof, with existing handoff polish owning remaining UI work.
+- Side questions and inline diff comments already exist; harden/prove their
+  current behavior rather than create competing implementations. GUI1/GUI3
+  reuse those surfaces and existing asset/evidence contracts.
+- Existing reviewer gates, task graphs, Memory, MCP and dictation tracks remain
+  authoritative; a competitor feature does not reopen completed source work.
 
 ## Agent harness and experience review — October 19
 
@@ -359,6 +505,14 @@ still default-off.
       accessibility/automation causes; preserve work/evidence and verify ordinary
       navigation, restart and recovery before closing. Earlier Flight smoke
       does not establish current whole-app responsiveness.
+      October 25 follow-up: reuse the existing streaming/PTY batching and
+      workspace-performance evidence; measure typing/Stop latency during heavy
+      output, long-transcript reader anchoring, quiet-repository polling and
+      hidden/minimized-window work on the source-bound installed package.
+      Diagnose before optimizing; reduce rendering/polling without suspending
+      execution, cancellations or approval tracking. Record fixture/source,
+      before/after timings and limits; browser/synthetic throughput is not native
+      proof. This extends N1, not a new performance program.
 - [x] **P1 — Fail closed on worktree provisioning (F1).** Source implementation:
       a provisioning failure now starts no agent, creates no conversation and
       performs no root-checkout fallback; the draft and staged images survive
@@ -407,6 +561,11 @@ still default-off.
       the link. Focused test added.
 - [ ] **P1 — F3 remaining.** Native local/SSH restart evidence for lineage and
       revisions.
+      The current flow/appearance acceptance also owns working-position
+      continuity across conversation switches and restart: supported file/line,
+      diff scope, expanded tools, transcript anchor, draft caret/attachments and
+      focus. Reuse existing restore paths and reproduce residuals before fixing;
+      this does not require adding new document viewers or expanding Global Undo.
 - [x] **P1 — Comfortable reading defaults (V1).** Shared tokens raised to
       comfortable sizes (UI 13/20, meta 12/16, transcript 15/24, composer 15/22,
       code 13/20, chip 12/18) with new composer/code/heading roles; the composer
@@ -699,6 +858,24 @@ still default-off.
       Evaluate supported browser/MCP integration with scoped local-app authority
       and evidence artifacts. Preserve web_fetch SSRF protection. Any future
       desktop-control integration must release control through waits/builds.
+      October 25 refinement: after desktop acceptance and the existing Remote
+      Agents program, investigate a docked development-app preview first, then
+      opt-in element selection that stages a reviewable screenshot/annotation,
+      URL, selector, bounded DOM/styles and available component context in the
+      intended agent draft. Keep page content outside Tauri/host privileges and
+      treat extracted content as untrusted; strip credentials/private fields,
+      preserve origin/provenance and fail visibly on unsupported pages. Require
+      navigation/lifecycle, isolation and exact-destination evidence before any
+      completion claim. This is the existing H8 scope, not a second browser task
+      or a resumption of paused general Computer Use.
+      Cursor/Claude refinement: after the isolated preview and annotation path
+      is proven, evaluate opt-in CSS change previews and bounded screenshots/
+      DOM/error checks against explicit local-app criteria. Record actual
+      viewport, source revision, actions, results and missing coverage; keep
+      manual annotations, agent verification and independent test evidence
+      distinct. No inferred pass from a screenshot, blanket auto-verify default
+      or general desktop-control permission. GUI1 renders returned artifacts;
+      existing evidence owners retain capture/provenance responsibilities.
 - [ ] **P2 — Official ChatGPT-plan feasibility review.** Evaluate the documented
       OSS/local SIWC consent/host/refresh/entitlement contract and Codex app-server
       versus direct Responses route, including preview limitations. No login,
@@ -1038,6 +1215,16 @@ of former Railway/PostgreSQL resources; those notes are partly uncommitted and
 live infrastructure was not verified. Confirm actual topology/datastore before
 rollout; preserve prior owner decisions as dated history. See the current note
 in [the Remote Agents index](dev/remoteagents/README.md).
+
+October 25 approval refinement belongs to this existing program, after its
+transport/auth prerequisites: make phone decision authority explicitly opt-in,
+show its expiry and originating device, support immediate revocation, and bind
+each decision to the exact pending request/host/run. Reject expired, revoked,
+stale or replayed decisions without a second execution, including reconnect and
+desktop/phone races. Choose/document the permission lifetime in the existing
+security contract rather than inheriting BridgeMind's 24-hour setting. Preserve
+account/PWA-first sign-in, API-agent-only v1 and the E2EE/external-beta gates;
+this creates no separate mobile feature, QR-first flow or raw PTY control task.
 
 - **CLOSED 2026-09-01 - Sprint 0 foundations.** Shared protocol/PWA/workspace
   foundations, feature-gated PacketRelay skeleton, fail-off desktop flag,

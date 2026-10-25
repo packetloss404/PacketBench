@@ -1,5 +1,11 @@
 # BridgeMind / BridgeSpace — Competitive Brief
 
+> Historical July assessment. For the October 25 BridgeMind One review and the
+> consolidated Cursor/Codex/Claude follow-up scope, use the [feature-gap plan](./feature-gap-plan-2026-10-25.md)
+> and [live backlog](../../backlog.md). Existing desktop completion and Remote
+> Agents ordering supersede this document's older response queue; keep its
+> dated feature/source findings within their original evidence scope.
+
 Last updated: 2026-07-27
 Research method: a fresh read-only fan-out across official BridgeMind product,
 documentation, roadmap, changelog, and public package/repository material, checked
