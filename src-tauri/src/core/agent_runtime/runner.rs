@@ -1427,17 +1427,29 @@ pub async fn run_turn<R: RuntimeServices>(
             return Err(error);
         }
 
+        // R7: box the join so the tool futures SURVIVE the select and can be
+        // polled again from the cancel arm. tokio's `select!` drops the losing
+        // branch's futures BEFORE running the winning arm's handler, so a child
+        // sub-agent inside `join_all` would otherwise be dropped before
+        // `child_cancel.cancel()` ran and could never observe the token.
+        let mut tool_futures = Box::pin(futures::future::join_all(futures));
         let raw_results = tokio::select! {
+            results = &mut tool_futures => results,
             _ = &mut cancel_rx => {
-                // R7: cancel in-flight child sub-agents explicitly before the
-                // join_all drop below aborts their futures.
+                // Signal children first, then give them a bounded window to
+                // observe the token: abort their provider stream, release their
+                // reservation (a dispatched child becomes uncertain liability)
+                // and return `Cancelled`. The timeout keeps Stop responsive even
+                // if a child ignores the token.
                 child_cancel.cancel();
-                // Dropping join_all drops every in-flight tool future. Child
-                // processes and network requests owned by those futures can
-                // unwind immediately instead of waiting for the next model
-                // iteration to observe cancellation. The tools' outcome is now
-                // ambiguous, so mark the pending effects for reconciliation;
-                // this is best-effort and never changes the cancel outcome.
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    &mut tool_futures,
+                )
+                .await;
+                // The tools' outcome is now ambiguous, so mark the pending
+                // effects for reconciliation; this is best-effort and never
+                // changes the cancel outcome.
                 let _ = persist_current_history(
                     services,
                     checkpoint_store,
@@ -1466,7 +1478,6 @@ pub async fn run_turn<R: RuntimeServices>(
                 .await;
                 return Ok(RunOutcome::Cancelled);
             }
-            results = futures::future::join_all(futures) => results,
         };
 
         // Rebuild tool_result_blocks in the original tool_calls order (critical for Anthropic pairing).

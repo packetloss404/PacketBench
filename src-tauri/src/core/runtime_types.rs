@@ -169,6 +169,7 @@ pub struct RuntimeEventView {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeContextSummary {
     pub run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub projection: Option<RuntimeContextProjection>,
     pub window_known: bool,

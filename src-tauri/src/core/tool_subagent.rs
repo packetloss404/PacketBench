@@ -1248,6 +1248,7 @@ mod tests {
             (SubagentStatus::Incomplete, false),
             (SubagentStatus::Blocked, false),
             (SubagentStatus::Failed, false),
+            (SubagentStatus::Cancelled, false),
         ] {
             let result = SubagentResult {
                 child_run_id: "child".to_string(),
@@ -1374,33 +1375,40 @@ mod tests {
             barrier: Some(Arc::new(tokio::sync::Barrier::new(2))),
         };
 
-        let handle =
-            tokio::spawn(async move { PARENT_LLM.scope(context, run_fixture(&provider)).await });
+        // Cancel from a separate task while the child runs INLINE in this task,
+        // mirroring the production parent (which cancels the token and then keeps
+        // polling the child so it can observe it). The child is deliberately NOT
+        // spawned: a spawned child is re-polled independently and would not
+        // model the shape where the parent's select governs the child's future.
+        let canceller = {
+            let hook = Arc::clone(&hook);
+            let cancel = cancel.clone();
+            tokio::spawn(async move {
+                for _ in 0..10_000 {
+                    if hook.marks() == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                cancel.cancel();
+            })
+        };
 
-        // The child reserves and marks dispatch before it streams; wait for that
-        // so cancellation lands while the child is genuinely in flight.
-        for _ in 0..10_000 {
-            if hook.marks() == 1 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(
-            hook.marks(),
-            1,
-            "the child marked dispatch before we cancel"
-        );
-        cancel.cancel();
-
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        let result = PARENT_LLM
+            .scope(context, run_fixture(&provider))
             .await
-            .expect("the child must stop promptly on cancel")
-            .unwrap()
             .unwrap();
+        canceller.await.unwrap();
+
         assert_eq!(result.status, SubagentStatus::Cancelled);
         assert_eq!(
             result.incomplete_reason.as_deref(),
             Some("parent_cancelled")
+        );
+        assert_eq!(
+            hook.marks(),
+            1,
+            "the child marked dispatch before we cancel"
         );
         assert_eq!(hook.reserves(), 1);
         assert_eq!(hook.releases(), 1, "the in-flight child is released");
