@@ -18,9 +18,9 @@ use uuid::Uuid;
 
 use super::runtime_checkpoint::CompatibilityContext;
 use super::runtime_types::{
-    validate_id, validate_sha256_digest, FrozenRuntimeLaunch, PrepareRuntimeRunInput,
-    PrepareRuntimeRunResult, RuntimeEventView, RuntimeLaunchView, RuntimeRunSummary,
-    MAX_EVENTS_PAGE,
+    validate_id, validate_sha256_digest, FrozenExecutionBinding, FrozenRuntimeLaunch,
+    PrepareRuntimeRunInput, PrepareRuntimeRunResult, RuntimeEventView, RuntimeLaunchView,
+    RuntimeRunSummary, MAX_EVENTS_PAGE,
 };
 
 /// On-disk journal schema version, tracked by `PRAGMA user_version`.
@@ -483,7 +483,7 @@ pub fn prepare_operation(
                     if let (Some(previous_exec), Some(caller_exec)) =
                         (&previous.execution, &input.launch.execution)
                     {
-                        if previous_exec != caller_exec {
+                        if execution_bindings_conflict(previous_exec, caller_exec) {
                             return Err(format!(
                                 "Conversation {} is bound to a different execution target; refusing \
                                  an existing turn for a changed host or path",
@@ -564,6 +564,20 @@ pub fn prepare_operation(
             let _ = connection.execute_batch("ROLLBACK");
             Err(e)
         }
+    }
+}
+
+/// Whether two frozen execution bindings conflict. A different kind, server id
+/// or host is a conflict; a host-key pin populated later (`None` -> `Some`, e.g.
+/// a first TOFU connect) is NOT, so an established conversation is not rejected
+/// when its pin is first recorded.
+fn execution_bindings_conflict(a: &FrozenExecutionBinding, b: &FrozenExecutionBinding) -> bool {
+    if a.kind != b.kind || a.server_id != b.server_id || a.host != b.host {
+        return true;
+    }
+    match (&a.host_fingerprint, &b.host_fingerprint) {
+        (Some(x), Some(y)) => x != y,
+        _ => false,
     }
 }
 
@@ -686,13 +700,18 @@ pub fn cancel_operation(
             params![now_ms(), operation_id],
         )
         .map_err(|e| format!("Failed to cancel operation: {e}"))?;
-    connection
+    // Guard the run update: a run already terminal (e.g. a turn that completed
+    // just before the cancel) must not be rewritten to `cancelled`.
+    let run_changed = connection
         .execute(
-            "UPDATE runs SET state = 'cancelled' WHERE run_id = ?1",
+            "UPDATE runs SET state = 'cancelled' WHERE run_id = ?1 \
+             AND state NOT IN ('cancelled','completed','failed')",
             params![current.run_id],
         )
         .map_err(|e| format!("Failed to cancel run: {e}"))?;
-    insert_event(connection, &current.run_id, epoch, "cancelled", "{}")?;
+    if run_changed == 1 {
+        insert_event(connection, &current.run_id, epoch, "cancelled", "{}")?;
+    }
     operation_view(connection, operation_id)
 }
 
@@ -760,6 +779,23 @@ pub fn finish_run(
         )
         .map_err(|e| format!("Failed to finish run: {e}"))?;
     if changed == 1 {
+        // Mirror the terminal phase onto the launch operation so the operation
+        // view and the run state agree — otherwise a later cancel would see a
+        // non-terminal operation and clobber the terminal run.
+        let operation_id: String = connection
+            .query_row(
+                "SELECT operation_id FROM runs WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to read run operation: {e}"))?;
+        connection
+            .execute(
+                "UPDATE launch_operations SET phase = ?1 WHERE operation_id = ?2 \
+                 AND phase NOT IN ('cancelled','completed','failed')",
+                params![terminal, operation_id],
+            )
+            .map_err(|e| format!("Failed to finish operation: {e}"))?;
         insert_event(
             connection,
             run_id,
@@ -1866,6 +1902,45 @@ mod tests {
         let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
         assert!(finish_run(&connection, &prepared.run_id, 0, "nonsense").is_err());
         assert!(finish_run(&connection, "missing", 0, "completed").is_err());
+    }
+
+    #[test]
+    fn cancel_after_a_terminal_run_does_not_clobber_it() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        finish_run(&connection, &prepared.run_id, 0, "completed").unwrap();
+
+        // A cancel after the turn completed must be a no-op on the run.
+        let view = cancel_operation(&connection, "op-1", 0).unwrap();
+        assert_eq!(view.phase, "completed");
+        assert_eq!(
+            get_run(&connection, &prepared.run_id).unwrap().state,
+            "completed"
+        );
+    }
+
+    #[test]
+    fn existing_turn_admits_a_later_populated_host_pin() {
+        use crate::core::runtime_types::FrozenExecutionBinding;
+        let connection = open_at(&temp_db()).unwrap();
+        let base = FrozenExecutionBinding {
+            kind: "ssh".to_string(),
+            server_id: Some("srv-1".to_string()),
+            host: Some("a.example".to_string()),
+            host_fingerprint: None,
+        };
+        let mut first = input("op-1", &digest(1));
+        first.launch.execution = Some(base.clone());
+        prepare_operation(&connection, &first).unwrap();
+
+        // The pin is recorded after the first prepare (TOFU); same host -> admitted.
+        let mut second = input("op-2", &digest(2));
+        second.kind = "existing".to_string();
+        second.launch.execution = Some(FrozenExecutionBinding {
+            host_fingerprint: Some("SHA256:fp".to_string()),
+            ..base
+        });
+        assert!(prepare_operation(&connection, &second).is_ok());
     }
 
     #[test]

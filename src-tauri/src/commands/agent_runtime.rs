@@ -213,6 +213,12 @@ fn reconstruct_resume_history(
     if !checkpoint.pending_effect_ids.is_empty() {
         return Ok(None);
     }
+    // Replay requires a complete tool_use/tool_result pairing; an unmatched
+    // tool_use (e.g. a crash between the assistant receipt and the tool intent)
+    // must not seed the provider history.
+    if runtime_checkpoint::validate_replayable(&checkpoint.messages).is_err() {
+        return Ok(None);
+    }
     let conversation_id = journal::run_conversation_id(connection, run_id)?;
     Ok(Some((conversation_id, checkpoint.messages)))
 }
@@ -226,6 +232,7 @@ pub async fn resume_runtime_run(
     inspected_revision: Option<String>,
 ) -> Result<RuntimeRunSummary, String> {
     let current = live_compatibility_for_run(state.inner().as_ref(), &run_id).await;
+    let session_live = current.is_some();
     let typed = mode == "typed";
     let run_id_for_resume = run_id.clone();
     let summary = on_blocking(move || {
@@ -241,6 +248,30 @@ pub async fn resume_runtime_run(
         })
     })
     .await?;
+    // Refresh the live session's binding to the resumed epoch, so the next
+    // turn's checkpoints and finish_run use the new epoch rather than the stale
+    // one (which would silently no-op the terminal transition).
+    if session_live {
+        let run_id_for_bind = run_id.clone();
+        if let Ok(conversation_id) = on_blocking(move || {
+            journal::with_journal(|connection| {
+                journal::run_conversation_id(connection, &run_id_for_bind)
+            })
+        })
+        .await
+        {
+            state
+                .inner()
+                .bind_runtime_run(
+                    &conversation_id,
+                    RuntimeRunBinding {
+                        run_id: summary.runtime_run_id.clone(),
+                        epoch: summary.epoch,
+                    },
+                )
+                .await;
+        }
+    }
     // A typed resume reconstructs the provider input: seed the live session's
     // history from the run's latest checkpoint so the next turn continues from
     // the durable typed history instead of starting fresh. Best-effort — a
@@ -1140,13 +1171,6 @@ async fn mark_reservation_dispatched(request_id: &str) -> Result<(), String> {
     .await
 }
 
-/// Startup reconciliation of budget reservations stranded by the R5b crash
-/// window (a crash between the usage-ledger append and the journal settle).
-/// No-op unless the runtime journal is enabled. Reads the usage ledger, maps
-/// each correlated `request_id` to its actual micro-dollars, and settles or
-/// releases every stranded reservation. Safe only under the single-instance
-/// guard (ADR-4). A ledger read/parse failure is surfaced, not swallowed —
-/// reconciliation is best-effort at startup but must appear in the log.
 /// Startup reconciliation of runs stranded by a crash (R1/R3). No-op unless the
 /// runtime journal is enabled. Marks every non-terminal run
 /// `needs_reconciliation` so a restart never leaves a run looking live.
@@ -1163,6 +1187,13 @@ pub fn reconcile_runs_on_startup() -> Result<(), String> {
     })
 }
 
+/// Startup reconciliation of budget reservations stranded by the R5b crash
+/// window (a crash between the usage-ledger append and the journal settle).
+/// No-op unless the runtime journal is enabled. Reads the usage ledger, maps
+/// each correlated `request_id` to its actual micro-dollars, and settles or
+/// releases every stranded reservation. Safe only under the single-instance
+/// guard (ADR-4). A ledger read/parse failure is surfaced, not swallowed —
+/// reconciliation is best-effort at startup but must appear in the log.
 pub fn reconcile_budget_on_startup() -> Result<(), String> {
     if !journal::is_enabled() {
         return Ok(());
