@@ -17,10 +17,11 @@
 //! append and the journal settle (or between admit and append) leaves a
 //! `reserved` row. [`reconcile_reserved`] is the startup pass that revisits
 //! those rows: a request present in the usage ledger settles at its recorded
-//! actual, and a request absent from the ledger is released as genuinely
-//! orphaned. That pass runs once at startup and is only safe with the
-//! single-instance guard in force (ADR-4): a second process mutating the shared
-//! journal would make reconciliation racy.
+//! actual; a request absent from the ledger is released only when it was never
+//! dispatched, and is retained as `uncertain` liability (see [`mark_dispatched`])
+//! when it may already have been billed. That pass runs once at startup and is
+//! only safe with the single-instance guard in force (ADR-4): a second process
+//! mutating the shared journal would make reconciliation racy.
 //!
 //! v1 is deliberately **single-scope**: each reservation names exactly one
 //! `scope_key` and there is no scope hierarchy or roll-up. Admission is
@@ -566,25 +567,47 @@ pub fn mark_dispatched(
     request_id: &str,
     now: i64,
 ) -> Result<(), BudgetError> {
-    let changed = connection
-        .execute(
-            "UPDATE budget_reservations SET dispatched_at = COALESCE(dispatched_at, ?1) \
-             WHERE request_id = ?2 AND state = 'reserved'",
-            params![now, request_id],
-        )
-        .map_err(|e| BudgetError::Store(e.to_string()))?;
-    if changed == 0 {
-        // Already settled/released/uncertain, or unknown — nothing to mark.
-        return Ok(());
-    }
+    // One transaction over both tables so a partial failure cannot mark the
+    // reservation without its request row (which would later look dispatched to
+    // `release` after the caller rolls back).
     connection
-        .execute(
-            "UPDATE requests SET dispatched_at = COALESCE(dispatched_at, ?1) \
-             WHERE request_id = ?2 AND state = 'reserved'",
-            params![now, request_id],
-        )
+        .execute_batch("BEGIN IMMEDIATE")
         .map_err(|e| BudgetError::Store(e.to_string()))?;
-    Ok(())
+
+    let result = (|| -> Result<(), BudgetError> {
+        let changed = connection
+            .execute(
+                "UPDATE budget_reservations SET dispatched_at = COALESCE(dispatched_at, ?1) \
+                 WHERE request_id = ?2 AND state = 'reserved'",
+                params![now, request_id],
+            )
+            .map_err(|e| BudgetError::Store(e.to_string()))?;
+        if changed == 0 {
+            // Already settled/released/uncertain, or unknown — nothing to mark.
+            return Ok(());
+        }
+        connection
+            .execute(
+                "UPDATE requests SET dispatched_at = COALESCE(dispatched_at, ?1) \
+                 WHERE request_id = ?2 AND state = 'reserved'",
+                params![now, request_id],
+            )
+            .map_err(|e| BudgetError::Store(e.to_string()))?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            connection
+                .execute_batch("COMMIT")
+                .map_err(|e| BudgetError::Store(e.to_string()))?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
 }
 
 /// The outcome of a [`reconcile_reserved`] pass: how many stranded reservations

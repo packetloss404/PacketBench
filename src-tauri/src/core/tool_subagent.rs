@@ -80,6 +80,13 @@ pub trait ChildBudgetHook: Send + Sync {
     async fn settle(&self, request_id: &str, actual_usd_micros: i64) -> Result<(), String>;
     /// Release a reservation that will not be settled.
     async fn release(&self, request_id: &str) -> Result<(), String>;
+    /// Mark a reserved child request dispatched the moment it leaves for the
+    /// provider, so a later release or a startup reconcile retains it as
+    /// uncertain liability instead of freeing headroom the provider may have
+    /// billed (R5). Default no-op for a hook that never reserves.
+    async fn mark_dispatched(&self, _request_id: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -367,6 +374,19 @@ async fn run_agent_loop_inner(
                         incomplete_reason: Some(reason),
                         usage: total_usage,
                     });
+                }
+            }
+        }
+
+        // R5: the request is about to leave for the provider. Mark it dispatched
+        // so a later release (provider error, collect failure) or a startup
+        // reconcile retains the reservation as uncertain liability rather than
+        // freeing headroom the provider may already have billed.
+        if pending_reservation {
+            if let Some(hook) = parent.child_budget.as_ref() {
+                if let Err(error) = hook.mark_dispatched(&request_id).await {
+                    release_child_reservation(&parent, &request_id).await;
+                    return Err(error);
                 }
             }
         }
@@ -690,6 +710,7 @@ mod tests {
         reserves: std::sync::atomic::AtomicUsize,
         settles: std::sync::atomic::AtomicUsize,
         releases: std::sync::atomic::AtomicUsize,
+        marks: std::sync::atomic::AtomicUsize,
         actuals: std::sync::Mutex<Vec<i64>>,
         reserved_ids: std::sync::Mutex<Vec<String>>,
     }
@@ -703,6 +724,9 @@ mod tests {
         }
         fn releases(&self) -> usize {
             self.releases.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn marks(&self) -> usize {
+            self.marks.load(std::sync::atomic::Ordering::SeqCst)
         }
         fn reserved_ids(&self) -> Vec<String> {
             self.reserved_ids.lock().unwrap().clone()
@@ -736,6 +760,10 @@ mod tests {
         async fn release(&self, _request_id: &str) -> Result<(), String> {
             self.releases
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        async fn mark_dispatched(&self, _request_id: &str) -> Result<(), String> {
+            self.marks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
     }
@@ -1275,6 +1303,9 @@ mod tests {
         assert_eq!(hook.reserves(), MAX_ITERATIONS);
         assert_eq!(hook.settles(), MAX_ITERATIONS);
         assert_eq!(hook.releases(), 0);
+        // R5: every reserved child request is marked dispatched before streaming,
+        // so a child that fails before settle retains uncertain liability.
+        assert_eq!(hook.marks(), MAX_ITERATIONS);
         // Settlement is the actual cost, and usage is still recorded once.
         assert!(hook
             .actuals

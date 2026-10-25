@@ -927,6 +927,10 @@ impl ChildBudgetHook for SessionChildBudget {
     async fn release(&self, request_id: &str) -> Result<(), String> {
         release_reservation(request_id).await
     }
+
+    async fn mark_dispatched(&self, request_id: &str) -> Result<(), String> {
+        mark_reservation_dispatched(request_id).await
+    }
 }
 
 #[cfg(test)]
