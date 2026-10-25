@@ -585,6 +585,17 @@ PacketBench is developed on Windows but is designed to ship on macOS and Linux a
 
 ### Beta Distribution Status
 
+**October 25: verified unsigned Windows x64 installers are prepared from clean
+source `04cd0e16`.** Both NSIS/MSI delivered copies passed 8,683 payload hashes,
+their own executable hash/version, bundled Node `v24.15.0`, sidecar protocol 12
+and two exact echo turns. The [acceptance receipt](./dev/advertised-feature-acceptance-2026-10-25.md#successful-clean-retry-and-delivered-installer-receipt)
+records artifact paths/hashes and source identity. This receipt is a later
+documentation-only update; the installers remain attributed to `04cd0e16`.
+There was no reinstall, installer/main-app launch, public release, new tag or
+site update. Live provider, installed whole-flow, hardware and platform cases
+remain open. GitHub had no statuses, check runs or Actions runs for the pushed
+build source; local verification supplies the test evidence.
+
 **October 24 verification: source `922ddcc9` is committed/pushed, while current
 installed-source identity is incomplete.** The installed 0.14.9 executable
 hash `b91c617d…cfaa1f9` matches the available October 23 NSIS payload; no matching

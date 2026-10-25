@@ -11,20 +11,30 @@ passed with all assertions intact. A disposable Linux SSH matrix also passed
 live-provider skips are in the report. The earlier shared-checkout gate run was
 unstable because another task edited Rust source and is not final evidence.
 
-The owner requested **verified installers without reinstalling**. A clean
-build at `fd2135d7` compiled the release executable, then failed before creating
-installers because Tauri attempted to bundle a feature-gated developer
-`runtime-eval.exe` absent from default production builds. The evaluator is now
-declared as a feature-gated Cargo example. Four target regressions, real Cargo
-metadata, the release gate, production `cargo check --bins` and a fresh 12/12
-offline example run pass. A fresh clean NSIS/MSI build and noninstalling payload
-verification remain next. Sidecar
-development dependencies were restored after the failure. The installed
-application stays untouched. Its limited native navigation smoke
-uses the existing payload. Real provider/account, installed whole-flow,
-hardware/platform and external-integration cases remain open. The October 24
-facts below retain their original snapshot; subsequent runtime/flow commits and
-remaining work are recorded in [backlog](../backlog.md) and [HANDOFF](../HANDOFF.md).
+The owner's requested **verified installers without reinstalling** are ready.
+The first clean build at `fd2135d7` failed before installer creation because
+Tauri discovered an optional developer binary. Moving it to a feature-gated
+Cargo example passed four target regressions, metadata/default-production
+checks, the release gate and a fresh 12/12 offline run. The clean retry at
+`04cd0e16b7eb0cf312af7c384c0197c69819a20d` then produced unsigned Windows x64
+NSIS/MSI installers. Both delivered copies passed all 8,683 application payload
+hashes, their format-specific executable/version, extracted Node `v24.15.0`,
+protocol 12 and two exact sidecar echo turns. Artifact paths, sizes, hashes,
+clean source fingerprint and logs are in the audit receipt. Sidecar development
+dependencies were restored. Readiness passed with zero failures and 17 disclosed
+warnings; existing signing/updater deferrals remain.
+
+GitHub checks for pushed build source `04cd0e16` returned zero statuses, check
+runs and Actions runs, consistent with this repository's deliberate absence of
+hosted CI. This final receipt is documentation only and follows the installer
+source commit. There was no reinstall, installer execution, main-app launch,
+public release, new tag or site update. The installed executable still hashes
+to `b91c617d44be753ff3f2b47ff1020c5bedca9d66e4fdcbe4b3e02deb0cfaa1f9`.
+Its earlier navigation smoke uses that existing payload. Real provider/account,
+installed whole-flow, hardware/platform and external-integration cases remain
+open. The October 24 facts below retain their original snapshot; subsequent
+runtime/flow commits and remaining work are recorded in [backlog](../backlog.md)
+and [HANDOFF](../HANDOFF.md).
 
 Reconciled October 24, 2026 (America/Chicago). Source audited:
 `922ddcc928629e116215d899580f7e9370b2603d` on `main`.

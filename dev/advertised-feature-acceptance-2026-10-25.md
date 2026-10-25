@@ -158,10 +158,10 @@ the related individual advertised operations so omissions stay visible.
 The inventory contains 82 grouped rows covering the README's related advertised
 operations. The latest isolated local gates and disposable Linux SSH matrix pass
 within their recorded scope. The first clean packaging attempt failed before
-producing installers. The developer-target correction passes its focused
-validation; fresh bundle/payload verification remains pending. Neither these
-tests nor the inventory establish every native/live
-feature row.
+producing installers; the corrected clean retry produced both unsigned Windows
+x64 installers, and both delivered copies passed extraction/hash/packaged-sidecar
+verification. The existing application was not reinstalled or launched. These
+results do not establish every native/live feature row.
 
 ### Source isolation and attribution
 
@@ -184,9 +184,11 @@ untouched in the original checkout. The isolated validation below covers that
 snapshot plus the documented test-timeout correction and pending evidence
 documentation. That source was frozen as
 `fd2135d7db5bb269bc5d2232a6a129f2a48d3c3f` for the first packaging attempt.
-The developer-target packaging correction described below requires a subsequent
-clean source commit and installer manifest. The existing installed application
-remains untouched.
+The developer-target correction was then frozen as clean build source
+`04cd0e16b7eb0cf312af7c384c0197c69819a20d`; its successful retry and manifest are
+recorded below. This final receipt changes documentation only and belongs to a
+later commit. The installers remain attributed to `04cd0e16`, not the receipt
+commit. The existing installed application remains untouched.
 
 ### Final isolated local validation
 
@@ -220,9 +222,9 @@ source was unchanged by the timeout correction.
 | `check:tauri-schema` | PASS — one schema test                 | Exported Rust/TypeScript contract parity.                                                                                          |
 
 The isolated noninstalling installer verifier's ten unsafe-path/helper
-regressions also passed. These tests do not validate fresh installer artifacts;
-the fresh Tauri bundle and subsequent NSIS/MSI
-extraction/hash/packaged-echo run remain required.
+regressions also passed. Actual clean Tauri bundling and delivered NSIS/MSI
+extraction/hash/packaged-echo verification subsequently passed, as recorded
+separately below.
 
 ### Final disposable Linux SSH validation
 
@@ -284,19 +286,80 @@ The related Cargo-target, target-triple, release-readiness and quality-gate Node
 regressions also passed: 55 tests across four files in 1.88 seconds, recorded in
 `test-results/packaging-regressions.log`.
 
-The retry uses a private `CARGO_TARGET_DIR` at
+The successful retry used a private `CARGO_TARGET_DIR` at
 `D:/projects/PacketBench/test-results/feature-acceptance-build-20261025`.
 Only dependency-cache entries (2,624) were seeded; application binaries,
 application build directories and application fingerprints were excluded, so
-the app must compile fresh. This isolates artifact paths as well as source:
+the app had to compile fresh. This isolates artifact paths as well as source:
 concurrent builds must not overwrite an executable or bundle after Cargo's
 build lock releases. The existing installation remains untouched.
 
-A subsequent clean commit and real Tauri bundle retry are still required.
-Installer hashes and payload passes will be recorded only after those
-operations run. The prior application-code gates retain their named
-source/scope; neither they nor these focused target checks turn the failed
-first bundle attempt into a pass.
+The successful clean retry below is separate evidence. The prior application
+gates and focused target checks retain their named source/scope; they do not
+turn the failed first bundle attempt into a pass.
+
+### Successful clean retry and delivered installer receipt
+
+The complete private-target build exited zero and produced both unsigned
+Windows x64 bundles. Its source was clean commit
+`04cd0e16b7eb0cf312af7c384c0197c69819a20d`, source SHA-256
+`581483a7c10499c9df9b0e8adfb6399e2e9c7dc85e53c5ca2674ae0207ce9890`,
+dirty **false**, 1,482 source files. The builder recorded
+`builtAt: 2026-10-25T18:27:24.562Z`. Sidecar development dependencies were restored
+and the source tree remained clean after the build.
+
+Stable delivery directory:
+`D:/projects/PacketBench/test-results/acceptance/feature-audit-2026-10-25-04cd0e16/`.
+
+| Artifact                           | Bytes       | SHA-256                                                            |
+| ---------------------------------- | ----------- | ------------------------------------------------------------------ |
+| `PacketBench_0.14.9_x64-setup.exe` | 90,544,452  | `4789227a349dbac15d9759e9901cd24d9b3ce5b01adf913b3519fcb652ddb744` |
+| `PacketBench_0.14.9_x64_en-US.msi` | 141,092,012 | `7b3b7f0570d34fc0c1a84bb473d8cae851d0726ba241c21a0f241f7e24895c64` |
+
+The byte-for-byte archived builder manifest is `build-manifest.json`, SHA-256
+`cb39ff6582adc12e561a594c95660f63af3a5d8cb4d4239c54d915fa41acbf6a`.
+The delivery `manifest.json`, SHA-256
+`092799c4896790787a62cfa6fb1e69e84b1f50386c0a51a6fd95c63a65c3a1be`,
+changes only the installer artifact paths and adds sizes/the archived-original
+manifest hash; source identity and payload hashes are unchanged.
+
+Verification ran against these **delivered copies** and exited zero in about
+5 minutes 40 seconds. Both formats passed 8,683 exact application payload hashes,
+their own bundle-specific executable hash, product version `0.14.9`, extracted
+Node `v24.15.0`, sidecar protocol **12** and two exact echo turns (about 0.98
+seconds per format). Neither installer nor the main application was executed.
+The differing NSIS/MSI executable hashes are expected bundle-marker differences:
+`7e7472f6d77e3621f332e1a2ab677f6d8b3a4197097a9866c3fa89964f49cbf5`
+for NSIS and
+`9204d8426186e77746b54ceae25e11c8b665ea1f1acb148c20d2ca8e2737c196`
+for MSI.
+
+Original verifier evidence:
+`test-results/acceptance/payloads-fe43852002014d0b897e75dd4edf0db5/report.json`.
+The stable directory contains byte-preserved `payload-report.json`,
+`nsis-sidecar.json` and `msi-sidecar.json`. Raw reports retain their original
+worktree paths; `validation-summary.json` provides stable local references.
+It also contains `final-gates.log`, `final-vitest.log`,
+`packaging-regressions.log`, the failed `installer-build.log`, successful
+`installer-build-retry.log`, `installer-readiness.log`, `ssh-report.json` and
+`evaluator-manifest.json`.
+
+Release readiness with `--skip-gates` exited zero: zero failures and 17 warnings.
+Those warnings preserve unsigned/signing/updater deferrals and explicitly
+unexecuted gate rows; the gates have the separate evidence above. The readiness
+snapshot does not pretend it re-executed them.
+
+GitHub was checked after pushing build source `04cd0e16`: zero commit statuses,
+zero check runs and zero Actions runs. This repository intentionally has no
+hosted CI; absence is not a CI pass. No public release, new tag or site update
+was performed.
+
+The installed executable still has SHA-256
+`b91c617d44be753ff3f2b47ff1020c5bedca9d66e4fdcbe4b3e02deb0cfaa1f9`.
+There was **no reinstall or main-app launch**. These are verified unsigned
+artifacts for owner review, not fresh installed GUI, paid-provider, keyring,
+microphone, external-worker or other-platform acceptance. The 82-group gap
+matrix remains open wherever the named live/manual evidence is still missing.
 
 ### Early observations from the shared checkout
 
@@ -411,10 +474,10 @@ A later installation/whole-flow run can follow the existing
 to close native feature acceptance. A process that responds at rest or an
 installer exit code cannot close that matrix.
 
-Do not reuse an old installer and attribute it to this commit, move the existing
+The clarified installer-preparation scope is complete, with artifacts attributed
+to clean build source `04cd0e16`. This receipt does not move the existing
 `v0.14.9` tag, publish a public release, deploy the separate docs repository, or
-enable Remote Agents merely because local tests pass. The present request makes
-redeployment conditional on everything passing; missing named native/live
-evidence must remain visible rather than silently counted as green. Signing and
-updater deferrals retain their existing owner-only scope in
+enable Remote Agents. Missing named native/live evidence remains open in the
+feature matrix. Signing and updater deferrals retain their existing owner-only
+scope in
 [the distribution runbook](./beta-distribution-trust-runbook.md).

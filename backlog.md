@@ -51,12 +51,16 @@ committed and pushed; latest installed-source identity remains unverified.
       Browser journeys use a simulated Tauri bridge; sidecar SDK doubles,
       shared-protocol/PWA builds, fixture SSH and old installed navigation do
       not close real provider, production-host SSH, installed GUI/PTY, keyring,
-      hardware or host-integration acceptance. Keep the
-      clean source-bound installer build/payload verification and full named
-      integration matrix open until
-      exercised; do not reinterpret absent hosted CI as a successful CI run.
-      The owner requested verified installers without reinstalling; installed
-      native acceptance remains a separate open matrix.
+      hardware or host-integration acceptance. DONE: clean build source
+      `04cd0e16` produced both unsigned Windows x64 installers; both delivered
+      copies passed all 8,683 payload hashes plus bundled Node/protocol/two-turn
+      echo checks. Exact source/artifact hashes and retained logs are in the
+      audit receipt. Readiness passed with zero failures and 17 disclosed
+      warnings; no installer or main app was executed. GitHub had zero statuses,
+      check runs and Actions runs for that pushed build source. The owner
+      requested verified installers without reinstalling; installed native and
+      full named live integration acceptance remain open. Signing/updater
+      deferrals retain their existing owner-only scope.
 
 - [~] **P1 — R1/R3 production transaction and recovery.** DONE: the public
       resume path now derives and verifies the live policy context, so a
@@ -578,9 +582,10 @@ still default-off.
       The first clean packaging attempt found this blocker before producing
       installers. Four target regressions, actual Cargo metadata, the release
       gate, production `cargo check --bins` and a fresh 12/12 offline example
-      run pass; a fresh clean bundle/payload attempt is still required before
-      claiming packaging passes. Exact source/evidence is in the acceptance
-      inventory.
+      run pass. The clean `04cd0e16` retry subsequently produced both installer
+      formats, and both delivered copies passed complete noninstalling payload
+      checks. Exact source/evidence is in the acceptance inventory; this does
+      not claim installed GUI or live-model acceptance.
 - [x] **P1 — Journal default-on prerequisites + SDK declaration.** Added a
       single-instance guard (`tauri-plugin-single-instance`, registered first; a
       second launch focuses the existing window) — the ADR-4 prerequisite before
