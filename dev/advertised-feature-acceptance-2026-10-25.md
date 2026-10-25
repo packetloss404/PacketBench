@@ -157,8 +157,10 @@ the related individual advertised operations so omissions stay visible.
 
 The inventory contains 82 grouped rows covering the README's related advertised
 operations. The latest isolated local gates and disposable Linux SSH matrix pass
-within their recorded scope. Installer build/payload verification remains
-pending; neither these tests nor the inventory establish every native/live
+within their recorded scope. The first clean packaging attempt failed before
+producing installers. The developer-target correction passes its focused
+validation; fresh bundle/payload verification remains pending. Neither these
+tests nor the inventory establish every native/live
 feature row.
 
 ### Source isolation and attribution
@@ -180,8 +182,11 @@ through `d41a0a51`. Final validation and packaging move to the managed checkout
 task's 50 unfinished Rust lines are excluded from this snapshot and remain
 untouched in the original checkout. The isolated validation below covers that
 snapshot plus the documented test-timeout correction and pending evidence
-documentation. The next clean commit and installer manifest will identify the
-build source. The existing installed application remains untouched.
+documentation. That source was frozen as
+`fd2135d7db5bb269bc5d2232a6a129f2a48d3c3f` for the first packaging attempt.
+The developer-target packaging correction described below requires a subsequent
+clean source commit and installer manifest. The existing installed application
+remains untouched.
 
 ### Final isolated local validation
 
@@ -216,8 +221,8 @@ source was unchanged by the timeout correction.
 
 The isolated noninstalling installer verifier's ten unsafe-path/helper
 regressions also passed. These tests do not validate fresh installer artifacts;
-the clean build and subsequent NSIS/MSI extraction/hash/packaged-echo run remain
-the next operation.
+the fresh Tauri bundle and subsequent NSIS/MSI
+extraction/hash/packaged-echo run remain required.
 
 ### Final disposable Linux SSH validation
 
@@ -241,6 +246,57 @@ The remote process is a harmless interactive Node fixture. No provider CLI,
 paid API, installed Workspace GUI, WAN server or Windows SSH host was tested.
 This closes the named disposable transport cases, not the separate live-model,
 provider/SSH parity and native whole-flow acceptance rows.
+
+### First clean packaging attempt — failed before installers
+
+The first build used clean source
+`fd2135d7db5bb269bc5d2232a6a129f2a48d3c3f`. Production release compilation
+completed in about 7 minutes 40 seconds, then Tauri attempted to bundle the
+optional developer `runtime-eval.exe`. Cargo correctly skipped that
+feature-gated binary with default production features, so the bundler could not
+find it. **No NSIS/MSI bundles or successful payload-verification pass were
+produced by this attempt.** The build wrapper's `finally` restored sidecar
+development dependencies.
+
+This is a genuine packaging defect that source/check/evaluator passes did not
+detect. The correction keeps the developer evaluator outside production binary
+discovery: Cargo `[[example]]` at `src-tauri/examples/runtime_eval.rs`, still
+requiring the `runtime-eval` feature and using
+`cargo run --features runtime-eval --example runtime-eval -- --all`.
+The old `src/bin/runtime-eval.rs` target is removed to avoid automatic binary
+rediscovery; the same offline production-runner logic and fixtures remain.
+
+The corrected target passed four focused Cargo-target regression tests, actual
+Cargo metadata inspection (only `packetbench` is a production `bin`, while
+`runtime-eval` is the required-feature `example`), all twelve release-gate checks
+with zero warnings, and `cargo check --bins` with production defaults. A fresh
+`cargo run --features runtime-eval --example runtime-eval` executed
+`debug/examples/runtime-eval.exe` and passed **12/12 offline cases**.
+
+Its evidence is
+`test-results/acceptance/runtime-eval/2026-10-25T18-01-13-750Z/manifest.json`:
+HEAD `fd2135d7db5bb269bc5d2232a6a129f2a48d3c3f`, dirty true for the pending
+correction, source SHA-256
+`7df839e60499fcf348834848c2946dd993e3d3f1799f2c91feb340613b8da47a`
+(1,483 files). The same production-runner logic and all assertions remain.
+
+The related Cargo-target, target-triple, release-readiness and quality-gate Node
+regressions also passed: 55 tests across four files in 1.88 seconds, recorded in
+`test-results/packaging-regressions.log`.
+
+The retry uses a private `CARGO_TARGET_DIR` at
+`D:/projects/PacketBench/test-results/feature-acceptance-build-20261025`.
+Only dependency-cache entries (2,624) were seeded; application binaries,
+application build directories and application fingerprints were excluded, so
+the app must compile fresh. This isolates artifact paths as well as source:
+concurrent builds must not overwrite an executable or bundle after Cargo's
+build lock releases. The existing installation remains untouched.
+
+A subsequent clean commit and real Tauri bundle retry are still required.
+Installer hashes and payload passes will be recorded only after those
+operations run. The prior application-code gates retain their named
+source/scope; neither they nor these focused target checks turn the failed
+first bundle attempt into a pass.
 
 ### Early observations from the shared checkout
 
@@ -323,6 +379,10 @@ and does not attribute those runtime repairs to its own commit.
 - Installer evidence gains archived artifact copies and a noninstalling
   NSIS/MSI payload verifier. Packaging/payload outcomes remain separate from
   installed-app acceptance and are recorded after an actual run.
+- The first production packaging attempt exposed Tauri discovering an optional
+  developer binary that default Cargo features do not build. Moving the offline
+  evaluator to a feature-gated Cargo example keeps it out of the installer's
+  production binary list; the real bundle retry remains the proof of the fix.
 - The README now states budget, recovery, transport and GitHub-only action
   limits. The transport declaration recognizes the subsequent committed
   manifest, liability, context and child-cancellation repairs without promoting

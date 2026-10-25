@@ -7,6 +7,8 @@ import { execFileSync } from "node:child_process";
 
 import { resolveTarget, sidecarPlatformPackage } from "./target-triple.js";
 import { NODE_VERSION, nodeArchiveSha256, nodeBinaryRelPath } from "./node-runtime.js";
+import { APP_NAME_LOWER } from "../src/lib/brand.ts";
+import { assertCargoBundleTargets } from "./cargo-bundle-targets.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,6 +56,33 @@ const pkg = readJson("package.json");
 const tauri = readJson("src-tauri/tauri.conf.json");
 const cargo = fs.readFileSync(path.join(root, "src-tauri/Cargo.toml"), "utf8");
 const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? null;
+
+try {
+  const manifestPath = path.join(root, "src-tauri/Cargo.toml");
+  const metadata = JSON.parse(
+    execFileSync(
+      "cargo",
+      ["metadata", "--no-deps", "--format-version", "1", "--manifest-path", manifestPath],
+      {
+        cwd: root,
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 30_000,
+      },
+    ),
+  );
+  const targets = assertCargoBundleTargets(
+    metadata,
+    manifestPath,
+    tauri.mainBinaryName ?? APP_NAME_LOWER,
+  );
+  pass(
+    "Cargo installer targets",
+    `${targets.application} is the only binary; ${targets.example} is a gated developer example`,
+  );
+} catch (error) {
+  fail("Cargo installer targets", error instanceof Error ? error.message : String(error));
+}
 
 if (pkg.version === tauri.version && pkg.version === cargoVersion) {
   pass("Version alignment", `package.json, tauri.conf.json, and Cargo.toml are ${pkg.version}`);

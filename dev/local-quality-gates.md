@@ -89,6 +89,7 @@ directly when you want a single signal.
 
 - **Offline runtime evaluation**
   - Run `pnpm acceptance:runtime-eval` for the scripted fixtures using the production turn runner with fake services.
+  - The developer CLI is a feature-gated Cargo example at `src-tauri/examples/runtime_eval.rs`, invoked as `cargo run --features runtime-eval --example runtime-eval -- --all`. It is excluded from Tauri's production binary discovery.
   - The full runner schedules this as `runtime:eval`; `pnpm check` and `release:readiness` do not include it.
   - This is deterministic offline fault/contract coverage. It does not prove live-model quality, a paid provider, an actual SSH executor or installed-app recovery.
 

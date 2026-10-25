@@ -2,7 +2,7 @@
 /**
  * R8 (H1) offline same-executor evaluation acceptance.
  *
- * Builds and runs the `runtime-eval` binary, which drives the production agent
+ * Builds and runs the gated `runtime-eval` developer example, which drives the production agent
  * runner through the deterministic fake lane, then archives the redacted
  * results and a source-stamped manifest under test-results/. Offline always:
  * the binary cannot reach a provider, the keyring, an ambient MCP server or a
@@ -36,13 +36,13 @@ try {
           "/d",
           "/s",
           "/c",
-          `cargo run --features runtime-eval --bin runtime-eval -- --all --out ${cliRelative}`,
+          `cargo run --features runtime-eval --example runtime-eval -- --all --out ${cliRelative}`,
         ]
       : [
           "run",
           "--features",
           "runtime-eval",
-          "--bin",
+          "--example",
           "runtime-eval",
           "--",
           "--all",

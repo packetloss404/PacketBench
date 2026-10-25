@@ -553,7 +553,7 @@ still default-off.
       cancellation token (a Stop during a child tool round is not honored) —
       pre-existing, follow-up.
 - [x] **P2 — Offline same-executor eval lane (R8 v1).** New `runtime-eval` Cargo
-      feature + `src-tauri/src/bin/runtime-eval.rs` driving the SAME `run_turn`
+      feature + `src-tauri/examples/runtime_eval.rs` driving the SAME `run_turn`
       via the `FakeServices`/`ScriptedProvider` deterministic lane (no second
       loop). `src-tauri/src/runtime_eval/` holds versioned `EvaluationCase v1`/
       `RunResult v1` (all spec fields, actual/provisional/unknown spend split), a
@@ -572,6 +572,15 @@ still default-off.
       OS/container isolation; the remaining offline checkpoint-layer cases
       (duplicate/out-of-order tool ids, newer-schema quarantine); and the SDK-lane
       limitation declarations.
+      **October 25 packaging correction:** the developer CLI is a feature-gated
+      Cargo example, invoked with `--example runtime-eval`, so Tauri does not
+      try bundling an optional executable absent from the production build.
+      The first clean packaging attempt found this blocker before producing
+      installers. Four target regressions, actual Cargo metadata, the release
+      gate, production `cargo check --bins` and a fresh 12/12 offline example
+      run pass; a fresh clean bundle/payload attempt is still required before
+      claiming packaging passes. Exact source/evidence is in the acceptance
+      inventory.
 - [x] **P1 — Journal default-on prerequisites + SDK declaration.** Added a
       single-instance guard (`tauri-plugin-single-instance`, registered first; a
       second launch focuses the existing window) — the ADR-4 prerequisite before

@@ -177,6 +177,13 @@ Use this path when the requested result is verified installer artifacts and the
 current installation must stay untouched. Prerequisites: Windows x64, the build
 toolchain and dependencies, 7-Zip, and Windows Installer's read-only COM API.
 
+When another build may run concurrently, set `CARGO_TARGET_DIR` to a private
+artifact directory for the entire build/verification run. A separate source
+worktree alone does not prevent shared output files being replaced after
+Cargo's lock releases. Dependency caches may be seeded; exclude application
+binaries, application build directories and application fingerprints so the app
+compiles fresh. The wrapper resolves the selected target through Cargo metadata.
+
 ```powershell
 pnpm acceptance:build
 # Build prints the absolute manifest path. Pass that exact path below.
@@ -187,6 +194,10 @@ The build wrapper rejects source drift and archives hash-verified NSIS/MSI
 copies beside its timestamped manifest under
 `test-results/acceptance/windows/<timestamp>/`. Subsequent builds can replace
 the Cargo bundle directory without replacing those evidence artifacts.
+Keep developer-only CLIs out of Cargo's production binary targets:
+`runtime-eval` is a feature-gated example invoked with `--example runtime-eval`.
+A successful `cargo check` or offline evaluation cannot replace a real Tauri
+bundle attempt; bundle discovery must succeed with default production features.
 The manifest binds the source fingerprint, installer files, format-specific
 application executable hashes, bundled Node, sidecar resources, licenses and
 all production dependency files. Keep source unchanged during the build.

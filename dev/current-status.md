@@ -12,8 +12,15 @@ live-provider skips are in the report. The earlier shared-checkout gate run was
 unstable because another task edited Rust source and is not final evidence.
 
 The owner requested **verified installers without reinstalling**. A clean
-source-bound NSIS/MSI build and noninstalling payload verification remain next;
-the installed application stays untouched. Its limited native navigation smoke
+build at `fd2135d7` compiled the release executable, then failed before creating
+installers because Tauri attempted to bundle a feature-gated developer
+`runtime-eval.exe` absent from default production builds. The evaluator is now
+declared as a feature-gated Cargo example. Four target regressions, real Cargo
+metadata, the release gate, production `cargo check --bins` and a fresh 12/12
+offline example run pass. A fresh clean NSIS/MSI build and noninstalling payload
+verification remain next. Sidecar
+development dependencies were restored after the failure. The installed
+application stays untouched. Its limited native navigation smoke
 uses the existing payload. Real provider/account, installed whole-flow,
 hardware/platform and external-integration cases remain open. The October 24
 facts below retain their original snapshot; subsequent runtime/flow commits and
