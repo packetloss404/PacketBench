@@ -15,9 +15,12 @@
 //! Crash-window limitation (v1): the reserve/append/settle sequence is not
 //! atomic across the journal and `usage.jsonl`. A crash between the ledger
 //! append and the journal settle (or between admit and append) leaves a
-//! `reserved` row that no reconciliation pass revisits. Startup reconciliation
-//! of orphaned reservations is a follow-up slice; until then such a row
-//! permanently consumes headroom (fail-closed, never over-spend).
+//! `reserved` row. [`reconcile_reserved`] is the startup pass that revisits
+//! those rows: a request present in the usage ledger settles at its recorded
+//! actual, and a request absent from the ledger is released as genuinely
+//! orphaned. That pass runs once at startup and is only safe with the
+//! single-instance guard in force (ADR-4): a second process mutating the shared
+//! journal would make reconciliation racy.
 //!
 //! v1 is deliberately **single-scope**: each reservation names exactly one
 //! `scope_key` and there is no scope hierarchy or roll-up. Admission is
@@ -35,6 +38,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::core::runtime_types::validate_id;
@@ -521,6 +525,63 @@ pub fn release(connection: &Connection, request_id: &str, now: i64) -> Result<()
     }
 }
 
+/// The outcome of a [`reconcile_reserved`] pass: how many stranded reservations
+/// were settled against the usage ledger and how many were released.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconcileReport {
+    pub settled: usize,
+    pub released: usize,
+}
+
+/// Reconcile reservations stranded by a crash between the usage-ledger append
+/// and the journal settle. Every `reserved` row is revisited: one whose
+/// `request_id` appears in `ledger` is settled at the ledger's actual, and one
+/// absent from `ledger` is released (it never produced usage). A row already
+/// reconciled concurrently (`NotFound`/`Conflict`) is skipped, not counted; any
+/// other [`BudgetError`] aborts the pass. Only safe under the single-instance
+/// guard (ADR-4); runs once at startup.
+pub fn reconcile_reserved(
+    connection: &Connection,
+    ledger: &HashMap<String, i64>,
+    now: i64,
+) -> Result<ReconcileReport, BudgetError> {
+    let request_ids: Vec<String> = {
+        let mut statement = connection
+            .prepare(
+                "SELECT request_id FROM budget_reservations WHERE state = 'reserved' \
+                 ORDER BY request_id",
+            )
+            .map_err(|e| BudgetError::Store(e.to_string()))?;
+        let rows = statement
+            .query_map([], |row| row.get(0))
+            .map_err(|e| BudgetError::Store(e.to_string()))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| BudgetError::Store(e.to_string()))?
+    };
+
+    let mut report = ReconcileReport {
+        settled: 0,
+        released: 0,
+    };
+    for request_id in request_ids {
+        match ledger.get(&request_id) {
+            Some(&actual_usd_micros) => {
+                match settle(connection, &request_id, actual_usd_micros, now) {
+                    Ok(_) => report.settled += 1,
+                    Err(BudgetError::NotFound { .. }) | Err(BudgetError::Conflict { .. }) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            None => match release(connection, &request_id, now) {
+                Ok(()) => report.released += 1,
+                Err(BudgetError::NotFound { .. }) | Err(BudgetError::Conflict { .. }) => {}
+                Err(error) => return Err(error),
+            },
+        }
+    }
+    Ok(report)
+}
+
 /// The scope's *in-flight* reservations: the sum of its active (`reserved`)
 /// rows. This is deliberately NOT the admission figure — [`reserve`] admits
 /// against cumulative committed spend (settled + reserved), so a settled row
@@ -982,5 +1043,166 @@ mod tests {
         // The released row is excluded, so the full limit is available again.
         let second = reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(900)).unwrap();
         assert_eq!(second.reserved_usd_micros, 990);
+    }
+
+    #[test]
+    fn reconcile_settles_a_reserved_row_at_the_ledger_actual() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+
+        let mut ledger = HashMap::new();
+        ledger.insert("req-1".to_string(), 300);
+        let report = reconcile_reserved(&connection, &ledger, 2_000).unwrap();
+
+        assert_eq!(
+            report,
+            ReconcileReport {
+                settled: 1,
+                released: 0,
+            }
+        );
+        let loaded = load_reservation(&connection, "req-1").unwrap();
+        assert_eq!(loaded.state, "settled");
+        assert_eq!(loaded.settled_usd_micros, Some(300));
+    }
+
+    #[test]
+    fn reconcile_releases_a_reserved_row_absent_from_the_ledger() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+
+        let report = reconcile_reserved(&connection, &HashMap::new(), 2_000).unwrap();
+
+        assert_eq!(
+            report,
+            ReconcileReport {
+                settled: 0,
+                released: 1,
+            }
+        );
+        let loaded = load_reservation(&connection, "req-1").unwrap();
+        assert_eq!(loaded.state, "released");
+        assert_eq!(loaded.settled_usd_micros, None);
+    }
+
+    #[test]
+    fn reconcile_settles_a_zero_cost_reservation_at_zero_not_released() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+
+        // Presence in the ledger — not a non-zero value — decides settle vs
+        // release; a genuine zero-cost actual must settle at 0.
+        let mut ledger = HashMap::new();
+        ledger.insert("req-1".to_string(), 0);
+        let report = reconcile_reserved(&connection, &ledger, 2_000).unwrap();
+
+        assert_eq!(
+            report,
+            ReconcileReport {
+                settled: 1,
+                released: 0,
+            }
+        );
+        let loaded = load_reservation(&connection, "req-1").unwrap();
+        assert_eq!(loaded.state, "settled");
+        assert_eq!(loaded.settled_usd_micros, Some(0));
+    }
+
+    #[test]
+    fn reconcile_leaves_already_settled_rows_untouched() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+        settle(&connection, "req-1", 250, 1_500).unwrap();
+        reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(400)).unwrap();
+        release(&connection, "req-2", 1_500).unwrap();
+
+        // The ledger carries req-1 and omits req-2, but the `state = 'reserved'`
+        // pass never revisits a settled or released row.
+        let mut ledger = HashMap::new();
+        ledger.insert("req-1".to_string(), 300);
+        let report = reconcile_reserved(&connection, &ledger, 2_000).unwrap();
+
+        assert_eq!(
+            report,
+            ReconcileReport {
+                settled: 0,
+                released: 0,
+            }
+        );
+        let settled = load_reservation(&connection, "req-1").unwrap();
+        assert_eq!(settled.state, "settled");
+        assert_eq!(settled.settled_usd_micros, Some(250));
+        let released = load_reservation(&connection, "req-2").unwrap();
+        assert_eq!(released.state, "released");
+        assert_eq!(released.settled_usd_micros, None);
+    }
+
+    #[test]
+    fn reconcile_counts_mixed_rows_correctly() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000_000), Some(100)).unwrap();
+        reserve_with(&connection, "req-2", "run-1", &scope(1_000_000), Some(100)).unwrap();
+        reserve_with(&connection, "req-3", "run-1", &scope(1_000_000), Some(100)).unwrap();
+        settle(&connection, "req-3", 50, 1_500).unwrap();
+
+        let mut ledger = HashMap::new();
+        ledger.insert("req-1".to_string(), 40);
+        let report = reconcile_reserved(&connection, &ledger, 2_000).unwrap();
+
+        assert_eq!(
+            report,
+            ReconcileReport {
+                settled: 1,
+                released: 1,
+            }
+        );
+        assert_eq!(
+            load_reservation(&connection, "req-1").unwrap().state,
+            "settled"
+        );
+        assert_eq!(
+            load_reservation(&connection, "req-2").unwrap().state,
+            "released"
+        );
+        assert_eq!(
+            load_reservation(&connection, "req-3").unwrap().state,
+            "settled"
+        );
+    }
+
+    #[test]
+    fn reconcile_with_no_reserved_rows_is_a_noop() {
+        let connection = open_at(&temp_db()).unwrap();
+        seed_run(&connection, "run-1");
+        reserve_with(&connection, "req-1", "run-1", &scope(1_000), Some(400)).unwrap();
+        release(&connection, "req-1", 1_500).unwrap();
+        reserve_with(&connection, "req-2", "run-1", &scope(1_000), Some(400)).unwrap();
+        settle(&connection, "req-2", 200, 1_500).unwrap();
+
+        // Only non-reserved rows exist, so nothing is counted and no row moves.
+        let mut ledger = HashMap::new();
+        ledger.insert("req-1".to_string(), 300);
+        let report = reconcile_reserved(&connection, &ledger, 2_000).unwrap();
+
+        assert_eq!(
+            report,
+            ReconcileReport {
+                settled: 0,
+                released: 0,
+            }
+        );
+        assert_eq!(
+            load_reservation(&connection, "req-1").unwrap().state,
+            "released"
+        );
+        assert_eq!(
+            load_reservation(&connection, "req-2").unwrap().state,
+            "settled"
+        );
     }
 }

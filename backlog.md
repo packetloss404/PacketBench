@@ -290,6 +290,22 @@ excluded from that team. H1 evaluation applies to the existing production runtim
       OS/container isolation; the remaining offline checkpoint-layer cases
       (duplicate/out-of-order tool ids, newer-schema quarantine); and the SDK-lane
       limitation declarations.
+- [x] **P1 — Journal default-on prerequisites + SDK declaration.** Added a
+      single-instance guard (`tauri-plugin-single-instance`, registered first; a
+      second launch focuses the existing window) — the ADR-4 prerequisite before
+      the journal can be enabled by default. Added startup budget reconciliation
+      (`runtime_budget::reconcile_reserved` + `reconcile_budget_on_startup`, gated
+      on the journal, non-fatal, runs synchronously pre-event-loop so no request
+      can race the ledger snapshot): a `reserved` row present in `usage.jsonl`
+      settles at the ledger actual; an orphaned row is released. Child/subagent
+      usage rows now carry their reservation `request_id` (R7 hook) so child
+      reservations reconcile too. Wrote `dev/agent-experience/07-sdk-limitations.md`
+      declaring native guarantees vs the weaker SDK/soft-turn claims and the v12
+      protocol floor. 1285/0; review findings (child fail-open release, sync-call
+      justification, test strength) all fixed. **Still open:** the composer is not
+      yet wired to `get_runtime_capabilities`; context windows are still
+      static-table only (no Rust model-catalog cache); native visual/IME/restart
+      evidence needs the user/tooling.
 - [ ] **P1 — Typed agent continuation (H2).** Preserve versioned tool/results,
       opaque replay state and frozen authority; label incompatible/lossy fallback
       and prevent completed-tool re-execution. Existing September transcript

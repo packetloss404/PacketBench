@@ -206,6 +206,16 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        // ADR-4: the runtime journal's default-on prerequisite. Two instances
+        // would corrupt the shared journal and make budget reconciliation
+        // unsafe, so a second launch focuses the existing window and exits.
+        // Must be the first plugin registered.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
@@ -251,6 +261,20 @@ pub fn run() {
             // dropdown.
             if let Err(e) = commands::auth_watcher::init(&app.handle()) {
                 tracing::warn!("auth_watcher init failed: {}", e);
+            }
+
+            // ADR-4 budget reconciliation: settle or release reservations
+            // stranded by a crash between the usage-ledger append and the
+            // journal settle. Non-fatal — the app still starts.
+            //
+            // `with_journal` prefers a blocking worker, but here we deliberately
+            // run it synchronously on the main thread BEFORE the event loop:
+            // nothing is in flight, no session can start until `.setup()`
+            // returns, so the ledger snapshot and the reservation pass are
+            // atomic with respect to any admission. An off-thread pass would
+            // instead race a newly-admitted request against that snapshot.
+            if let Err(e) = commands::agent_runtime::reconcile_budget_on_startup() {
+                tracing::warn!("Budget reconciliation on startup failed: {}", e);
             }
 
             // Best-effort teardown of the worktrees belonging to attempts a

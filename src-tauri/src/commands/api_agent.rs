@@ -651,6 +651,7 @@ mod tests {
             crate::core::tool_subagent::ChildUsage {
                 provider: "anthropic".into(),
                 model: "claude-haiku-4-5".into(),
+                request_id: None,
                 input_tokens: 100,
                 output_tokens: 25,
                 cache_read: 20,
@@ -664,6 +665,23 @@ mod tests {
             entry.cost_usd,
             crate::commands::pricing::calculate_cost("claude-haiku-4-5", 100, 25, 20, 30)
         );
+    }
+
+    #[test]
+    fn child_usage_entry_carries_the_reservation_request_id() {
+        let entry = child_usage_entry(
+            "parent-session",
+            crate::core::tool_subagent::ChildUsage {
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+                request_id: Some("child-run:0:abc".into()),
+                input_tokens: 100,
+                output_tokens: 25,
+                cache_read: 20,
+                cache_write: 30,
+            },
+        );
+        assert_eq!(entry.request_id.as_deref(), Some("child-run:0:abc"));
     }
 
     #[test]
@@ -2262,7 +2280,7 @@ fn child_usage_entry(
         provider: Some(usage.provider),
         agent_id: Some("subagent".to_string()),
         session_id: session_id.to_string(),
-        request_id: None,
+        request_id: usage.request_id,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cache_read: usage.cache_read,
@@ -2317,6 +2335,7 @@ pub(crate) fn account_native_request_chunk(
             crate::core::tool_subagent::ChildUsage {
                 provider: provider.into(),
                 model: model.into(),
+                request_id: None,
                 input_tokens: *input_tokens,
                 output_tokens: *output_tokens,
                 cache_read: *cache_read_input_tokens,

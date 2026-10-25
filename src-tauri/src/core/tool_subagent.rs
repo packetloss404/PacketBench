@@ -86,6 +86,10 @@ pub trait ChildBudgetHook: Send + Sync {
 pub struct ChildUsage {
     pub provider: String,
     pub model: String,
+    /// The R7 reservation id this request was admitted under, when one was
+    /// made. Carried onto the usage ledger row so startup reconciliation can
+    /// settle the matching reservation instead of releasing it.
+    pub request_id: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read: u64,
@@ -143,6 +147,7 @@ pub(crate) async fn collect_response(
     mut rx: mpsc::Receiver<StreamChunk>,
     provider: &str,
     model: &str,
+    request_id: Option<&str>,
 ) -> Result<(String, Vec<ToolCall>, Option<serde_json::Value>, ChildUsage), String> {
     let mut text = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -175,6 +180,7 @@ pub(crate) async fn collect_response(
                 let usage = ChildUsage {
                     provider: provider.to_string(),
                     model: model.to_string(),
+                    request_id: request_id.map(str::to_string),
                     input_tokens,
                     output_tokens,
                     cache_read: cache_read_input_tokens,
@@ -367,7 +373,18 @@ async fn run_agent_loop_inner(
 
         let (tx, rx) = mpsc::channel::<StreamChunk>(64);
         let stream_fut = provider.stream_chat(api_key, request, tx);
-        let collect_fut = collect_response(rx, &parent.provider, &model);
+        // The reservation id rides the usage row only when a reservation was
+        // actually made; the disabled/unconfigured path leaves it `None`.
+        let collect_fut = collect_response(
+            rx,
+            &parent.provider,
+            &model,
+            if pending_reservation {
+                Some(request_id.as_str())
+            } else {
+                None
+            },
+        );
 
         let (stream_res, collected) = tokio::join!(stream_fut, collect_fut);
         let (assistant_text, tool_calls, provider_reasoning, usage) = match collected {
@@ -666,13 +683,15 @@ mod tests {
     }
 
     /// A fake child-budget hook that counts reserve/settle/release calls and
-    /// records the settled actuals. `reserve` reports a live reservation.
+    /// records the settled actuals and reserved request ids. `reserve` reports a
+    /// live reservation.
     #[derive(Default)]
     struct CountingBudget {
         reserves: std::sync::atomic::AtomicUsize,
         settles: std::sync::atomic::AtomicUsize,
         releases: std::sync::atomic::AtomicUsize,
         actuals: std::sync::Mutex<Vec<i64>>,
+        reserved_ids: std::sync::Mutex<Vec<String>>,
     }
 
     impl CountingBudget {
@@ -685,13 +704,16 @@ mod tests {
         fn releases(&self) -> usize {
             self.releases.load(std::sync::atomic::Ordering::SeqCst)
         }
+        fn reserved_ids(&self) -> Vec<String> {
+            self.reserved_ids.lock().unwrap().clone()
+        }
     }
 
     #[async_trait::async_trait]
     impl ChildBudgetHook for CountingBudget {
         async fn reserve(
             &self,
-            _request_id: &str,
+            request_id: &str,
             _provider: &str,
             _model: &str,
             _messages: &[ChatMessage],
@@ -699,6 +721,10 @@ mod tests {
         ) -> Result<bool, String> {
             self.reserves
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.reserved_ids
+                .lock()
+                .unwrap()
+                .push(request_id.to_string());
             Ok(true)
         }
         async fn settle(&self, _request_id: &str, actual_usd_micros: i64) -> Result<(), String> {
@@ -1144,7 +1170,7 @@ mod tests {
         .await
         .unwrap();
         drop(tx);
-        assert!(collect_response(rx, "anthropic", "claude-haiku-4-5")
+        assert!(collect_response(rx, "anthropic", "claude-haiku-4-5", None)
             .await
             .unwrap_err()
             .contains("without a completion"));
@@ -1256,7 +1282,24 @@ mod tests {
             .unwrap()
             .iter()
             .all(|actual| *actual >= 0));
-        assert_eq!(recorded.lock().unwrap().len(), MAX_ITERATIONS);
+        // Every usage row carries the SAME request_id as its reservation, so a
+        // crash before settle leaves a ledger row startup reconciliation can
+        // match and settle instead of releasing.
+        let mut recorded_ids: Vec<String> = recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                row.request_id
+                    .clone()
+                    .expect("a reserved child usage row must carry its request_id")
+            })
+            .collect();
+        let mut reserved_ids = hook.reserved_ids();
+        assert_eq!(recorded_ids.len(), MAX_ITERATIONS);
+        recorded_ids.sort();
+        reserved_ids.sort();
+        assert_eq!(recorded_ids, reserved_ids);
     }
 
     #[tokio::test]
@@ -1309,6 +1352,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.status, SubagentStatus::Completed);
+        assert!(
+            recorded
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|row| row.request_id.is_none()),
+            "no reservation means no request_id on the usage row"
+        );
 
         // Hook present but the journal is off / no session budget: it reports
         // no reservation, so settle/release are never called.

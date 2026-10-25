@@ -801,6 +801,52 @@ async fn release_reservation(request_id: &str) -> Result<(), String> {
     .await
 }
 
+/// Startup reconciliation of budget reservations stranded by the R5b crash
+/// window (a crash between the usage-ledger append and the journal settle).
+/// No-op unless the runtime journal is enabled. Reads the usage ledger, maps
+/// each correlated `request_id` to its actual micro-dollars, and settles or
+/// releases every stranded reservation. Safe only under the single-instance
+/// guard (ADR-4). A ledger read/parse failure is surfaced, not swallowed —
+/// reconciliation is best-effort at startup but must appear in the log.
+pub fn reconcile_budget_on_startup() -> Result<(), String> {
+    if !journal::is_enabled() {
+        return Ok(());
+    }
+    let path = crate::commands::usage::usage_log_path()
+        .ok_or_else(|| "Could not resolve usage ledger directory".to_string())?;
+    let contents = crate::commands::usage::read_usage_ledger(&path)?.unwrap_or_default();
+    let ledger = build_budget_ledger(&contents)?;
+    let now = now_ms();
+    let report = journal::with_journal(|connection| {
+        runtime_budget::reconcile_reserved(connection, &ledger, now).map_err(String::from)
+    })?;
+    tracing::info!(
+        settled = report.settled,
+        released = report.released,
+        "Reconciled stranded budget reservations on startup"
+    );
+    Ok(())
+}
+
+/// Build the `request_id -> actual micro-dollars` map reconciliation matches
+/// reservations against. Rows without a `request_id` (parent native turns,
+/// historical rows) are ignored; a malformed row is an error, never a silent
+/// skip.
+fn build_budget_ledger(contents: &str) -> Result<std::collections::HashMap<String, i64>, String> {
+    let mut ledger: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (index, line) in contents.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: crate::commands::usage::UsageEntry = serde_json::from_str(line)
+            .map_err(|error| format!("Invalid usage row {}: {error}", index + 1))?;
+        if let Some(request_id) = entry.request_id {
+            ledger.insert(request_id, (entry.cost_usd * 1_000_000.0).round() as i64);
+        }
+    }
+    Ok(ledger)
+}
+
 /// R7 child-request budget hook. Routes every child model request through the
 /// SAME admission/settlement path as the parent's own requests, so a child
 /// reserves against the parent session's root budget scope.
@@ -841,5 +887,52 @@ impl ChildBudgetHook for SessionChildBudget {
 
     async fn release(&self, request_id: &str) -> Result<(), String> {
         release_reservation(request_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn usage_row(request_id: Option<&str>, cost_usd: f64) -> String {
+        serde_json::json!({
+            "ts": "2026-09-24T12:00:00Z",
+            "source": "test",
+            "model": "gpt-5.5",
+            "agent_id": null,
+            "session_id": "s",
+            "request_id": request_id,
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cache_read": 0,
+            "cache_write": 0,
+            "cost_usd": cost_usd,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn ledger_rows_without_a_request_id_are_ignored() {
+        let contents = format!(
+            "{}\n{}\n",
+            usage_row(Some("req-1"), 0.25),
+            usage_row(None, 9.0)
+        );
+        let ledger = build_budget_ledger(&contents).unwrap();
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(ledger.get("req-1"), Some(&250_000));
+    }
+
+    #[test]
+    fn a_corrupt_ledger_row_is_an_error_not_a_silent_skip() {
+        assert!(build_budget_ledger("not json\n").is_err());
+    }
+
+    #[test]
+    fn a_corrupt_temp_ledger_fails_the_read_gate_without_panicking() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("usage.jsonl");
+        std::fs::write(&path, "not json\n").unwrap();
+        assert!(crate::commands::usage::read_usage_ledger(&path).is_err());
     }
 }
