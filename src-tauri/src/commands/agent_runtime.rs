@@ -157,29 +157,61 @@ pub async fn cancel_runtime_run(
 // durable epoch and does NOT start the provider. Both are inert unless the
 // journal is enabled, and both are registered in `lib.rs`.
 
+/// The live policy context for a run's session, when the session is still
+/// registered. `None` keeps typed resume fail-closed (semantic only) — the
+/// durable binding does not record the tool-policy/MCP authority, so the policy
+/// hashes can only be verified against the live session.
+async fn live_compatibility_for_run(
+    state: &ApiAgentState,
+    run_id: &str,
+) -> Option<CompatibilityContext> {
+    if !journal::is_enabled() {
+        return None;
+    }
+    let run_id_owned = run_id.to_string();
+    let conversation_id = on_blocking(move || {
+        journal::with_journal(|connection| journal::run_conversation_id(connection, &run_id_owned))
+    })
+    .await
+    .ok()?;
+    let session = state.runtime_session(&conversation_id).await?;
+    Some(checkpoint_compatibility(&session))
+}
+
 #[tauri::command]
-pub async fn inspect_runtime_resume(run_id: String) -> Result<journal::ResumeInspection, String> {
+pub async fn inspect_runtime_resume(
+    state: State<'_, Arc<ApiAgentState>>,
+    run_id: String,
+) -> Result<journal::ResumeInspection, String> {
+    // Verify the live policy when the session is still registered, so a
+    // compatible checkpoint offers `typed`; otherwise stay semantic-only.
+    let current = live_compatibility_for_run(&state, &run_id).await;
     on_blocking(move || {
-        journal::with_journal(|connection| journal::inspect_resume(connection, &run_id))
+        journal::with_journal(|connection| {
+            journal::inspect_resume_with_compatibility(connection, &run_id, current.as_ref())
+        })
     })
     .await
 }
 
 #[tauri::command]
 pub async fn resume_runtime_run(
+    state: State<'_, Arc<ApiAgentState>>,
     run_id: String,
     expected_epoch: i64,
     mode: String,
     inspected_revision: Option<String>,
 ) -> Result<RuntimeRunSummary, String> {
+    let current = live_compatibility_for_run(&state, &run_id).await;
     on_blocking(move || {
         journal::with_journal(|connection| {
-            journal::resume_run(
+            journal::resume_run_with_compatibility(
                 connection,
                 &run_id,
                 expected_epoch,
                 &mode,
                 inspected_revision.as_deref(),
+                current.as_ref(),
             )
         })
     })
@@ -416,7 +448,7 @@ impl CheckpointStore for JournalCheckpointStore {
 use std::sync::Arc;
 
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::oneshot;
 
 use crate::commands::api_agent::{

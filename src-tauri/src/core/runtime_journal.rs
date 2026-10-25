@@ -710,6 +710,21 @@ pub struct ResumeInspection {
     pub inspected_revision: Option<String>,
 }
 
+/// The conversation id a run belongs to. The resume commands use it to look up
+/// the live session whose policy context gates typed resume.
+pub fn run_conversation_id(connection: &Connection, run_id: &str) -> Result<String, String> {
+    validate_id("runId", run_id)?;
+    connection
+        .query_row(
+            "SELECT conversation_id FROM runs WHERE run_id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read run: {e}"))?
+        .ok_or_else(|| format!("Unknown run: {run_id}"))
+}
+
 /// Inspect a run for resume with no live policy context. Never dispatches.
 ///
 /// Because the durable run binding does not record the tool-policy/MCP
@@ -1651,6 +1666,17 @@ mod tests {
             Some(&context),
         )
         .is_ok());
+    }
+
+    #[test]
+    fn run_conversation_id_maps_a_run_to_its_conversation() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        assert_eq!(
+            run_conversation_id(&connection, &prepared.run_id).unwrap(),
+            "conv-1"
+        );
+        assert!(run_conversation_id(&connection, "does-not-exist").is_err());
     }
 
     #[test]
