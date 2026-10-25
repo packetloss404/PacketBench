@@ -1,3 +1,4 @@
+import { getCliCatalogEntry } from "@/lib/cli-catalog";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -88,6 +89,15 @@ describe("CliCatalogCard manual-path override", () => {
     renderCard({ manualPath: null });
     expect(screen.queryByTitle("Clear manual path override")).toBeNull();
   });
+});
+
+it("shows a detected Windows Amp as installed through WSL", () => {
+  const platform = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
+  try {
+    renderCard({ entry: getCliCatalogEntry("amp")!, manualPath: null, result: { id: "amp", installed: true, path: "/home/dev/.local/bin/amp", version: "1.2.3", source: "wsl" } });
+    expect(screen.getByText("1.2.3 · WSL")).toBeInTheDocument();
+    expect(screen.queryByText("Windows: use WSL")).toBeNull();
+  } finally { platform.mockRestore(); }
 });
 
 it("retains saved custom entries while removing unsupported creation", async () => {

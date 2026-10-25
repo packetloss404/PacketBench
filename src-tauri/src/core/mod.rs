@@ -11,6 +11,8 @@ pub mod aux_research;
 pub mod boot_check;
 pub mod brand;
 pub mod claude_statusline;
+pub mod cli_registry;
+pub mod cli_wsl;
 // v0.8.8 quality ai: hand-authored prompts for the Code Quality AI features
 // (explain-error + summarize-run). Kept next to `github_ai_prompts` so prompt
 // iteration doesn't churn the command surface.

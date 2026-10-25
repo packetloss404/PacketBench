@@ -40,9 +40,7 @@ pub fn command_program_name(command: &str) -> String {
 /// path-shaped command IS the Settings-selected executable: that is how the
 /// Workspace hands a Browse-pinned binary to the PTY.
 fn looks_like_path(command: &str) -> bool {
-    command.contains('/')
-        || command.contains('\\')
-        || std::path::Path::new(command).is_absolute()
+    command.contains('/') || command.contains('\\') || std::path::Path::new(command).is_absolute()
 }
 
 /// Read PacketBench's legacy app pin for a CLI. Detection, integration probes,
@@ -200,12 +198,31 @@ impl CliLaunchSpec {
 /// bash` can resolve the System32 WSL launcher). Folding it in would silently
 /// change which bash launches.
 pub fn install_dir_candidates(program: &str) -> Vec<PathBuf> {
-    match program {
+    let mut candidates = match program {
         "packetcode" => packetcode_fallback_candidates(),
         "claude" => claude_fallback_candidates(),
         "codex" | "opencode" => npm_global_bin_candidates(program),
         _ => Vec::new(),
+    };
+    for location in crate::core::cli_registry::discovery(program) {
+        if location == "npmGlobal" {
+            candidates.extend(npm_global_bin_candidates(program));
+        } else if let Some(home) = dirs::home_dir() {
+            let bin = match location.as_str() {
+                "localBin" => home.join(".local").join("bin"),
+                "grokBin" => home.join(".grok").join("bin"),
+                _ => continue,
+            };
+            #[cfg(windows)]
+            candidates.extend([
+                bin.join(format!("{program}.exe")),
+                bin.join(format!("{program}.cmd")),
+            ]);
+            #[cfg(not(windows))]
+            candidates.push(bin.join(program));
+        }
     }
+    candidates
 }
 
 /// Claude Code's installer target.
@@ -1042,8 +1059,7 @@ mod tests {
         write_pin(home.path(), "claude", &pinned);
 
         let spec = |settings_path: Option<&str>| {
-            CliLaunchSpec::new("claude", settings_path)
-                .with_home(Some(home.path().to_path_buf()))
+            CliLaunchSpec::new("claude", settings_path).with_home(Some(home.path().to_path_buf()))
         };
         let path_hit = || Some(on_path.to_string_lossy().into_owned());
 
@@ -1059,8 +1075,7 @@ mod tests {
 
         // 3. PATH wins once the pin is gone.
         let bare = tempfile::tempdir().expect("bare home");
-        let no_pin =
-            CliLaunchSpec::new("claude", None).with_home(Some(bare.path().to_path_buf()));
+        let no_pin = CliLaunchSpec::new("claude", None).with_home(Some(bare.path().to_path_buf()));
         let resolved = resolve_cli_launch_with(&no_pin, |_| path_hit());
         assert_eq!(resolved.source, CliLaunchSource::Path);
         assert_eq!(resolved.path, on_path.to_string_lossy());
@@ -1070,8 +1085,8 @@ mod tests {
         //    tier: `claude`'s candidates are real paths on a developer machine
         //    (`~/.local/bin/claude.exe`), so asserting the fallthrough with
         //    `claude` would pass or fail depending on whose machine ran it.
-        let unknown = CliLaunchSpec::new("gh-copilot", None)
-            .with_home(Some(bare.path().to_path_buf()));
+        let unknown =
+            CliLaunchSpec::new("gh-copilot", None).with_home(Some(bare.path().to_path_buf()));
         assert!(install_dir_candidates("gh-copilot").is_empty());
         let resolved = resolve_cli_launch_with(&unknown, |_| None);
         assert_eq!(resolved.source, CliLaunchSource::BareName);
@@ -1084,8 +1099,8 @@ mod tests {
     fn install_directory_tier_sits_behind_path() {
         let home = tempfile::tempdir().expect("home");
         let on_path = executable(home.path(), "path-packetcode");
-        let spec = CliLaunchSpec::new("packetcode", None)
-            .with_home(Some(home.path().to_path_buf()));
+        let spec =
+            CliLaunchSpec::new("packetcode", None).with_home(Some(home.path().to_path_buf()));
 
         let resolved =
             resolve_cli_launch_with(&spec, |_| Some(on_path.to_string_lossy().into_owned()));
@@ -1169,7 +1184,8 @@ mod tests {
             let launched = resolve_cli_launch_sync(&spec);
             let reported = resolve_cli_launch(&spec).await;
             assert_eq!(
-                launched, reported,
+                launched,
+                reported,
                 "reporting and launch disagreed for {:?}",
                 spec.command()
             );
@@ -1216,4 +1232,3 @@ mod tests {
         assert_eq!(redact_home_in_path(inside, None), inside);
     }
 }
-

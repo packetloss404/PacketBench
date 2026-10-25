@@ -4216,6 +4216,23 @@ export async function getConversationRuntime(
   return invoke<RuntimeRunSummary | null>("get_conversation_runtime", { conversationId });
 }
 
+// R3b resume: advances the durable epoch (does NOT start the provider). Inert
+// unless the runtime journal is enabled. A semantic resume needs no inspected
+// revision; a typed resume does (from a separate inspect readout).
+export async function resumeRuntimeRun(
+  runId: string,
+  expectedEpoch: number,
+  mode: string,
+  inspectedRevision: string | null,
+): Promise<RuntimeRunSummary> {
+  return invoke<RuntimeRunSummary>("resume_runtime_run", {
+    runId,
+    expectedEpoch,
+    mode,
+    inspectedRevision,
+  });
+}
+
 export async function loadConversations(): Promise<string[]> {
   return invoke<string[]>("load_conversations");
 }

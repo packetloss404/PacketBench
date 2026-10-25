@@ -1,7 +1,10 @@
 import type { TerminalShellSelection } from "@/types/terminal-shell";
 import type { MosaicNode } from "@/types/mosaic";
 
-export type WorkspaceAgentSlot = "terminal" | "claude-code" | "codex" | "opencode" | "packetcode";
+export type { CustomCliConfig } from "@/generated/tauri-schema";
+import type { CustomCliConfig, WorkspaceAgentSlotDto } from "@/generated/tauri-schema";
+
+export type WorkspaceAgentSlot = WorkspaceAgentSlotDto;
 
 export type ExecutionTargetRef = { kind: "local" } | { kind: "ssh"; serverId: string };
 
@@ -9,6 +12,7 @@ export interface WorkspacePane {
   id: string;
   agentId: WorkspaceAgentSlot;
   sessionId: string | null;
+  customCli?: CustomCliConfig;
   gridPosition?: { row: number; col: number };
   pinnedCommands?: string[]; // max 5 saved commands
   /**

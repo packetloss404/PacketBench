@@ -1,3 +1,4 @@
+import { WORKSPACE_CLI_REGISTRY, supportsLocalCli } from "./workspaceCliRegistry";
 import { useAgentStore } from "@/stores/agentStore";
 import { useServerStore } from "@/stores/serverStore";
 import type { WorkspaceAgentSlot } from "@/types/workspace";
@@ -12,6 +13,7 @@ export const WORKSPACE_CLI_PRIORITY: readonly WorkspaceAgentSlot[] = [
   "claude-code",
   "codex",
   "opencode",
+  ...WORKSPACE_CLI_REGISTRY.map((p) => p.id).filter((id) => !["packetcode", "claude-code", "codex", "opencode"].includes(id)),
   "terminal",
 ];
 
@@ -46,7 +48,7 @@ export function getPreferredWorkspaceCli(
     new Set(
       useAgentStore
         .getState()
-        .agents.filter((agent) => agent.installed)
+        .agents.filter((agent) => agent.installed && supportsLocalCli(agent.id))
         .map((agent) => agent.id),
     ),
   );

@@ -30,12 +30,8 @@ fn pty_exit_event(session_id: &str) -> String {
     format!("pty:exit:{}", session_id)
 }
 
-/// Commands allowed to be spawned in a PTY session.
+/// Infrastructure commands; coding-agent commands come from the shared registry.
 const ALLOWED_COMMANDS: &[&str] = &[
-    "claude",
-    "codex",
-    "opencode",
-    "packetcode",
     "bash",
     "sh",
     "zsh",
@@ -48,6 +44,32 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "xonsh",
     "ssh",
 ];
+
+fn validate_pty_command(command: &str, custom_cli: bool) -> Result<(), String> {
+    if command.trim().is_empty() || command.contains(['\0', '\r', '\n']) {
+        return Err("Choose a non-empty executable without control characters".into());
+    }
+    // A custom path is an exact choice. Do not replace a missing executable
+    // with a different same-named CLI found by a lower resolution tier.
+    if custom_cli
+        && (command.contains('/') || command.contains('\\'))
+        && !crate::core::agent::is_executable_file(command)
+    {
+        return Err(format!(
+            "Custom CLI executable '{command}' is missing or not executable"
+        ));
+    }
+    let program = command_program_name(command);
+    if custom_cli
+        || ALLOWED_COMMANDS.contains(&program.as_str())
+        || crate::core::cli_registry::is_preset_command(&program)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "Command '{command}' is not a registered CLI. Use Custom CLI to launch another executable."
+    ))
+}
 
 const ALLOWED_SHELL_COMMANDS: &[&str] = &[
     "bash",
@@ -614,18 +636,15 @@ pub fn create_pty_session(
     command: String,
     args: Option<Vec<String>>,
     env: Option<std::collections::HashMap<String, String>>,
+    custom_cli: Option<bool>,
 ) -> Result<String, String> {
     // Validate command against allowlist. Match on the program name so a
     // manually-pinned absolute path for a known agent (e.g.
     // `D:\projects\packetcode\bin\packetcode.exe`) is accepted by its
     // basename while still rejecting arbitrary programs.
     let program = command_program_name(&command);
-    if !ALLOWED_COMMANDS.iter().any(|&c| c == program) {
-        return Err(format!(
-            "Command '{}' is not allowed. Allowed commands: {:?}",
-            command, ALLOWED_COMMANDS
-        ));
-    }
+    validate_pty_command(&command, custom_cli.unwrap_or(false))?;
+    let use_wsl = !custom_cli.unwrap_or(false) && crate::core::cli_registry::uses_wsl(&command);
 
     // Validate project_path is a real directory (skip for SSH — remote path is not local)
     let project_path = if command == "ssh" {
@@ -670,6 +689,16 @@ pub fn create_pty_session(
         }
     };
 
+    let wsl_args = if use_wsl {
+        Some(crate::core::cli_wsl::launch_args(
+            &command,
+            args.as_deref().unwrap_or_default(),
+            &project_path,
+        )?)
+    } else {
+        None
+    };
+
     info!(command = %command, project_path = %project_path, "Creating PTY session");
 
     let session_id = Uuid::new_v4().to_string();
@@ -693,7 +722,10 @@ pub fn create_pty_session(
     // which is not always the resolved CLI: a `.cmd` wrapper runs under
     // `cmd.exe`. The orphan registry matches on it, so it must name the real
     // child image.
-    let launch = resolve_pty_launch(&command);
+    let launch = resolve_pty_launch(if use_wsl { "wsl" } else { &command });
+    if use_wsl && !launch.is_resolved() {
+        return Err("WSL was not found. Install WSL and a Linux distribution, then install Amp inside it and rescan CLI Clients in Settings.".into());
+    }
     info!(
         command = %command,
         resolved = %launch.path,
@@ -720,8 +752,13 @@ pub fn create_pty_session(
     let (mut cmd, spawned_program) = (CommandBuilder::new(&resolved), resolved);
     cmd.cwd(&project_path);
 
-    // Append any extra arguments (e.g. --model)
-    if let Some(extra_args) = &args {
+    // WSL receives the normalized Windows folder via --cd and keeps all CLI
+    // arguments as positional parameters. Native and SSH launches stay direct.
+    if let Some(wsl_args) = wsl_args {
+        for arg in wsl_args {
+            cmd.arg(arg);
+        }
+    } else if let Some(extra_args) = &args {
         for arg in extra_args {
             cmd.arg(arg);
         }
@@ -1062,7 +1099,12 @@ const SSH_EXEC_DENIED_OPTIONS: &[&str] = &[
 /// which can carry every denied option), or a log-file sink (`-E`).
 pub(crate) fn validate_ssh_exec_args(args: &[String]) -> Result<(), String> {
     let denied_option = |value: &str| {
-        let name = value.split('=').next().unwrap_or("").trim().to_ascii_lowercase();
+        let name = value
+            .split('=')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         SSH_EXEC_DENIED_OPTIONS.contains(&name.as_str())
     };
     let mut expect_option_value = false;
@@ -1531,6 +1573,20 @@ mod tests {
     use crate::core::agent::select_windows_command_candidate;
 
     #[test]
+    fn registry_commands_and_explicit_custom_executables_are_admitted() {
+        for preset in crate::core::cli_registry::presets() {
+            assert!(validate_pty_command(&preset.binary, false).is_ok());
+        }
+        assert!(validate_pty_command("my-new-agent", false).is_err());
+        assert!(validate_pty_command("my-new-agent", true).is_ok());
+        assert!(validate_pty_command("", true).is_err());
+        assert!(validate_pty_command("agent\nsecond-command", true).is_err());
+        assert!(validate_pty_command("agent\0", true).is_err());
+        let missing = tempfile::tempdir().unwrap().path().join("missing-agent");
+        assert!(validate_pty_command(&missing.to_string_lossy(), true).is_err());
+    }
+
+    #[test]
     fn wsl_utf16_console_output_decodes_without_nul_bytes() {
         let encoded: Vec<u8> = "Ubuntu\r\nDebian\r\n"
             .encode_utf16()
@@ -1571,8 +1627,11 @@ mod tests {
         std::fs::create_dir_all(&data_dir).expect("data dir");
         let target = home.path().join("pinned-codex");
         std::fs::write(&target, b"#!/bin/sh\n").expect("target");
-        std::fs::write(data_dir.join("codex-bin"), target.to_string_lossy().as_ref())
-            .expect("pin");
+        std::fs::write(
+            data_dir.join("codex-bin"),
+            target.to_string_lossy().as_ref(),
+        )
+        .expect("pin");
 
         // A command that already arrived as a path still finds its pin.
         assert_eq!(
@@ -1616,11 +1675,14 @@ mod tests {
         // The rule that has to hold as that list grows is ISOLATION: every
         // candidate must be named for the CLI that asked. A tier that hands
         // back another product's binary is worse than no tier at all.
-        for command in ALLOWED_COMMANDS.iter() {
+        for command in crate::core::cli_registry::presets()
+            .iter()
+            .map(|preset| preset.binary.as_str())
+        {
             for candidate in crate::core::agent::install_dir_candidates(command) {
                 assert_eq!(
                     candidate.file_stem().and_then(|name| name.to_str()),
-                    Some(*command),
+                    Some(command),
                     "{command} must not resolve through another product's install directories \
                      (got {})",
                     candidate.display()
@@ -1678,12 +1740,34 @@ mod tests {
 
     #[test]
     fn ssh_exec_refuses_local_execution_options() {
-        let ok = |args: &[&str]| validate_ssh_exec_args(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        assert!(ok(&["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=yes", "-p", "22", "u@h", "echo hi"]).is_ok());
+        let ok = |args: &[&str]| {
+            validate_ssh_exec_args(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(ok(&[
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-p",
+            "22",
+            "u@h",
+            "echo hi"
+        ])
+        .is_ok());
         assert!(ok(&["-o", "ProxyCommand=calc.exe", "u@h"]).is_err());
         assert!(ok(&["-oProxyCommand=calc.exe", "u@h"]).is_err());
-        assert!(ok(&["-o", "proxycommand = calc", "u@h"]).is_err(), "case/space insensitive");
-        assert!(ok(&["-o", "LocalCommand=rm -rf x", "-o", "PermitLocalCommand=yes", "u@h"]).is_err());
+        assert!(
+            ok(&["-o", "proxycommand = calc", "u@h"]).is_err(),
+            "case/space insensitive"
+        );
+        assert!(ok(&[
+            "-o",
+            "LocalCommand=rm -rf x",
+            "-o",
+            "PermitLocalCommand=yes",
+            "u@h"
+        ])
+        .is_err());
         assert!(ok(&["-o", "KnownHostsCommand=/tmp/x", "u@h"]).is_err());
         assert!(ok(&["-F", "/tmp/evil_config", "u@h"]).is_err());
         assert!(ok(&["-F/tmp/evil_config", "u@h"]).is_err());

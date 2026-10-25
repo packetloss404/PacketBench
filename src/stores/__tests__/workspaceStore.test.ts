@@ -375,3 +375,33 @@ describe("workspace terminal shell overrides", () => {
     expect(workspace.panes.find((pane) => pane.id === codexPaneId)?.terminalShell).toBeUndefined();
   });
 });
+
+
+describe("Workspace Custom CLI snapshots", () => {
+  const config = { name: "My agent", command: "my-agent", args: ["two words"], env: { MODE: "dev" }, workingDirectory: "/work/other" };
+  beforeEach(() => useWorkspaceStore.setState({ workspaces: [], activeWorkspaceId: null }));
+
+  it("requires configuration at the store boundary", () => {
+    expect(() => useWorkspaceStore.getState().createWorkspace("Test", ["custom-cli"], "/repo")).toThrow(/Custom CLI/);
+    expect(() => useWorkspaceStore.getState().addPane("missing", "custom-cli")).toThrow(/Custom CLI/);
+  });
+
+  it("copies a profile into created and added panes, and preserves it on hydration", () => {
+    const profile = structuredClone(config);
+    const id = useWorkspaceStore.getState().createWorkspace("Test", ["custom-cli", "gemini"], "/repo", { customCli: profile });
+    useWorkspaceStore.getState().addPane(id, "custom-cli", { customCli: profile });
+    profile.args.push("changed"); profile.env.MODE = "changed";
+    const workspace = useWorkspaceStore.getState().workspaces[0];
+    const hydrated = normalizePanes([workspace])[0];
+    expect(hydrated.panes[0].customCli).toEqual(config);
+    expect(hydrated.panes[2].customCli).toEqual(config);
+    expect(hydrated.panes[1].agentId).toBe("gemini");
+  });
+
+  it("degrades a malformed saved Custom CLI to an ordinary terminal", () => {
+    const id = useWorkspaceStore.getState().createWorkspace("Test", ["custom-cli"], "/repo", { customCli: config });
+    const workspace = useWorkspaceStore.getState().workspaces.find((w) => w.id === id)!;
+    const hydrated = normalizePanes([{ ...workspace, panes: [{ ...workspace.panes[0], customCli: undefined }] }])[0];
+    expect(hydrated.panes[0].agentId).toBe("terminal");
+  });
+});

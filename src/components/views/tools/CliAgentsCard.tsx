@@ -1,3 +1,4 @@
+import { supportsLocalCli, usesWslCli } from "@/lib/workspaceCliRegistry";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
@@ -90,6 +91,7 @@ function resolveVariant(
   entry: CliCatalogEntry,
   result: DetectCatalogResult | undefined,
 ): CardVariant {
+  if (!supportsLocalCli(entry.id)) return "browse-fallback";
   if (result?.installed) return "installed";
   if (entry.browseRequired) return "browse-only";
   if (entry.installCommand || entry.installCommandWindows) return "installable";
@@ -205,11 +207,13 @@ export function CliCatalogCard({
       : "bg-accent-green";
 
   let versionText: React.ReactNode;
-  if (detecting && !result) {
+  if (!supportsLocalCli(entry.id)) {
+    versionText = <span className="text-meta">Windows: use WSL</span>;
+  } else if (detecting && !result) {
     versionText = <span className="text-text-faint">checking…</span>;
   } else if (installed) {
     versionText = result?.version ? (
-      <span className="font-mono">{result.version}</span>
+      <span className="font-mono">{result.version}{usesWslCli(entry.id) ? " · WSL" : ""}</span>
     ) : (
       <span className="text-text-muted">installed</span>
     );
@@ -235,7 +239,7 @@ export function CliCatalogCard({
       <span className="italic text-text-muted">Locate the executable to use it here.</span>
     );
   } else if (variant === "installable") {
-    versionText = <span className="italic">not installed</span>;
+    versionText = <span className="italic">{usesWslCli(entry.id) ? "not installed in default WSL distribution" : "not installed"}</span>;
   } else if (variant === "coming-soon") {
     versionText = (
       <span className="italic text-text-muted">Coming soon — track on the roadmap.</span>
@@ -266,6 +270,7 @@ export function CliCatalogCard({
       aria-pressed={selected}
       className={`relative flex cursor-pointer flex-col gap-2 rounded border p-3 text-left transition-colors ${outerClass}`}
     >
+      {entry.platformNotes && <span className="sr-only">{entry.platformNotes}</span>}
       {/* Status dot */}
       <span
         aria-hidden="true"
@@ -548,7 +553,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
           : entry.binary);
       store.updateAgent(entry.id, {
         command,
-        installed: !!result?.installed,
+        installed: !!result?.installed && supportsLocalCli(entry.id),
       });
     },
     [],
@@ -753,6 +758,7 @@ export function CliAgentsCard({ focusedCliId = null }: CliAgentsCardProps) {
    *  for the user to review, then auto-cleans the PTY on close. */
   const handleInstall = useCallback(
     async (entry: CliCatalogEntry) => {
+      if (!supportsLocalCli(entry.id)) return;
       const cmd =
         entry.id === "packetcode"
           ? packetCodeInstallCommand(packetCodeReleaseChannel, isWindowsHost())

@@ -1,3 +1,4 @@
+import { WORKSPACE_CLI_REGISTRY } from "./workspaceCliRegistry";
 /**
  * Install hint URLs for the supported AI CLIs.
  *
@@ -10,17 +11,6 @@ export interface InstallHint {
   url: string;
 }
 
-export const INSTALL_HINTS: Record<string, InstallHint> = {
-  "claude-code": {
-    label: "Install Claude Code",
-    url: "https://docs.claude.com/en/docs/claude-code",
-  },
-  codex: {
-    label: "Install Codex CLI",
-    url: "https://github.com/openai/codex",
-  },
-  opencode: {
-    label: "Install OpenCode",
-    url: "https://opencode.ai",
-  },
-};
+export const INSTALL_HINTS: Record<string, InstallHint> = Object.fromEntries(
+  WORKSPACE_CLI_REGISTRY.map((preset) => [preset.id, { label: `Install ${preset.name}`, url: preset.docsUrl }]),
+);

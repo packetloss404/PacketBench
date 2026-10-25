@@ -7,6 +7,29 @@ This is the current restart document. Use `backlog.md` for outstanding work,
 `docs/handoff.md` and `docs/audit-2026-09-04.md` describe the September audit;
 the current contracts below supersede their older protocol and queue details.
 
+## Workspace terminal CLI support — October 25, 2026
+
+Workspace now derives its built-in CLI configurations, pickers, discovery,
+install links and PTY admission from `src/lib/workspace-cli-registry.json`,
+which Rust also embeds. Presets cover Claude Code, Codex, Cursor Agent, Gemini
+CLI, GitHub Copilot, Grok Build, Droid, Kimi Code, Amp, Antigravity and Aider,
+plus existing OpenCode and PacketCode. Each entry records vendor sources and
+platform notes. New Workspace and Add Session also offer saved Custom CLI
+profiles with executable, literal arguments, environment and optional absolute
+working directory; each pane persists a separate launch snapshot, including
+over SSH. Generic TUIs use empty approval patterns so their keys remain theirs.
+
+Amp uses the default WSL distribution on Windows for discovery, installation
+and launch; WSL receives the Workspace folder through `--cd`. macOS/Linux
+launch Amp natively. Evidence: frontend typecheck, production bundle, lint,
+focused frontend tests, Rust registry/API/PTY tests, and a live WSL smoke test
+using a temporary stand-in executable all passed. Existing repository warnings
+remain. macOS build/native launch acceptance and authenticated launches across
+every vendor remain open. Amp was not installed or authenticated in the local
+default WSL distribution; its Settings Install action now targets that distro.
+No installer package was built or installed for this CLI work. Lead Thread
+retains the broader desktop/runtime sequencing and acceptance work below.
+
 ## Planning addendum — October 25, 2026
 
 The owner requested worthwhile BridgeMind, Cursor, Codex and Claude GUI gaps

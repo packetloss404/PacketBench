@@ -68,14 +68,15 @@ describe("agent-catalog merged registry", () => {
     }
   });
 
-  it("exposes the five Terminal slots with catalog faces, ending in a bare Terminal", () => {
+  it("exposes all terminal presets plus Terminal and Custom CLI", () => {
     const slots = TERMINAL_AGENTS.map((t) => t.slot);
     expect(slots).toEqual([
       "claude-code",
       "codex",
       "opencode",
       "packetcode",
-      "terminal",
+      "cursor", "gemini", "copilot", "grok", "droid", "kimi", "amp", "antigravity", "aider",
+      "terminal", "custom-cli",
     ]);
     const bySlot = Object.fromEntries(TERMINAL_AGENTS.map((t) => [t.slot, t.face]));
     // The same vendor appears in both sections; the Terminal face is the CLI

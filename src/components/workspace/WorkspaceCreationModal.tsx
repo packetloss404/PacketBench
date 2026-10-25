@@ -1,3 +1,6 @@
+import { CustomCliFields } from "./CustomCliFields";
+import { WORKSPACE_CLI_REGISTRY, supportsLocalCli, getWorkspaceCli, type PresetCliId } from "@/lib/workspaceCliRegistry";
+import type { CustomCliConfig } from "@/types/workspace";
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { LayoutGrid, Check, FileText, ShieldOff, Loader2, FolderOpen, ChevronDown, Zap, Server, AlertTriangle, CheckCircle2, XCircle, GitBranch, Settings2 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -31,17 +34,15 @@ type PathProbeState =
   | { kind: "ok"; result: RemotePathCheck }
   | { kind: "error"; message: string };
 
-type AgentChoice = "claude-code" | "codex" | "opencode" | "packetcode";
+type AgentChoice = PresetCliId;
 
 /** CLI sessions that support the --effort flag. */
 const EFFORT_SUPPORTED = new Set<string>(["claude-code"]);
 
 const AGENT_SLOTS: { id: WorkspaceAgentSlot; cliId: AgentChoice | null; label: string; cliCommand: string }[] = [
-  { id: "packetcode", cliId: "packetcode", label: "PacketCode", cliCommand: "packetcode" },
+  ...WORKSPACE_CLI_REGISTRY.map((preset) => ({ id: preset.id, cliId: preset.id, label: preset.name, cliCommand: preset.binary })),
   { id: "terminal", cliId: null, label: "Terminal", cliCommand: "bash" },
-  { id: "claude-code", cliId: "claude-code", label: "Claude Code", cliCommand: "claude" },
-  { id: "codex", cliId: "codex", label: "Codex CLI", cliCommand: "codex" },
-  { id: "opencode", cliId: "opencode", label: "OpenCode", cliCommand: "opencode" },
+  { id: "custom-cli", cliId: null, label: "Custom CLI", cliCommand: "" },
 ];
 
 const WORKSPACE_TEMPLATES = [
@@ -51,7 +52,7 @@ const WORKSPACE_TEMPLATES = [
   { id: "shell", label: "Shell", description: "One plain terminal", sessions: ["terminal"] as WorkspaceAgentSlot[] },
 ];
 
-const CLI_MODEL_MAP: Record<AgentChoice, typeof CLAUDE_MODELS> = {
+const CLI_MODEL_MAP: Partial<Record<AgentChoice, typeof CLAUDE_MODELS>> = {
   "claude-code": CLAUDE_MODELS,
   codex: CODEX_MODELS,
   opencode: OPENCODE_MODELS,
@@ -81,6 +82,7 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
   // (The seed itself is applied by the `selectedProjectPath` effect below,
   // which also keeps it in step when the folder changes.)
   const [name, setName] = useState("");
+  const [customCli, setCustomCli] = useState<CustomCliConfig>();
   const [nameEdited, setNameEdited] = useState(false);
   const preferredDefaultSlot = getPreferredWorkspaceCli(initialServerId);
   // PacketCode is the creation-time default when detected. Existing
@@ -187,8 +189,8 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
   }, [agents, server?.installedAgents, locationMode]);
 
   const isAgentInstalled = useCallback((id: WorkspaceAgentSlot) => {
-    return id === "terminal" || installedAgentIds.has(id);
-  }, [installedAgentIds]);
+    return id === "terminal" || id === "custom-cli" || ((locationMode === "remote" || supportsLocalCli(id)) && installedAgentIds.has(id));
+  }, [installedAgentIds, locationMode]);
 
   // Unique project paths from existing workspaces + current global path
   const recentProjectPaths = useMemo(() => {
@@ -402,6 +404,7 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
   const saveBlockedReason = useMemo<string | null>(() => {
     if (!name.trim()) return "Workspace name is required";
     if (selected.size === 0) return "Select at least one CLI session";
+    if (selected.has("custom-cli") && !customCli) return "Configure the Custom CLI executable";
     if (locationMode === "local") {
       // v0.8.8 (edge case): zero-workspaces + no fallback = empty
       // `selectedProjectPath`. Block submit so we never persist a
@@ -420,7 +423,7 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
       if (pathProbe.kind === "error") return pathProbe.message;
     }
     return null;
-  }, [name, selected.size, locationMode, selectedProjectPath, serverId, server, remoteProjectPath, pathProbe]);
+  }, [name, selected, customCli, locationMode, selectedProjectPath, serverId, server, remoteProjectPath, pathProbe]);
 
   // v0.8.8 (edge case): pick a folder from the OS dialog. Used when no
   // workspace exists yet (so `useLayoutStore.projectPath` is empty) and
@@ -500,6 +503,7 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
       // Untouched slots are absent, so `createWorkspace` resolves the sticky
       // default itself — the same path the modal-free call sites take.
       accountIds: accountSelections,
+      ...(selected.has("custom-cli") ? { customCli } : {}),
     });
 
     useAppStore.getState().setActiveView("workspace");
@@ -916,7 +920,7 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
                       <button
                         onClick={() => toggleAgent(slot.id)}
                         disabled={!installed}
-                        title={installed ? slot.label : `${slot.label} not found — click the install link to set it up`}
+                        title={installed ? slot.label : `${slot.label} not found for this workspace. ${getWorkspaceCli(slot.id)?.platformNotes ?? ""}`}
                         className={`flex items-center gap-1.5 px-3 py-1.5 text-ui rounded border transition-colors ${
                           isSelected
                             ? "bg-accent-green/15 border-accent-green/40 text-accent-green font-medium"
@@ -958,6 +962,8 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
                 })}
               </div>
             </div>
+
+            {selected.has("custom-cli") && <CustomCliFields value={customCli} onChange={setCustomCli} />}
 
             {/* Bypass permissions toggle */}
             {selectedCliAgents.length > 0 && (
@@ -1005,7 +1011,7 @@ export function WorkspaceCreationModal({ onClose, initialSelected, serverId: ini
 
             {/* Model selection per selected coding CLI. */}
             {selectedCliAgents.map((slot) => {
-              const models = CLI_MODEL_MAP[slot.cliId!];
+              const models = CLI_MODEL_MAP[slot.cliId!] ?? [];
 
               // OpenCode manages its own models internally
               if (models.length === 0) {

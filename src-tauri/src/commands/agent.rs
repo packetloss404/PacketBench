@@ -151,13 +151,30 @@ pub fn detect_agent(command: String) -> Result<bool, String> {
 pub async fn detect_cli_catalog(
     items: Vec<DetectCatalogItem>,
 ) -> Result<Vec<DetectCatalogResult>, String> {
-    let futures = items.into_iter().map(|item| async move { detect_one(item).await });
+    let futures = items
+        .into_iter()
+        .map(|item| async move { detect_one(item).await });
     Ok(futures::future::join_all(futures).await)
 }
 
 /// Detect one catalog entry through the SHARED launch resolver, so the card's
 /// path is the path a Workspace pane would spawn.
 async fn detect_one(item: DetectCatalogItem) -> DetectCatalogResult {
+    if cfg!(windows)
+        && crate::core::cli_registry::presets()
+            .iter()
+            .any(|preset| preset.id == item.id && preset.windows_runtime.as_deref() == Some("wsl"))
+    {
+        let command = item.manual_path.as_deref().unwrap_or(&item.binary);
+        let probe = crate::core::cli_wsl::probe(command).await;
+        return DetectCatalogResult {
+            id: item.id,
+            installed: probe.path.is_some(),
+            version: probe.version,
+            path: probe.path.or(item.manual_path),
+            source: Some("wsl".into()),
+        };
+    }
     // `git-bash` is a terminal SHELL profile (see `useTerminalShellDetection`),
     // not a CLI agent, and its discovery genuinely differs: `where bash` can
     // resolve the legacy WSL launcher in System32, so the profile must prefer
@@ -245,6 +262,18 @@ pub async fn inspect_cli_launch(
     command: String,
     manual_path: Option<String>,
 ) -> Result<CliLaunchInspection, String> {
+    if crate::core::cli_registry::uses_wsl(&command) {
+        let probe = crate::core::cli_wsl::probe(manual_path.as_deref().unwrap_or(&command)).await;
+        let resolved = probe.path.is_some();
+        return Ok(CliLaunchInspection {
+            path: probe.path.unwrap_or_else(|| command.clone()),
+            command,
+            source: "wsl".into(),
+            resolved,
+            version: probe.version,
+            rejected_settings_path: if resolved { None } else { manual_path },
+        });
+    }
     let spec = agent::CliLaunchSpec::new(&command, manual_path.as_deref());
     let resolved = agent::resolve_cli_launch(&spec).await;
     let version = if resolved.is_resolved() {
@@ -330,10 +359,12 @@ pub async fn inspect_packetcode_installation(
         None
     };
 
-    let active = agent::resolve_packetcode_launch(manual_path.as_deref()).await.ok();
-    let workspace_uses_installer = active.as_ref().is_some_and(|resolved| {
-        same_executable_path(Path::new(&resolved.path), &installer_path)
-    });
+    let active = agent::resolve_packetcode_launch(manual_path.as_deref())
+        .await
+        .ok();
+    let workspace_uses_installer = active
+        .as_ref()
+        .is_some_and(|resolved| same_executable_path(Path::new(&resolved.path), &installer_path));
     let active_version = if workspace_uses_installer {
         installer_version.clone()
     } else if let Some(resolved) = active.as_ref() {
@@ -532,7 +563,12 @@ mod tests {
         let fields: Vec<&str> = line.split(" | ").collect();
         assert_eq!(
             fields,
-            vec!["claude-code", "/opt/claude", "tier=settings", "version=1.2.3"]
+            vec![
+                "claude-code",
+                "/opt/claude",
+                "tier=settings",
+                "version=1.2.3"
+            ]
         );
     }
 

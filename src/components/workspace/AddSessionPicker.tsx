@@ -1,3 +1,6 @@
+import { CustomCliFields } from "./CustomCliFields";
+import type { CustomCliConfig } from "@/types/workspace";
+import { getWorkspaceCli, supportsLocalCli } from "@/lib/workspaceCliRegistry";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
@@ -170,7 +173,7 @@ export function AddSessionPicker({ workspace, variant, onOpenTemplates }: AddSes
             document.body,
           )
         ) : (
-          <div className="absolute right-0 top-full z-50 mt-1 w-[320px] rounded-md border border-bg-border bg-bg-elevated shadow-xl">
+          <div className="absolute right-0 top-full z-50 mt-1 max-h-[75vh] w-[320px] overflow-y-auto rounded-md border border-bg-border bg-bg-elevated shadow-xl">
             <PickerContent
               workspace={workspace}
               onClose={() => setOpen(false)}
@@ -190,6 +193,8 @@ interface PickerContentProps {
 
 function PickerContent({ workspace, onClose, onOpenTemplates }: PickerContentProps) {
   const [filter, setFilter] = useState("");
+  const [showCustom, setShowCustom] = useState(false);
+  const [customCli, setCustomCli] = useState<CustomCliConfig>();
   const [addError, setAddError] = useState<string | null>(null);
   /**
    * Multi-account CLI support: per-row explicit account choices. A slot absent
@@ -216,7 +221,8 @@ function PickerContent({ workspace, onClose, onOpenTemplates }: PickerContentPro
   );
 
   const isInstalled = (slot: WorkspaceAgentSlot): boolean => {
-    if (slot === "terminal") return true;
+    if (slot === "terminal" || slot === "custom-cli") return true;
+    if (!workspace.serverId && !supportsLocalCli(slot)) return false;
     if (workspace.serverId) {
       const server = servers.find((candidate) => candidate.id === workspace.serverId);
       return server?.installedAgents.includes(slot) ?? false;
@@ -239,6 +245,10 @@ function PickerContent({ workspace, onClose, onOpenTemplates }: PickerContentPro
 
   const pickSession = (slot: WorkspaceAgentSlot) => {
     if (!isInstalled(slot)) return;
+    if (slot === "custom-cli") {
+      setShowCustom(true);
+      return;
+    }
     // One-click fast path: when the user never touched the account chip we pass
     // NO `accountId` at all, and `addPane` resolves the sticky per-project
     // default. Only a deliberate switch travels as an explicit choice.
@@ -359,6 +369,31 @@ function PickerContent({ workspace, onClose, onOpenTemplates }: PickerContentPro
         )}
       </div>
 
+      {showCustom && (
+        <div className="border-b border-bg-border">
+          <CustomCliFields value={customCli} onChange={setCustomCli} />
+          <div className="flex gap-3 px-3 pb-2 text-ui">
+            <button
+              type="button"
+              disabled={!customCli}
+              className="text-accent-green disabled:opacity-50"
+              onClick={() => {
+                try {
+                  addPane(workspace.id, "custom-cli", { customCli });
+                  onClose();
+                } catch (reason) {
+                  setAddError(String(reason));
+                }
+              }}
+            >
+              Add Custom CLI
+            </button>
+            <button type="button" className="text-text-muted" onClick={() => setShowCustom(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <div className="px-3 py-1 text-meta uppercase tracking-wide text-text-muted">
         CLI sessions
       </div>
@@ -382,7 +417,7 @@ function PickerContent({ workspace, onClose, onOpenTemplates }: PickerContentPro
                 title={
                   installed
                     ? `Add ${entry.face} session`
-                    : `${entry.face} is not available for this workspace`
+                    : `${entry.face} is not available for this workspace. ${getWorkspaceCli(entry.slot)?.platformNotes ?? ""}`
                 }
                 className={`flex min-w-0 flex-1 items-center gap-2 text-left text-ui ${
                   installed ? "text-text-primary" : "cursor-not-allowed text-text-muted opacity-50"

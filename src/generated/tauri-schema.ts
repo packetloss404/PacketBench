@@ -1,6 +1,6 @@
 // Auto-generated from Rust API DTOs. Run `pnpm generate:tauri-schema` to refresh.
 
-export type WorkspaceAgentSlotDto = "terminal" | "claude-code" | "codex" | "opencode" | "packetcode";
+export type WorkspaceAgentSlotDto = "terminal" | "claude-code" | "codex" | "opencode" | "packetcode" | "cursor" | "gemini" | "copilot" | "grok" | "droid" | "kimi" | "amp" | "antigravity" | "aider" | "custom-cli";
 
 export type WorkspaceStatusDto = "active" | "archived";
 
@@ -83,6 +83,8 @@ export type ResumabilityCapabilityView = { state: string, provenance: string, re
 
 export type TerminalShellSelectionDto = { profile: string, executable?: string, args?: Array<string>, wslDistro?: string, };
 
+export type CustomCliConfig = { name: string, command: string, args: Array<string>, env: { [key in string]?: string }, workingDirectory?: string, };
+
 export type WorkspacePaneDto = { id: string, agentId: WorkspaceAgentSlotDto, sessionId: string | null, gridPosition: GridPositionDto, accentColor?: string, pinnedCommands?: Array<string>, taskId?: string, flightId?: string, agentConfigId?: string, initialPrompt?: string, overrideCommand?: string, overrideArgs?: Array<string>,
 /**
  * Pane kind discriminant (tile program, P1-S1). Absent ⇒ terminal. `kind`
@@ -103,7 +105,7 @@ accountId?: string,
 /**
  * Raw-terminal pane shell override. Absent means inherit/Auto.
  */
-terminalShell?: TerminalShellSelectionDto,
+terminalShell?: TerminalShellSelectionDto, customCli?: CustomCliConfig,
 /**
  * Set iff `kind == Some("file")` — the absolute path this viewer tile
  * shows. Inert `#[serde(default)]` mirror of core `WorkspacePane`.

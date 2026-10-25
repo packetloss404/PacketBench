@@ -19,7 +19,7 @@
  */
 import type { AgentCli } from "@/stores/agentTaskStore";
 import { API_PROVIDERS, type ApiModel } from "@/lib/api-models";
-import { CLI_CATALOG } from "@/lib/cli-catalog";
+import { WORKSPACE_CLI_REGISTRY } from "@/lib/workspaceCliRegistry";
 import type { WorkspaceAgentSlot } from "@/types/workspace";
 
 /** A flattened API provider presented as a Chat-agent row. */
@@ -106,31 +106,15 @@ export const CHAT_AGENTS: ChatAgentEntry[] = API_PROVIDERS.map((p) => ({
  */
 
 /**
- * The five Terminal slots, in the historical WorkspaceView order. Faces come
- * from `cli-catalog.ts` where present (Claude Code, Codex CLI, …); the bare
- * `terminal` slot has no catalog entry and is named directly.
+ * Every verified terminal preset, plus the shell and configurable CLI rows.
  */
-const TERMINAL_SLOTS: WorkspaceAgentSlot[] = [
-  "claude-code",
-  "codex",
-  "opencode",
-  "packetcode",
-  "terminal",
+export const TERMINAL_AGENTS: TerminalAgentEntry[] = [
+  ...WORKSPACE_CLI_REGISTRY.map((preset): TerminalAgentEntry => ({
+    section: "terminal", slot: preset.id, face: preset.name, supportsSsh: true,
+  })),
+  { section: "terminal", slot: "terminal", face: "Terminal", supportsSsh: true },
+  { section: "terminal", slot: "custom-cli", face: "Custom CLI", supportsSsh: true },
 ];
-
-/** cli-catalog ids that map onto a WorkspaceAgentSlot (same id). */
-function terminalFace(slot: WorkspaceAgentSlot): string {
-  if (slot === "terminal") return "Terminal";
-  return CLI_CATALOG.find((e) => e.id === slot)?.name ?? slot;
-}
-
-export const TERMINAL_AGENTS: TerminalAgentEntry[] = TERMINAL_SLOTS.map((slot) => ({
-  section: "terminal" as const,
-  slot,
-  face: terminalFace(slot),
-  // A plain terminal and every CLI agent inherit the workspace SSH context.
-  supportsSsh: true,
-}));
 
 /** Lookup a chat entry by agentCli. */
 export function getChatAgent(agentCli: AgentCli): ChatAgentEntry | undefined {

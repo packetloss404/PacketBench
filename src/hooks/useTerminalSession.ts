@@ -16,6 +16,7 @@ import {
 } from "@/lib/tauri";
 import { logSwallowed } from "@/lib/logSwallowed";
 import { ptyExitEvent, ptyOutputEvent } from "@/lib/events";
+import type { AgentStatusPatterns } from "@/types/agent";
 import {
   bufferedPtyRemainder,
   parsePtyOutputPayload,
@@ -47,6 +48,8 @@ interface UseTerminalSessionOptions {
   cliCommand: string;
   cliArgs?: string[];
   env?: Record<string, string>;
+  customCli?: boolean;
+  statusPatterns?: AgentStatusPatterns;
   projectPath?: string;
   /**
    * The workspace this pane belongs to. Memory capture resolves its scope from
@@ -91,6 +94,8 @@ export function useTerminalSession({
   cliCommand,
   cliArgs,
   env,
+  customCli,
+  statusPatterns,
   projectPath: paneProjectPath,
   workspaceId,
   initialPrompt,
@@ -188,6 +193,7 @@ export function useTerminalSession({
 
   const detectorResult = usePtyStateDetector({
     sessionId: currentSessionId,
+    statusPatterns,
     onStateChange: handleStateChange,
   });
 
@@ -279,6 +285,7 @@ export function useTerminalSession({
         cliCommand,
         cliArgs || null,
         env ?? null,
+        ...(customCli ? [true] as const : []),
       );
 
       if (paneId) panesStarting.delete(paneId);
@@ -481,6 +488,7 @@ export function useTerminalSession({
     cliCommand,
     cliArgs,
     env,
+    customCli,
     startDurationTimer,
     stopDurationTimer,
     paneId,

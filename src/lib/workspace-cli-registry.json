@@ -1,0 +1,262 @@
+[
+  {
+    "id": "claude-code",
+    "name": "Claude Code",
+    "binary": "claude",
+    "defaultArgs": [],
+    "iconName": "Bot",
+    "color": "purple",
+    "description": "Anthropic's terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux; see vendor requirements.",
+    "installCommand": "curl -fsSL https://claude.ai/install.sh | bash",
+    "installCommandWindows": "powershell -NoProfile -Command \"irm https://claude.ai/install.ps1 | iex\"",
+    "docsUrl": "https://code.claude.com/docs/en/setup",
+    "verifiedAt": "2026-10-25"
+  },
+  {
+    "id": "codex",
+    "name": "Codex CLI",
+    "binary": "codex",
+    "defaultArgs": [],
+    "iconName": "Atom",
+    "color": "green",
+    "description": "OpenAI's terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux.",
+    "installCommand": "npm install -g @openai/codex",
+    "docsUrl": "https://developers.openai.com/codex/cli/",
+    "verifiedAt": "2026-10-25"
+  },
+  {
+    "id": "opencode",
+    "name": "OpenCode",
+    "binary": "opencode",
+    "defaultArgs": [
+      "."
+    ],
+    "iconName": "Hexagon",
+    "color": "green",
+    "description": "Open-source coding TUI",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux.",
+    "installCommand": "npm install -g opencode-ai",
+    "docsUrl": "https://opencode.ai/docs/",
+    "verifiedAt": "2026-10-25"
+  },
+  {
+    "id": "packetcode",
+    "name": "PacketCode",
+    "binary": "packetcode",
+    "defaultArgs": [],
+    "iconName": "Terminal",
+    "color": "amber",
+    "description": "Sibling terminal coding TUI",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux.",
+    "docsUrl": "https://github.com/packetloss404/packetcode",
+    "verifiedAt": "2026-10-25"
+  },
+  {
+    "id": "cursor",
+    "name": "Cursor Agent",
+    "binary": "agent",
+    "defaultArgs": [],
+    "iconName": "MousePointer2",
+    "color": "blue",
+    "description": "Cursor's terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows or WSL, macOS and Linux. Pin the Cursor executable if another tool also installs a command named agent.",
+    "installCommand": "curl https://cursor.com/install -fsS | bash",
+    "installCommandWindows": "powershell -NoProfile -Command \"irm 'https://cursor.com/install?win32=true' | iex\"",
+    "docsUrl": "https://cursor.com/docs/cli/installation",
+    "verifiedAt": "2026-10-25",
+    "discovery": [
+      "localBin"
+    ]
+  },
+  {
+    "id": "gemini",
+    "name": "Gemini CLI",
+    "binary": "gemini",
+    "defaultArgs": [],
+    "iconName": "Sparkles",
+    "color": "blue",
+    "description": "Google's terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Windows 11 24H2+, macOS 15+, Ubuntu 20.04+; Node.js 20+. Account eligibility follows Google's current service policy.",
+    "installCommand": "npm install -g @google/gemini-cli",
+    "docsUrl": "https://geminicli.com/docs/get-started/installation/",
+    "verifiedAt": "2026-10-25",
+    "discovery": [
+      "npmGlobal"
+    ]
+  },
+  {
+    "id": "copilot",
+    "name": "GitHub Copilot CLI",
+    "binary": "copilot",
+    "defaultArgs": [],
+    "iconName": "Github",
+    "color": "neutral",
+    "description": "GitHub's interactive terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux. Windows requires PowerShell 6+; npm installation requires Node.js 22+.",
+    "installCommand": "npm install -g @github/copilot",
+    "docsUrl": "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli",
+    "verifiedAt": "2026-10-25",
+    "discovery": [
+      "npmGlobal",
+      "localBin"
+    ]
+  },
+  {
+    "id": "grok",
+    "name": "Grok Build",
+    "binary": "grok",
+    "defaultArgs": [],
+    "iconName": "Zap",
+    "color": "neutral",
+    "description": "xAI's terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS, Linux and WSL. Uses grok to avoid the shared agent alias.",
+    "installCommand": "curl -fsSL https://x.ai/cli/install.sh | bash",
+    "docsUrl": "https://docs.x.ai/build/overview",
+    "verifiedAt": "2026-10-25",
+    "installCommandWindows": "powershell -NoProfile -Command \"irm https://x.ai/cli/install.ps1 | iex\"",
+    "discovery": [
+      "grokBin"
+    ]
+  },
+  {
+    "id": "droid",
+    "name": "Droid",
+    "binary": "droid",
+    "defaultArgs": [],
+    "iconName": "Bot",
+    "color": "amber",
+    "description": "Factory's terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux; droid.exe on Windows.",
+    "installCommand": "curl -fsSL https://app.factory.ai/cli | sh",
+    "installCommandWindows": "powershell -NoProfile -Command \"irm https://app.factory.ai/cli/windows | iex\"",
+    "docsUrl": "https://github.com/Factory-AI/factory/blob/main/docs/reference/cli-reference.mdx",
+    "verifiedAt": "2026-10-25",
+    "discovery": [
+      "npmGlobal"
+    ]
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi Code",
+    "binary": "kimi",
+    "defaultArgs": [],
+    "iconName": "Wand2",
+    "color": "blue",
+    "description": "Moonshot's terminal coding agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux. Windows requires Git for Windows. Use the maintained Kimi Code distribution; the older kimi-cli package is archived.",
+    "installCommand": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+    "installCommandWindows": "powershell -NoProfile -Command \"irm https://code.kimi.com/kimi-code/install.ps1 | iex\"",
+    "docsUrl": "https://github.com/MoonshotAI/kimi-code",
+    "verifiedAt": "2026-10-25"
+  },
+  {
+    "id": "amp",
+    "name": "Amp",
+    "binary": "amp",
+    "defaultArgs": [],
+    "iconName": "Zap",
+    "color": "red",
+    "description": "Amp's interactive coding agent",
+    "platforms": [
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "macOS and Linux; Windows launches automatically in the default WSL distribution. Install Amp inside that distribution, then rescan CLI Clients in Settings.",
+    "installCommand": "curl -fsSL https://ampcode.com/install.sh | bash",
+    "docsUrl": "https://ampcode.com/docs/cli",
+    "verifiedAt": "2026-10-25",
+    "windowsRuntime": "wsl",
+    "versionArgument": "version",
+    "installCommandWindows": "wsl --cd '~' --exec /bin/sh -lc 'curl -fsSL https://ampcode.com/install.sh | bash'"
+  },
+  {
+    "id": "antigravity",
+    "name": "Antigravity",
+    "binary": "agy",
+    "defaultArgs": [],
+    "iconName": "Orbit",
+    "color": "purple",
+    "description": "Google's Antigravity terminal agent",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux. agy starts the terminal client.",
+    "installCommand": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+    "docsUrl": "https://github.com/google-antigravity/antigravity-cli",
+    "verifiedAt": "2026-10-25",
+    "installCommandWindows": "powershell -NoProfile -Command \"irm https://antigravity.google/cli/install.ps1 | iex\""
+  },
+  {
+    "id": "aider",
+    "name": "Aider",
+    "binary": "aider",
+    "defaultArgs": [],
+    "iconName": "Code",
+    "color": "green",
+    "description": "AI pair programming in your terminal",
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ],
+    "platformNotes": "Native Windows, macOS and Linux; installer can provision Python 3.12.",
+    "installCommand": "curl -LsSf https://aider.chat/install.sh | sh",
+    "installCommandWindows": "powershell -ExecutionPolicy ByPass -c \"irm https://aider.chat/install.ps1 | iex\"",
+    "docsUrl": "https://aider.chat/docs/install.html",
+    "verifiedAt": "2026-10-25"
+  }
+]

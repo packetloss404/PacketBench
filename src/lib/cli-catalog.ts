@@ -1,3 +1,4 @@
+import { WORKSPACE_CLI_REGISTRY } from "./workspaceCliRegistry";
 import { APP_NAME } from "@/lib/brand";
 
 /**
@@ -34,6 +35,7 @@ export interface CliCatalogEntry {
   color: CliBrandColor;
   /** Short description shown when not installed. */
   description?: string;
+  platformNotes?: string;
   /** Stable one-line install command that runs in a workspace PTY pane.
    *  Cross-platform unless noted. Null/undefined = no install button. */
   installCommand?: string;
@@ -84,24 +86,15 @@ export function packetCodeInstallCommand(
 }
 
 export const CLI_CATALOG: CliCatalogEntry[] = [
-  {
-    id: "claude-code",
-    name: "Claude Code",
-    binary: "claude",
-    iconName: "Bot",
-    color: "purple",
-    description: "Anthropic's CLI coding agent",
-    installCommand: "npm i -g @anthropic-ai/claude-code",
-  },
-  {
-    id: "codex",
-    name: "Codex CLI",
-    binary: "codex",
-    iconName: "Atom",
-    color: "green",
-    description: "OpenAI's terminal coding agent",
-    installCommand: "npm i -g @openai/codex",
-  },
+  ...WORKSPACE_CLI_REGISTRY.map((preset) => ({
+    ...preset,
+    installDocsUrl: preset.docsUrl,
+    ...(preset.id === "packetcode" ? {
+      description: `${APP_NAME}'s sibling terminal coding TUI`,
+      installCommand: packetCodeInstallCommand("stable", false),
+      installCommandWindows: packetCodeInstallCommand("stable", true),
+    } : {}),
+  })),
   {
     id: "devin",
     name: "Devin for Terminal",
@@ -109,52 +102,6 @@ export const CLI_CATALOG: CliCatalogEntry[] = [
     iconName: "Cpu",
     color: "neutral",
     description: "Cognition's autonomous coding agent",
-    comingSoon: true,
-  },
-  {
-    id: "opencode",
-    name: "OpenCode",
-    binary: "opencode",
-    iconName: "Hexagon",
-    color: "green",
-    description: "Open-source coding TUI",
-    installCommand: "curl -fsSL https://opencode.ai/install | bash",
-  },
-  {
-    id: "packetcode",
-    name: "PacketCode",
-    binary: "packetcode",
-    iconName: "Terminal",
-    color: "amber",
-    description: `${APP_NAME}'s sibling terminal coding TUI`,
-    installCommand: packetCodeInstallCommand("stable", false),
-    installCommandWindows: packetCodeInstallCommand("stable", true),
-  },
-  {
-    id: "copilot",
-    name: "GitHub Copilot CLI",
-    binary: "gh-copilot",
-    iconName: "Github",
-    color: "neutral",
-    description: "GitHub's AI coding companion",
-    installCommand: "gh extension install github/gh-copilot",
-  },
-  {
-    id: "kimi",
-    name: "Kimi CLI",
-    binary: "kimi",
-    iconName: "Wand2",
-    color: "blue",
-    description: "Moonshot's coding CLI",
-    comingSoon: true,
-  },
-  {
-    id: "cursor",
-    name: "Cursor Agent",
-    binary: "cursor-agent",
-    iconName: "MousePointer2",
-    color: "blue",
-    description: "Cursor's terminal agent",
     comingSoon: true,
   },
   {
@@ -214,6 +161,7 @@ export const CLI_LAUNCH_SOURCE_LABELS: Record<string, string> = {
   path: "PATH",
   installerLocation: "official installer location",
   bareName: "unresolved — the bare command name",
+  wsl: "default WSL distribution",
 };
 
 /** Label for a resolution tier, falling back to the raw tag. */

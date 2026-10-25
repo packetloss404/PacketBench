@@ -1,3 +1,5 @@
+import { WORKSPACE_BUILTIN_AGENTS } from "@/agents/workspace-presets";
+import { useServerStore } from "@/stores/serverStore";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspacePane } from "@/components/workspace/WorkspacePane";
@@ -112,6 +114,57 @@ describe("WorkspacePane tile header", () => {
     useCliOverrideStore.setState({ overrides: {} });
     probePacketCodeIntegration.mockReset();
     writePty.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("launches a Custom CLI snapshot with its exact executable, arguments, environment and cwd", () => {
+    const customCli = { name: "My tool", command: "/opt/my tool", args: ["two words", "--flag"], env: { MODE: "dev" }, workingDirectory: "/work/other" };
+    const pane = { id: "custom-pane", agentId: "custom-cli" as const, sessionId: null, customCli };
+    const workspace = { ...makeWorkspace(), agents: ["custom-cli" as const], panes: [pane], modelOverrides: { "custom-cli": "unrelated" }, bypassPermissions: true };
+    useWorkspaceStore.setState({ workspaces: [workspace] });
+    render(<WorkspacePane pane={pane} workspaceId="ws-1" />);
+    expect(lastTerminalProps.cliCommand).toBe("/opt/my tool");
+    expect(lastTerminalProps.cliArgs).toEqual(["two words", "--flag"]);
+    expect(lastTerminalProps.env).toEqual({ MODE: "dev" });
+    expect(lastTerminalProps.projectPath).toBe("/work/other");
+    expect(lastTerminalProps.customCli).toBe(true);
+    expect(lastTerminalProps.statusPatterns).toEqual({ approval: [], thinking: [], toolUse: [], idle: [] });
+    expect(screen.getByText("My tool")).toBeInTheDocument();
+  });
+
+  it("runs Custom CLI paths and environment on the SSH host", () => {
+    const customCli = { name: "Remote tool", command: "/opt/my tool", args: ["two words"], env: { MODE: "dev" }, workingDirectory: "/work/other" };
+    const pane = { id: "remote-custom", agentId: "custom-cli" as const, sessionId: null, customCli };
+    useServerStore.setState({ servers: [{ id: "srv-custom", name: "Remote", host: "example.com", port: 22, username: "dev", authMethod: "agent", installedAgents: [], hostFingerprint: "SHA256:test" }], knownHostsPath: "/known_hosts" });
+    useWorkspaceStore.setState({ workspaces: [{ ...makeWorkspace(), serverId: "srv-custom", remoteProjectPath: "/repo", panes: [pane] }] });
+    render(<WorkspacePane pane={pane} workspaceId="ws-1" />);
+    expect(lastTerminalProps.cliCommand).toBe("ssh");
+    expect(lastTerminalProps.customCli).toBe(false);
+    expect(lastTerminalProps.env).toBeUndefined();
+    const args = lastTerminalProps.cliArgs as string[];
+    expect(args).toContain("StrictHostKeyChecking=yes");
+    expect(args[args.length - 1]).toContain("export MODE='dev';");
+    expect(args[args.length - 1]).toContain("cd '/work/other' && '/opt/my tool' 'two words'");
+  });
+
+  it("identifies local Windows Amp as WSL while keeping its registry command for Rust routing", () => {
+    const platform = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
+    try {
+      const pane = { id: "amp-pane", agentId: "amp" as const, sessionId: null };
+      const amp = WORKSPACE_BUILTIN_AGENTS.find((agent) => agent.id === "amp")!;
+      useAgentStore.setState({ agents: [{ ...amp, installed: true }] });
+      useWorkspaceStore.setState({ workspaces: [{ ...makeWorkspace(), projectPath: "D:\\repo with spaces", panes: [pane] }] });
+      render(<WorkspacePane pane={pane} workspaceId="ws-1" />);
+      expect(lastTerminalProps.cliCommand).toBe("amp");
+      expect(lastTerminalProps.projectPath).toBe("D:\\repo with spaces");
+      expect(screen.getByText("Amp · WSL")).toBeInTheDocument();
+    } finally { platform.mockRestore(); }
+  });
+
+  it("honors the Settings executable override for every local preset", () => {
+    useCliOverrideStore.setState({ overrides: { codex: { manualPath: "/opt/pinned/codex" } } });
+    const pane = useWorkspaceStore.getState().workspaces[0].panes[0];
+    render(<WorkspacePane pane={pane} workspaceId="ws-1" />);
+    expect(lastTerminalProps.cliCommand).toBe("/opt/pinned/codex");
   });
 
   it("renders a diet header: grip, dot, name, status, zoom, one overflow — no standalone accent/pin/prompt/model controls", () => {

@@ -1,23 +1,11 @@
 import { create } from "zustand";
 import { detectCliCatalog, loadPersistedState, saveAgentsSlice } from "@/lib/tauri";
 import type { AgentConfig } from "@/types/agent";
-import { CLAUDE_CODE_CONFIG } from "@/agents/claude-code";
-import { OPENCODE_CONFIG } from "@/agents/opencode";
-import { CODEX_CONFIG } from "@/agents/codex";
-import { PACKETCODE_CONFIG } from "@/agents/packetcode";
-import { TERMINAL_CONFIG } from "@/agents/terminal";
+import { WORKSPACE_BUILTIN_AGENTS } from "@/agents/workspace-presets";
+import { supportsLocalCli } from "@/lib/workspaceCliRegistry";
 import { useCliOverrideStore } from "@/stores/cliOverrideStore";
 
-// Built-in agent configs (always present, user can override args/model)
-const BUILTIN_AGENTS: AgentConfig[] = [CLAUDE_CODE_CONFIG, OPENCODE_CONFIG, CODEX_CONFIG, PACKETCODE_CONFIG, TERMINAL_CONFIG];
-
-/**
- * Agent ids whose built-in support has been removed. Persisted state may
- * still carry their configs (Gemini CLI shipped as a builtin until 2026-07);
- * they are dropped on hydration so a retired builtin never resurfaces as a
- * "custom" agent. Same read-only-alias spirit as the mission→flight ids.
- */
-const RETIRED_AGENT_IDS = new Set(["gemini"]);
+const BUILTIN_AGENTS = WORKSPACE_BUILTIN_AGENTS;
 
 interface AgentStoreState {
   agents: AgentConfig[];
@@ -127,7 +115,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         );
         updates = results.map((r) => ({
           id: r.id,
-          installed: r.installed,
+          installed: r.installed && supportsLocalCli(r.id),
           path: r.path,
         }));
       } catch {
@@ -192,11 +180,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         }
         return builtin;
       });
-      // Add any custom (non-builtin) agents from persisted state. Retired
-      // builtins (e.g. the removed Gemini CLI) are filtered so an old
-      // persisted copy doesn't reappear as a custom agent.
+      // Preserve custom agents while newly supported ids become builtins.
       const custom = state.agents.filter(
-        (a) => !builtinIds.has(a.id) && !RETIRED_AGENT_IDS.has(a.id),
+        (a) => !builtinIds.has(a.id),
       );
       set({ agents: [...merged, ...custom] });
     } catch (err) {

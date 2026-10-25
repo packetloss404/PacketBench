@@ -752,6 +752,18 @@ describe("Tauri persistence DTO mapping", () => {
     expect(pane).not.toHaveProperty("accountId");
   });
 
+  it("round-trips Custom CLI launch snapshots across the Rust DTO boundary", async () => {
+    const customCli = { name: "My tool", command: "/opt/my tool", args: ["two words"], env: { MODE: "dev" }, workingDirectory: "/other" };
+    const workspace: Workspace = { id: "custom-ws", name: "Custom", agents: ["custom-cli", "gemini"], panes: [{ id: "custom-pane", agentId: "custom-cli", sessionId: null, customCli }], projectPath: "/repo", createdAt: 1, updatedAt: 1, status: "active" };
+    await saveWorkspacesSlice([workspace]);
+    const saved = mockInvoke.mock.calls.find((c) => c[0] === "save_workspaces_slice")![1] as { workspaces: PersistedStateDto["workspaces"] };
+    expect(saved.workspaces[0].panes[0].customCli).toEqual(customCli);
+    mockInvoke.mockResolvedValue(makePersistedStateDto({ workspaces: saved.workspaces }));
+    const reloaded = await loadPersistedState();
+    expect(reloaded.workspaces[0].panes[0].customCli).toEqual(customCli);
+    expect(reloaded.workspaces[0].agents).toEqual(["custom-cli", "gemini"]);
+  });
+
   it("round-trips a pane's accountId through toDto/fromDto", async () => {
     // Multi-account CLI support: the pane-level `accountId` chosen at
     // session-creation time is what the runtime turns into CLAUDE_CONFIG_DIR /

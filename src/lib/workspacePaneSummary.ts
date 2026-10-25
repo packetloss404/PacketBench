@@ -1,7 +1,8 @@
 import type { WorkspacePane } from "@/types/workspace";
 import { getAgentColor } from "@/lib/agentColors";
+import { getWorkspaceCli } from "@/lib/workspaceCliRegistry";
 
-const CLI_LABELS: Record<WorkspacePane["agentId"], string> = {
+const CLI_LABELS: Partial<Record<WorkspacePane["agentId"], string>> = {
   terminal: "Terminal",
   "claude-code": "Claude",
   codex: "Codex",
@@ -30,8 +31,8 @@ export function workspacePaneSummaryIdentity(pane: WorkspacePane) {
   }
   const accountId = pane.accountId ?? null;
   return {
-    key: `terminal:${pane.agentId}:${accountId ?? ""}`,
-    label: CLI_LABELS[pane.agentId] ?? pane.agentId,
+    key: `terminal:${pane.agentId}:${accountId ?? ""}${pane.customCli ? `:${pane.customCli.name}` : ""}`,
+    label: pane.customCli?.name ?? CLI_LABELS[pane.agentId] ?? getWorkspaceCli(pane.agentId)?.name ?? pane.agentId,
     accountId,
     color: getAgentColor(pane.agentId),
   };

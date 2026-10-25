@@ -1,3 +1,5 @@
+import { normalizeCustomCli } from "@/lib/customCli";
+import type { CustomCliConfig } from "@/types/workspace";
 import { create } from "zustand";
 import {
   isLocalWorkspace,
@@ -47,6 +49,7 @@ export interface WorkspaceSessionConfig {
   accountIds?: Partial<Record<WorkspaceAgentSlot, string | null>>;
   /** Optional raw-terminal default for the new workspace. */
   terminalShell?: TerminalShellSelection;
+  customCli?: CustomCliConfig;
 }
 
 /**
@@ -137,7 +140,7 @@ interface WorkspaceStore {
   addPane: (
     workspaceId: string,
     agentId: WorkspaceAgentSlot,
-    options?: { accountId?: string | null; terminalShell?: TerminalShellSelection },
+    options?: { accountId?: string | null; terminalShell?: TerminalShellSelection; customCli?: CustomCliConfig },
   ) => string | null;
   /**
    * Add a read/write file viewer tile to the workspace grid. The tile is a
@@ -376,10 +379,12 @@ function normalizePane(raw: unknown): WorkspacePane | null {
   // so hydrating a persisted id would expose a stale write/kill target.
   const normalized = { ...pane } as Record<string, unknown>;
   normalized.sessionId = null;
-  // Legacy alias: Gemini CLI support was removed (2026-07). Persisted panes
-  // that still reference the retired slot degrade to a plain terminal pane —
-  // same read-only-alias spirit as the mission→flight ids.
-  if (normalized.agentId === "gemini") normalized.agentId = "terminal";
+  // Missing or malformed custom launch data must never become a command.
+  if (normalized.agentId === "custom-cli") {
+    const customCli = normalizeCustomCli(normalized.customCli);
+    if (customCli) normalized.customCli = customCli;
+    else { normalized.agentId = "terminal"; delete normalized.customCli; }
+  } else delete normalized.customCli;
   if (isConversation) {
     normalized.kind = "conversation";
     normalized.conversationId = pane.conversationId;
@@ -423,12 +428,8 @@ export function normalizePanes(workspaces: Workspace[]): Workspace[] {
     // reconciles those against the live pane list, which is the only place
     // that knows them.
     layout: isValidMosaicTree(w.layout) ? w.layout : undefined,
-    // Legacy alias sweep: retired "gemini" slot entries in the agents list
-    // degrade to plain terminals, mirroring normalizePane's pane-level alias.
     agents: Array.isArray(w.agents)
-      ? w.agents.map((agent) =>
-          (agent as string) === "gemini" ? ("terminal" as WorkspaceAgentSlot) : agent,
-        )
+      ? w.agents
       : [],
     panes: Array.isArray(w.panes)
       ? w.panes
@@ -540,6 +541,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   createWorkspace: (name, agents, projectPath, sessionConfig) => {
+    if (agents.includes("custom-cli") && !normalizeCustomCli(sessionConfig?.customCli)) {
+      throw new Error("Configure the Custom CLI executable before creating a workspace.");
+    }
     const serverId = sessionConfig?.serverId;
     const remoteProjectPath = sessionConfig?.remoteProjectPath;
     const executionTarget: ExecutionTargetRef =
@@ -598,7 +602,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       // Multi-account CLI support: panes resolve their account from the
       // caller's explicit choice, else the sticky per-project default. Keyed
       // on `effectiveProjectPath` so remote workspaces stick per remote path.
-      panes: buildPanes(agents, effectiveProjectPath, sessionConfig?.accountIds),
+      panes: buildPanes(agents, effectiveProjectPath, sessionConfig?.accountIds).map((pane) =>
+        pane.agentId === "custom-cli" ? { ...pane, customCli: normalizeCustomCli(sessionConfig?.customCli) } : pane,
+      ),
       projectPath: effectiveProjectPath,
       prompt: sessionConfig?.prompt,
       createdAt: now,
@@ -803,6 +809,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   addPane: (workspaceId, agentId, options) => {
+    const customCli = agentId === "custom-cli" ? normalizeCustomCli(options?.customCli) : undefined;
+    if (agentId === "custom-cli" && !customCli) throw new Error("Configure the Custom CLI executable first.");
     const newPaneId = mintPaneId();
     // Resolved once, outside the (potentially re-run) updater, so the sticky
     // default is written exactly once per add.
@@ -818,6 +826,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
             id: newPaneId,
             agentId,
             sessionId: null,
+            ...(customCli ? { customCli } : {}),
             // Ambient panes stay byte-identical to the pre-multi-account shape.
             ...(accountId ? { accountId } : {}),
             ...(agentId === "terminal" && options?.terminalShell

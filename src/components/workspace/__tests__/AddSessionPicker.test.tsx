@@ -124,6 +124,21 @@ describe("AddSessionPicker", () => {
     fireEvent.click(screen.getByRole("button", { name: /add session/i }));
   }
 
+  it("launches a Custom CLI with literal arguments, environment and working directory", () => {
+    openPopover();
+    fireEvent.click(screen.getByRole("button", { name: "Custom CLI" }));
+    expect(addPane).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Custom CLI name"), { target: { value: "Local tool" } });
+    fireEvent.change(screen.getByLabelText("Custom CLI executable"), { target: { value: "/opt/my agent" } });
+    fireEvent.change(screen.getByLabelText("Custom CLI arguments"), { target: { value: '["two words", "--flag"]' } });
+    fireEvent.change(screen.getByLabelText("Custom CLI environment"), { target: { value: '{"MODE":"dev"}' } });
+    fireEvent.change(screen.getByLabelText("Custom CLI working directory"), { target: { value: "/work/other" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Custom CLI" }));
+    expect(addPane).toHaveBeenCalledWith("ws-local", "custom-cli", { customCli: {
+      name: "Local tool", command: "/opt/my agent", args: ["two words", "--flag"], env: { MODE: "dev" }, workingDirectory: "/work/other",
+    } });
+  });
+
   /**
    * `terminalPlatform()` sniffs the user agent, and jsdom reports Linux. Any
    * assertion about Windows-only chrome (the Command Prompt shell option, the
@@ -150,6 +165,20 @@ describe("AddSessionPicker", () => {
     const claudeIndex = buttons.findIndex((button) => button.textContent?.includes("Claude Code"));
     expect(packetCodeIndex).toBeGreaterThanOrEqual(0);
     expect(packetCodeIndex).toBeLessThan(claudeIndex);
+  });
+
+  it("enables Amp detected inside WSL on Windows", () => {
+    agentState.agents.push({ id: "amp", installed: true });
+    openPopoverAsWindows();
+    fireEvent.click(screen.getByRole("button", { name: "Amp" }));
+    expect(addPane).toHaveBeenCalledWith("ws-local", "amp", undefined);
+  });
+
+  it("keeps Amp disabled when detection cannot find it in WSL", () => {
+    agentState.agents.push({ id: "amp", installed: false });
+    openPopoverAsWindows();
+    expect(screen.getByRole("button", { name: "Amp" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Amp" }).title).toContain("default WSL distribution");
   });
 
   it("adds a detected PacketCode PTY pane directly", () => {

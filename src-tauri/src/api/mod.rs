@@ -32,6 +32,26 @@ pub enum WorkspaceAgentSlotDto {
     Opencode,
     #[serde(rename = "packetcode")]
     Packetcode,
+    #[serde(rename = "cursor")]
+    Cursor,
+    #[serde(rename = "gemini")]
+    Gemini,
+    #[serde(rename = "copilot")]
+    Copilot,
+    #[serde(rename = "grok")]
+    Grok,
+    #[serde(rename = "droid")]
+    Droid,
+    #[serde(rename = "kimi")]
+    Kimi,
+    #[serde(rename = "amp")]
+    Amp,
+    #[serde(rename = "antigravity")]
+    Antigravity,
+    #[serde(rename = "aider")]
+    Aider,
+    #[serde(rename = "custom-cli")]
+    CustomCli,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -110,6 +130,9 @@ pub struct WorkspacePaneDto {
     #[serde(default)]
     #[ts(optional)]
     pub terminal_shell: Option<TerminalShellSelectionDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub custom_cli: Option<core_workspace::CustomCliConfig>,
     /// Set iff `kind == Some("file")` — the absolute path this viewer tile
     /// shows. Inert `#[serde(default)]` mirror of core `WorkspacePane`.
     #[serde(default)]
@@ -1348,7 +1371,17 @@ impl From<String> for WorkspaceAgentSlotDto {
             "codex" => Self::Codex,
             "opencode" => Self::Opencode,
             "packetcode" => Self::Packetcode,
-            // Unknown or retired slots (e.g. the removed "gemini" CLI) degrade
+            "cursor" => Self::Cursor,
+            "gemini" => Self::Gemini,
+            "copilot" => Self::Copilot,
+            "grok" => Self::Grok,
+            "droid" => Self::Droid,
+            "kimi" => Self::Kimi,
+            "amp" => Self::Amp,
+            "antigravity" => Self::Antigravity,
+            "aider" => Self::Aider,
+            "custom-cli" => Self::CustomCli,
+            // Unknown future slots degrade
             // to a plain terminal pane so persisted workspaces keep loading.
             _ => Self::Terminal,
         }
@@ -1363,6 +1396,16 @@ impl From<WorkspaceAgentSlotDto> for String {
             WorkspaceAgentSlotDto::Codex => "codex".to_string(),
             WorkspaceAgentSlotDto::Opencode => "opencode".to_string(),
             WorkspaceAgentSlotDto::Packetcode => "packetcode".to_string(),
+            WorkspaceAgentSlotDto::Cursor => "cursor".to_string(),
+            WorkspaceAgentSlotDto::Gemini => "gemini".to_string(),
+            WorkspaceAgentSlotDto::Copilot => "copilot".to_string(),
+            WorkspaceAgentSlotDto::Grok => "grok".to_string(),
+            WorkspaceAgentSlotDto::Droid => "droid".to_string(),
+            WorkspaceAgentSlotDto::Kimi => "kimi".to_string(),
+            WorkspaceAgentSlotDto::Amp => "amp".to_string(),
+            WorkspaceAgentSlotDto::Antigravity => "antigravity".to_string(),
+            WorkspaceAgentSlotDto::Aider => "aider".to_string(),
+            WorkspaceAgentSlotDto::CustomCli => "custom-cli".to_string(),
         }
     }
 }
@@ -1404,6 +1447,7 @@ impl From<core_workspace::WorkspacePane> for WorkspacePaneDto {
             conversation_id: value.conversation_id,
             account_id: value.account_id,
             terminal_shell: value.terminal_shell.map(Into::into),
+            custom_cli: value.custom_cli,
             file_path: value.file_path,
             file_view: value.file_view,
         }
@@ -1429,6 +1473,7 @@ impl From<WorkspacePaneDto> for core_workspace::WorkspacePane {
             conversation_id: value.conversation_id,
             account_id: value.account_id,
             terminal_shell: value.terminal_shell.map(Into::into),
+            custom_cli: value.custom_cli,
             file_path: value.file_path,
             file_view: value.file_view,
         }
@@ -3163,6 +3208,7 @@ pub fn generated_typescript_schema() -> String {
     push_decl!(ReasoningCapabilityView);
     push_decl!(ResumabilityCapabilityView);
     push_decl!(TerminalShellSelectionDto);
+    push_decl!(core_workspace::CustomCliConfig);
     push_decl!(WorkspacePaneDto);
     push_decl!(GithubRepoDto);
     push_decl!(ExecutionTargetRefDto);
@@ -3235,6 +3281,37 @@ pub fn generated_typescript_schema() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_registry_slot_round_trips_through_the_api() {
+        for preset in crate::core::cli_registry::presets() {
+            let slot = WorkspaceAgentSlotDto::from(preset.id.clone());
+            assert_eq!(String::from(slot), preset.id);
+        }
+        assert_eq!(
+            String::from(WorkspaceAgentSlotDto::from("custom-cli".to_string())),
+            "custom-cli"
+        );
+    }
+
+    #[test]
+    fn custom_cli_snapshot_survives_transport_and_storage_conversion() {
+        let snapshot = serde_json::json!({
+            "name": "My tool", "command": "/opt/my tool", "args": ["two words"],
+            "env": { "MODE": "dev" }, "workingDirectory": "/work/other"
+        });
+        let dto: WorkspacePaneDto = serde_json::from_value(serde_json::json!({
+            "id": "custom-pane", "agentId": "custom-cli", "sessionId": null,
+            "gridPosition": { "row": 0, "col": 0 }, "customCli": snapshot
+        }))
+        .unwrap();
+        let core: core_workspace::WorkspacePane = dto.into();
+        let stored = serde_json::to_string(&core).unwrap();
+        let core = serde_json::from_str::<core_workspace::WorkspacePane>(&stored).unwrap();
+        let dto = serde_json::to_value(WorkspacePaneDto::from(core)).unwrap();
+        assert_eq!(dto["customCli"], snapshot);
+        assert_eq!(dto["agentId"], "custom-cli");
+    }
 
     #[test]
     fn persisted_state_dto_serializes_with_camel_case_transport_keys() {

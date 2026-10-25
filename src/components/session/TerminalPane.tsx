@@ -10,6 +10,7 @@ import { ActivityStrip } from "@/components/session/ActivityStrip";
 import { TerminalHeader } from "@/components/session/TerminalHeader";
 import { ApprovalOverlay } from "@/components/session/ApprovalOverlay";
 import { SessionStatusBar } from "@/components/session/SessionStatusBar";
+import type { AgentStatusPatterns } from "@/types/agent";
 import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalHeaderRenderState {
@@ -36,6 +37,8 @@ interface TerminalPaneProps {
   cliCommand?: string;
   cliArgs?: string[];
   env?: Record<string, string>;
+  customCli?: boolean;
+  statusPatterns?: AgentStatusPatterns;
   /** Multi-account: forwarded to the default header's account chip. Callers
    *  supplying `renderHeader` render their own chip. */
   accountId?: string | null;
@@ -58,6 +61,8 @@ export function TerminalPane({
   cliCommand = "claude",
   cliArgs,
   env,
+  customCli,
+  statusPatterns,
   accountId,
   initialPrompt,
   projectPath: paneProjectPath,
@@ -99,6 +104,8 @@ export function TerminalPane({
     cliCommand,
     cliArgs,
     env,
+    customCli,
+    statusPatterns,
     projectPath: paneProjectPath,
     workspaceId,
     initialPrompt,

@@ -1,3 +1,4 @@
+import { getWorkspaceCli, usesWslCli } from "@/lib/workspaceCliRegistry";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -43,6 +44,13 @@ import type { WorkspacePane as WorkspacePaneType } from "@/types/workspace";
 import { useTerminalSettingsStore } from "@/stores/terminalSettingsStore";
 import { resolveTerminalShellLaunch } from "@/lib/terminalShells";
 import { BYPASS_FLAGS } from "@/lib/bypassFlags";
+import type { AgentStatusPatterns } from "@/types/agent";
+
+// Generic TUIs own their prompts and keybindings. Approval overlays require a
+// known integration's patterns; a CLI-looking line of output is not enough.
+const PLAIN_STATUS_PATTERNS: AgentStatusPatterns = {
+  approval: [], thinking: [], toolUse: [], idle: [],
+};
 
 interface WorkspacePaneProps {
   pane: WorkspacePaneType;
@@ -182,8 +190,11 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
     [sendInput],
   );
 
-  const agentName = agentConfig?.name ?? pane.agentId;
-  const command = agentConfig?.command ?? pane.agentId;
+  const preset = getWorkspaceCli(pane.agentId);
+  const customCli = pane.agentId === "custom-cli" ? pane.customCli : undefined;
+  const manualPath = useCliOverrideStore((s) => s.overrides[pane.agentId]?.manualPath);
+  const agentName = customCli?.name ?? preset?.name ?? agentConfig?.name ?? pane.agentId;
+  const command = customCli?.command ?? (workspace?.serverId ? preset?.binary : manualPath) ?? agentConfig?.command ?? preset?.binary ?? pane.agentId;
 
   // Keep CLI args stable so terminal startup is only driven by real config changes.
   const bypassPermissions = workspace?.bypassPermissions ?? false;
@@ -201,6 +212,7 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
   const cliArgs: string[] | undefined = useMemo(() => {
     const args: string[] = [];
 
+    if (customCli) return customCli.args.length ? customCli.args : undefined;
     // Include agent-specific default args (e.g., opencode needs "." to start TUI)
     if (agentConfig?.defaultArgs?.length) {
       args.push(...agentConfig.defaultArgs);
@@ -211,16 +223,16 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
       if (flag) args.push(flag);
     }
 
-    if (model) {
+    if (model && ["claude-code", "codex", "opencode", "packetcode"].includes(pane.agentId)) {
       args.push("--model", model);
     }
 
-    if (effort) {
+    if (effort && pane.agentId === "claude-code") {
       args.push("--effort", effort);
     }
 
     return args.length > 0 ? args : undefined;
-  }, [agentConfig?.defaultArgs, bypassPermissions, effort, model, pane.agentId]);
+  }, [agentConfig?.defaultArgs, bypassPermissions, effort, model, pane.agentId, customCli]);
 
   const terminalShellLaunch = useMemo(
     () =>
@@ -240,7 +252,7 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
   const paneIdentity =
     pane.agentId === "terminal"
       ? `${agentName} · ${isRemote ? "Remote login shell" : terminalShellLaunch.label}`
-      : agentName;
+      : !isRemote && usesWslCli(pane.agentId) ? `${agentName} · WSL` : agentName;
   // Only a local terminal pane actually launches the configured shell; a
   // remote pane always gets the host's login shell, so its stored selection
   // was never in play and there is nothing to report.
@@ -407,9 +419,9 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
         merged.PACKETCODE_HOME = packetCodeHome;
       }
     }
-    Object.assign(merged, accountEnv);
+    Object.assign(merged, accountEnv, customCli?.env);
     return Object.keys(merged).length > 0 ? merged : undefined;
-  }, [isRemote, localPlatform, packetCodeHome, accountEnv]);
+  }, [isRemote, localPlatform, packetCodeHome, accountEnv, customCli?.env]);
   const localCommand =
     pane.agentId === "terminal"
       ? terminalShellLaunch.command
@@ -433,7 +445,7 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
     if (!isRemote || !server) return localArgs;
     return buildSshArgs(
       server,
-      workspace?.remoteProjectPath ?? server.remotePath ?? "",
+      customCli?.workingDirectory ?? workspace?.remoteProjectPath ?? server.remotePath ?? "",
       remoteCommand,
       pane.agentId === "terminal" ? undefined : cliArgs,
       knownHostsPath ?? undefined,
@@ -447,6 +459,7 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
     cliArgs,
     pane.agentId,
     workspace?.remoteProjectPath,
+    customCli?.workingDirectory,
     knownHostsPath,
     paneEnv,
   ]);
@@ -1130,7 +1143,9 @@ export function WorkspacePane({ pane, workspaceId, autoStart = true }: Workspace
           cliCommand={effectiveCommand}
           cliArgs={effectiveArgs}
           env={isRemote ? undefined : paneEnv}
-          projectPath={workspace?.projectPath}
+          customCli={!!customCli && !isRemote}
+          statusPatterns={agentConfig?.statusPatterns ?? PLAIN_STATUS_PATTERNS}
+          projectPath={customCli?.workingDirectory ?? workspace?.projectPath}
           workspaceId={workspaceId}
           initialPrompt={initialPrompt}
           renderHeader={renderHeader}

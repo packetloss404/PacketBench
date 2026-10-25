@@ -85,6 +85,18 @@ describe("agentStore", () => {
     });
   });
 
+  it("keeps Amp's preset command after detection finds the executable inside WSL", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Windows NT 10.0" });
+    try {
+      const { useAgentStore } = await import("@/stores/agentStore");
+      const amp = useAgentStore.getState().getAgent("amp")!;
+      useAgentStore.setState({ agents: [amp] });
+      mocks.detectCliCatalog.mockResolvedValue([{ id: "amp", installed: true, path: "/home/dev/.local/bin/amp", version: "1.2.3", source: "wsl" }]);
+      await useAgentStore.getState().detectInstalled();
+      expect(useAgentStore.getState().getAgent("amp")).toMatchObject({ installed: true, command: "amp" });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("resolves PacketCode from its canonical binary instead of a stale persisted command", async () => {
     const { useAgentStore } = await import("@/stores/agentStore");
     const { useCliOverrideStore } = await import("@/stores/cliOverrideStore");

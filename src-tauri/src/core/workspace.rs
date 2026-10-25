@@ -17,6 +17,17 @@ pub struct TerminalShellSelection {
     pub wsl_distro: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCliConfig {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
+    #[ts(optional)]
+    pub working_directory: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspacePane {
     pub id: String,
@@ -61,6 +72,9 @@ pub struct WorkspacePane {
     /// workspace/app default; old binaries therefore degrade to Auto.
     #[serde(default)]
     pub terminal_shell: Option<TerminalShellSelection>,
+    /// Immutable snapshot of the Custom CLI profile chosen for this pane.
+    #[serde(default)]
+    pub custom_cli: Option<CustomCliConfig>,
     /// Set iff `kind == Some("file")` — the absolute path this viewer tile
     /// shows. A file pane with no path self-heals to a terminal pane on the
     /// frontend, so an old binary that strips this field degrades cleanly.
@@ -80,9 +94,7 @@ pub struct WorkspacePane {
 )]
 pub enum ExecutionTargetRef {
     Local,
-    Ssh {
-        server_id: String,
-    },
+    Ssh { server_id: String },
 }
 
 /// Tolerant deserializer for `Workspace::execution_target`. The Syndicate
@@ -90,7 +102,9 @@ pub enum ExecutionTargetRef {
 /// Packet* family), but state files written while it existed can still carry
 /// `{"kind": "syndicate", ...}` targets. Any unknown kind loads as `None`
 /// (⇒ legacy local/SSH normalization) instead of failing the whole state load.
-fn tolerant_execution_target<'de, D>(deserializer: D) -> Result<Option<ExecutionTargetRef>, D::Error>
+fn tolerant_execution_target<'de, D>(
+    deserializer: D,
+) -> Result<Option<ExecutionTargetRef>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -178,6 +192,7 @@ mod tests {
             conversation_id: Some("conv-123".to_string()),
             account_id: None,
             terminal_shell: None,
+            custom_cli: None,
             file_path: None,
             file_view: None,
         }
@@ -233,6 +248,7 @@ mod tests {
             conversation_id: None,
             account_id: Some("acct-personal".to_string()),
             terminal_shell: None,
+            custom_cli: None,
             file_path: None,
             file_view: None,
         };

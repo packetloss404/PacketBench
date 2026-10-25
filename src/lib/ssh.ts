@@ -1,3 +1,4 @@
+import { WORKSPACE_CLI_REGISTRY } from "./workspaceCliRegistry";
 import type { ServerConfig } from "@/types/server";
 
 /** Shell-escape a string for safe embedding in a remote command. */
@@ -121,18 +122,11 @@ export function buildSshExecArgs(
 }
 
 /** Install commands for each agent CLI on a remote server. */
-export const REMOTE_INSTALL_COMMANDS: Record<string, string> = {
-  "claude-code": "npm install -g @anthropic-ai/claude-code",
-  opencode: "curl -fsSL https://opencode.ai/install | bash",
-  codex: "npm install -g @openai/codex",
-  packetcode:
-    'curl -fsSL https://raw.githubusercontent.com/packetloss404/packetcode/main/install.sh | INSTALL_DIR="$HOME/.local/bin" bash',
-};
+export const REMOTE_INSTALL_COMMANDS: Record<string, string> = Object.fromEntries(
+  WORKSPACE_CLI_REGISTRY.filter((p) => p.installCommand).map((p) => [p.id, p.installCommand!]),
+);
+REMOTE_INSTALL_COMMANDS.packetcode = 'curl -fsSL https://raw.githubusercontent.com/packetloss404/packetcode/main/install.sh | INSTALL_DIR="$HOME/.local/bin" bash';
 
-/** Map agent IDs to the CLI command name to check on the remote. */
-export const AGENT_CLI_NAMES: Record<string, string> = {
-  "claude-code": "claude",
-  opencode: "opencode",
-  codex: "codex",
-  packetcode: "packetcode",
-};
+export const AGENT_CLI_NAMES: Record<string, string> = Object.fromEntries(
+  WORKSPACE_CLI_REGISTRY.map((p) => [p.id, p.binary]),
+);
