@@ -1,5 +1,17 @@
 # Current product and delivery status
 
+**October 25 dogfood follow-up:** the owner subsequently requested installation
+and launch of the verified build. NSIS installed source `04cd0e16` successfully;
+all 8,683 expected installed file hashes, bundled Node `v24.15.0`, protocol 12
+and two echo turns passed. The installed executable hashes to
+`7e7472f6d77e3621f332e1a2ab677f6d8b3a4197097a9866c3fa89964f49cbf5`.
+The app opened to Agents with 20 existing conversations visible. Version remains
+`0.14.9`; the source/hash identifies this newer local build. Installation and
+startup evidence is beside the delivered artifacts in `installation.json`,
+`packaged-sidecar.json` and `dogfood-launch.json`. This supersedes the earlier
+preparation-only workstation state below, without closing the full native,
+provider or hardware acceptance matrix.
+
 The [October 25 advertised-feature audit](./advertised-feature-acceptance-2026-10-25.md)
 records an 82-group feature inventory and isolated validation from audit commit
 `2dd33b98` plus a test-timeout/documentation correction. The latest result for

@@ -585,6 +585,13 @@ PacketBench is developed on Windows but is designed to ship on macOS and Linux a
 
 ### Beta Distribution Status
 
+**Later October 25 dogfood update:** at the owner's request, the verified
+`04cd0e16` build was installed on the workstation and opened successfully.
+All 8,683 expected installed payload hashes and the bundled sidecar probe
+passed. See [current status](./dev/current-status.md) for the installed hash
+and the limits of this startup observation. The preparation-only receipt below
+retains its original scope; full native/live acceptance remains open.
+
 **October 25: verified unsigned Windows x64 installers are prepared from clean
 source `04cd0e16`.** Both NSIS/MSI delivered copies passed 8,683 payload hashes,
 their own executable hash/version, bundled Node `v24.15.0`, sidecar protocol 12

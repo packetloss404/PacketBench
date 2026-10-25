@@ -9,6 +9,20 @@ release reports and archived plans are not fresh feature acceptance.
 
 ## Evidence boundaries
 
+**Subsequent workstation update:** after the preparation-only receipt below,
+the owner requested installation and launch for dogfooding. The verified NSIS
+installed source `04cd0e16` with exit zero. All 8,683 expected installed payload
+hashes passed, as did installed Node `v24.15.0`, sidecar protocol 12 and two
+exact echo turns. The installed executable SHA-256 is
+`7e7472f6d77e3621f332e1a2ab677f6d8b3a4197097a9866c3fa89964f49cbf5`.
+The application opened to the Agents launcher with 20 existing conversations
+visible. `installation.json`, `packaged-sidecar.json` and `dogfood-launch.json`
+in the stable delivery directory record this follow-up. Its
+`validation-summary.json` now records that installation occurred. The earlier
+no-install statements describe the original preparation phase; this later
+owner request superseded that constraint. Initial startup is verified; full
+native workflows, live providers and hardware remain unverified.
+
 The user requested a team audit, repairs, browser tests, honest documentation,
 commit/push, CI verification and redeployment after everything passes. This
 report distinguishes those operations rather than using a passing source suite
