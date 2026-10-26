@@ -7,6 +7,53 @@ This is the current restart document. Use `backlog.md` for outstanding work,
 `docs/handoff.md` and `docs/audit-2026-09-04.md` describe the September audit;
 the current contracts below supersede their older protocol and queue details.
 
+## Desktop/runtime completion — restart recovery + native acceptance refresh, October 26, 2026
+
+**Commits `3106f396`, `cb9b18ff`, `a80af42a`, `de0a9e32`, `2dded7c7` (on `main`;
+`2dded7c7` is the frozen source).** Finished the R1/R3 restart-recovery residual
+and re-ran the achievable native/live acceptance on the frozen tree.
+
+* **Typed resume after a genuine restart.** A run now freezes its policy identity
+  (schema/transport versions, tool-policy and MCP-trust hashes, account label)
+  into the launch operation at prepare time, derived from the same inputs the
+  checkpoints are written with, so `inspect_resume`/`resume_run` can verify a
+  typed resume when no live session remains after an app+backend restart. A live
+  context is still preferred, so a policy changed since prepare keeps refusing
+  typed; a run prepared before the field existed keeps the prior fail-closed
+  behaviour (`3106f396`).
+* **Typed continuation of a restarted session.** A conversation start now seeds
+  the durable typed checkpoint instead of the frontend text transcript — gated on
+  an explicit TYPED resume, a replayable checkpoint and no unresolved effect, so
+  an unconfirmed prompt is never replayed and a semantic resume is never silently
+  upgraded to typed (`a80af42a`; the semantic→typed upgrade hole was found by an
+  independent review and fixed in `de0a9e32`).
+* **Crash injection.** Runner-level tests now cover the preparation and dispatch
+  boundaries: a failed user-turn or pre-request boundary fails the turn with zero
+  provider stream calls (`cb9b18ff`).
+* **Integration fix.** The live SSH acceptance runner was broken by `b4d7a7a7`'s
+  extensionless `./workspaceCliRegistry` import and bare JSON import, which
+  Node's ESM + type-stripping loader cannot resolve (bundlers/Vitest can). Added
+  the `.ts` extension and the `json` import attribute, matching the existing
+  convention (`2dded7c7`).
+
+**Evidence (frozen source `2dded7c7`, sourceSha256 `de0a9186…`, dirty false):**
+`pnpm gates:full` passed all 12 gates; the disposable Docker Linux SSH matrix
+passed 15/15 cases (9 sidecar + 6 Workspace PTY) —
+`test-results/acceptance/live-ssh/2026-10-26T00-40-43-658Z`; `pnpm
+acceptance:build` plus the payload verifier passed both unsigned Windows x64
+installers with 8,683 exact payload hashes each, bundled Node v24.15.0 and
+protocol-v12 two-turn echo —
+`test-results/acceptance/windows/2026-10-26T01-03-05-816Z` and
+`test-results/acceptance/payloads-3e2a92f1777f4a04a7e5a349800b683d`. The
+installers were verified, **not installed**, and no installed app was executed.
+
+**Still open (concrete prerequisites, not passes):** installed GUI journeys
+(launch → Stop → restart → resume → reconciliation → approval → repair → review
+→ delivery → archive/restore) need a desktop-control session; real/paid provider
+calls need an authorized account; macOS needs a Mac; Windows IME/display-scale
+and microphone/headset cases need hardware/GUI interaction. The runtime journal
+remains default-off; no default-on activation is claimed.
+
 ## Workspace terminal CLI support — October 25, 2026
 
 Workspace now derives its built-in CLI configurations, pickers, discovery,

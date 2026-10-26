@@ -67,6 +67,16 @@ Remote Agents, Packet Control and PacketAgent work retain their current owners.
       requested verified installers without reinstalling; installed native and
       full named live integration acceptance remain open. Signing/updater
       deferrals retain their existing owner-only scope.
+      REFRESHED (clean tree `2dded7c7`, sourceSha256 `de0a9186…`): the disposable
+      Docker Linux SSH matrix re-ran 15/15 (9 sidecar + 6 Workspace PTY,
+      evidence `test-results/acceptance/live-ssh/2026-10-26T00-40-43-658Z`), and
+      a clean build produced both unsigned Windows x64 installers with 8,683
+      exact payload hashes each plus bundled Node v24.15.0/protocol-v12/two-turn
+      echo (manifest `test-results/acceptance/windows/2026-10-26T01-03-05-816Z`,
+      payload report `test-results/acceptance/payloads-3e2a92f1777f4a04a7e5a349800b683d`).
+      The SSH runner needed an integration fix first (commit `2dded7c7`). OPEN
+      and unchanged: installed GUI journeys, real provider/paid calls, macOS,
+      Windows IME/display-scale and microphone/headset hardware evidence.
 
 - [~] **P1 — R1/R3 production transaction and recovery.** DONE: the public
       resume path now derives and verifies the live policy context, so a
@@ -86,9 +96,18 @@ Remote Agents, Packet Control and PacketAgent work retain their current owners.
       its own run linked to its predecessor (commit `ea830f7b`, review fix
       `d2a4a102`); a conversation's durable run state is exposed and a Resume
       action is wired into the conversation view (commits `6a75e071`,
-      `b4d7a7a7`, `6a24774d`). OPEN: typed image pins, the §4.2 runner-level
-      crash-injection matrix, and reaching the typed-resume seed after a bare
-      restart (it needs a live session). Keep native/SDK strength explicit.
+      `b4d7a7a7`, `6a24774d`). DONE (restart recovery): a run now freezes its
+      policy identity at prepare time (`FrozenRuntimeLaunch.policy`), so a typed
+      resume verifies without a live session and survives a genuine app+backend
+      restart (commit `3106f396`); the restarted session seeds the durable typed
+      checkpoint instead of the text transcript, gated on an explicit TYPED
+      resume (commits `a80af42a`, review fix `de0a9e32`); the preparation and
+      dispatch boundaries have crash-injection coverage (commit `cb9b18ff`).
+      OPEN: typed image pins; the rest of the §4.2 runner-level crash-injection
+      matrix (effects/cancellation/recovery already covered; extend as adapters
+      land); the frontend resume action is only reachable from the
+      `needs_reconciliation` banner and has no native GUI evidence. Keep
+      native/SDK strength explicit.
 - [~] **P1 — R5 uncertain liability and truthful budget strength.** DONE: a
       durable `dispatched_at` marker (journal v5→v6, additive) is set by the
       runner and the R7 child loop at the last pre-dispatch point; `release`
@@ -109,8 +128,15 @@ Remote Agents, Packet Control and PacketAgent work retain their current owners.
 - [~] **P1 — F4/F5 wrong-target and failed-start behavior.** DONE: contextual New
       preserves SSH server identity via `makeSshUri`, and a rejected backend
       start retains the draft and reports failure instead of claiming Running
-      (commit `02641d6e`). OPEN: canonical backend prepare/cancel/reconcile
-      acknowledgment (phase labels still substitute for it).
+      (commit `02641d6e`); the launcher now has a shared operation handle with a
+      duplicate-Start guard and a revision-guarded auto-pick
+      (`agentLaunchStore`, commits `9b5ce1b6`, `753828a4`); UI Stop already keeps
+      the turn active until the authoritative `api-agent:done {cancelled}` (a
+      failed invoke restores) with no fixed timeout. OPEN: tie the phase strip
+      to backend prepare/start/cancel outcomes (labels still substitute for the
+      durable phase); keep a preparing item visible in the conversation/project
+      list; freeze + display effective provider/model/posture overrides; GUI
+      evidence for the launch/Stop/restart journey.
 - [~] **P1 — F3/F6 authoritative history and attention.** DONE: the exact
       permission/plan/failure attention closes the review overlay so the target
       is visible, and the return anchor survives (commit `02641d6e`); the Flight
@@ -359,6 +385,34 @@ conversation (`46e0094d`). Evidence: full lib suite passed; full frontend suite
 Remaining Phase-A: typed image pins (blocked on the typed-image-recovery
 contract), the §4.2 runner-level crash-injection matrix, and the F4 frontend
 operation-handle.
+
+**Real restart recovery + native acceptance refresh, commits `3106f396`,
+`cb9b18ff`, `a80af42a`, `de0a9e32`, `2dded7c7`.** A run now freezes its policy
+identity (schema/transport versions, tool-policy and MCP-trust hashes, account
+label) into the launch operation at prepare time, derived from the same inputs
+the checkpoints are written with, so a typed resume can be verified when no live
+session remains after a genuine app+backend restart (`3106f396`). A restarted
+session then seeds the durable typed checkpoint instead of the frontend text
+transcript — gated on an explicit TYPED resume, a replayable checkpoint and no
+unresolved effect, so an unconfirmed prompt is never replayed and a semantic
+resume is never silently upgraded (`a80af42a`, review fix `de0a9e32`).
+Runner-level crash injection covers the preparation and dispatch boundaries
+(`cb9b18ff`). An independent review found the semantic→typed upgrade hole and
+the review fixes landed in `de0a9e32`.
+
+Native/live evidence on the frozen tree (`2dded7c7`, sourceSha256 `de0a9186…`,
+dirty false): the disposable Docker Linux SSH matrix passed 15/15 cases
+(`test-results/acceptance/live-ssh/2026-10-26T00-40-43-658Z`), and
+`pnpm acceptance:build` + the payload verifier passed both unsigned Windows x64
+installers with 8,683 exact payload hashes each, bundled Node v24.15.0 and
+protocol-v12 two-turn echo (`test-results/acceptance/windows/2026-10-26T01-03-05-816Z`,
+`test-results/acceptance/payloads-3e2a92f1777f4a04a7e5a349800b683d`). The SSH
+runner itself was broken by `b4d7a7a7`'s extensionless Workspace-CLI-registry
+import and bare JSON import, which Node's ESM/type-stripping loader cannot
+resolve; fixed in `2dded7c7`. `pnpm gates:full` passed all 12 gates on
+`2dded7c7`. Still open (concrete prerequisites): installed GUI journeys,
+real/paid provider calls, macOS, Windows IME/display-scale and
+microphone/headset evidence — see the acceptance item above.
 
 **F4 launch operation handle (F4), commits `9b5ce1b6`, `753828a4`.** A new
 `agentLaunchStore` is the canonical launch transaction: an honest phase
