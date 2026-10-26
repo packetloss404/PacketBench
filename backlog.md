@@ -414,6 +414,17 @@ resolve; fixed in `2dded7c7`. `pnpm gates:full` passed all 12 gates on
 real/paid provider calls, macOS, Windows IME/display-scale and
 microphone/headset evidence — see the acceptance item above.
 
+**Authoritative launch identity (F4), commit `a349ae99`.** `start_api_agent_session`
+now returns the prepared runtime run summary (operation/run id, epoch, phase)
+when the journal is enabled, and the store stores it as a read-only
+`conversation.runtime` projection — the launcher's missing operation/run
+identity for authoritative phase reporting and cancel/inspect. Sidecar and
+disabled starts return null. Full gates green at `a349ae99`; both installers
+rebuilt + payload-verified (NSIS `01b2bcaf…`, MSI `837f27fe…`); Docker SSH
+15/15 at `test-results/acceptance/live-ssh/2026-10-26T02-26-07-171Z`. Native GUI
+acceptance handed to a desktop session via
+`dev/agent-experience/acceptance-handoff-2026-10-26.md`.
+
 **F4 launch operation handle (F4), commits `9b5ce1b6`, `753828a4`.** A new
 `agentLaunchStore` is the canonical launch transaction: an honest phase
 (`idle/preparing/ready/starting/cancelling/running/failed/unknown`), a draft

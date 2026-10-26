@@ -7,6 +7,19 @@ This is the current restart document. Use `backlog.md` for outstanding work,
 `docs/handoff.md` and `docs/audit-2026-09-04.md` describe the September audit;
 the current contracts below supersede their older protocol and queue details.
 
+## Desktop/runtime completion — authoritative launch identity, October 26, 2026
+
+Commit `a349ae99` (frozen source). `start_api_agent_session` returns the durable
+run summary (operation/run id, epoch, phase) when the journal is enabled, stored
+as a read-only `conversation.runtime` projection — the launcher's missing
+identity for authoritative phase reporting and cancel/inspect. Full gates green
+(12/12); installers rebuilt + payload-verified (NSIS `01b2bcaf…`, MSI
+`837f27fe…`); Docker SSH 15/15. Native GUI acceptance is handed to a desktop
+session — see
+`dev/agent-experience/acceptance-handoff-2026-10-26.md` for the frozen identity,
+verification receipts, journeys, retained-state assertions, checklists and the
+precise per-case prerequisites. Installers are verified but **not installed**.
+
 ## Desktop/runtime completion — restart recovery + native acceptance refresh, October 26, 2026
 
 **Commits `3106f396`, `cb9b18ff`, `a80af42a`, `de0a9e32`, `2dded7c7` (on `main`;
