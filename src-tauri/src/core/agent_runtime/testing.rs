@@ -1175,6 +1175,51 @@ async fn crash_after_mutation_before_receipt_marks_pending_and_never_replays() {
 }
 
 #[tokio::test]
+async fn a_failed_user_turn_boundary_fails_closed_before_any_dispatch() {
+    // The user-turn boundary is the first durable write. If it cannot commit the
+    // turn must fail before anything is dispatched or durably recorded.
+    let mut services = FakeServices::new("s-user-turn");
+    services.push_script(text_script("should never run"));
+    let store = Arc::new(FaultCheckpointStore::new());
+    services.install_checkpoints(Arc::clone(&store));
+    store.fail_at(CheckpointBoundary::UserTurnAccepted, 1);
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let result = run_turn(&services, run_request("s-user-turn"), cancel_rx).await;
+    assert!(
+        result.is_err(),
+        "a failed user-turn boundary must fail the turn"
+    );
+    assert_eq!(*services.stream_calls.lock().unwrap(), 0);
+    assert!(store.writes().is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_pre_request_boundary_fails_closed_before_provider_dispatch() {
+    // The dispatch intent is durable BEFORE the provider request goes out, so a
+    // request whose intent cannot be committed must never reach the provider.
+    let mut services = FakeServices::new("s-pre-request");
+    services.push_script(text_script("should never run"));
+    let store = Arc::new(FaultCheckpointStore::new());
+    services.install_checkpoints(Arc::clone(&store));
+    store.fail_at(CheckpointBoundary::PreRequest, 1);
+
+    let (_cancel_tx, cancel_rx) = oneshot::channel();
+    let result = run_turn(&services, run_request("s-pre-request"), cancel_rx).await;
+    assert!(
+        result.is_err(),
+        "a failed pre-request boundary must fail the turn"
+    );
+    assert_eq!(
+        *services.stream_calls.lock().unwrap(),
+        0,
+        "no provider dispatch without a durable intent"
+    );
+    // Only the user-turn boundary is durable; the dispatch intent never was.
+    assert_eq!(store.boundaries(), vec![CheckpointBoundary::UserTurnAccepted]);
+}
+
+#[tokio::test]
 async fn crashed_intent_reconciles_and_resumes_without_replaying() {
     use crate::core::runtime_checkpoint::{
         self, Checkpoint, CheckpointClassification, CheckpointLimits,
