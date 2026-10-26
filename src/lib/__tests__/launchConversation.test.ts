@@ -176,10 +176,14 @@ describe("launchConversation — worktree stamping", () => {
     });
 
     const { launchConversation } = await import("@/lib/launchConversation");
-    await launchConversation(baseParams({ onPhase: (phase) => phases.push(phase) }));
+    const dispatched = await launchConversation(
+      baseParams({ onPhase: (phase) => phases.push(phase) }),
+    );
 
     expect(phases).toContain("unknown");
     expect(phases[phases.length - 1]).toBe("unknown");
+    // An ambiguous outcome must not be laundered into success.
+    expect(dispatched).toBe(false);
   });
 
   it("reports 'starting' when the durable run is only prepared (F4)", async () => {

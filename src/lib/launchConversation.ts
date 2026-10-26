@@ -100,7 +100,9 @@ function durableLaunchPhase(conversationId: string): LaunchPhase | null {
   const conversation = useAgentTaskStore
     .getState()
     .conversations.find((c) => c.id === conversationId);
-  switch (conversation?.runtime?.state) {
+  const state = conversation?.runtime?.state;
+  if (!state) return null;
+  switch (state) {
     case "prepared":
       return "starting";
     case "running":
@@ -112,8 +114,25 @@ function durableLaunchPhase(conversationId: string): LaunchPhase | null {
     case "cancelled":
       return "failed";
     default:
-      return null;
+      // An unrecognized durable state must not read as success.
+      return "unknown";
   }
+}
+
+/**
+ * F4: report a terminal/ambiguous durable phase and keep the draft. A launch
+ * whose durable run is `failed`/`cancelled`/`needs_reconciliation` must not
+ * clear the draft or resolve as success.
+ */
+function reportLaunchFailure(
+  phase: LaunchPhase,
+  setLaunchError: (message: string | null) => void,
+): void {
+  setLaunchError(
+    phase === "unknown"
+      ? "The launch outcome could not be confirmed. Your draft is preserved — check the conversation's runtime state."
+      : "The launch failed before the agent produced a response. Your draft and attachments are preserved — retry, or check the provider configuration.",
+  );
 }
 
 /**
@@ -272,7 +291,12 @@ export function launchConversation({
         onLaunched?.(convId);
         // F4: report Running only when the durable run says so; an ambiguous
         // outcome reports `unknown` rather than assuming success.
-        onPhase?.(durableLaunchPhase(convId) ?? "running");
+        const finalPhase = durableLaunchPhase(convId) ?? "running";
+        onPhase?.(finalPhase);
+        if (finalPhase === "failed" || finalPhase === "unknown") {
+          reportLaunchFailure(finalPhase, setLaunchError);
+          return false;
+        }
         // F4: only take the selection if the user didn't navigate to another
         // conversation while this launch was preparing.
         if (useAgentTaskStore.getState().selectedConversationId === null) {
@@ -375,7 +399,12 @@ export function launchConversation({
         onLaunched?.(convId);
         // F4: report Starting/Running from the durable run state; an ambiguous
         // outcome reports `unknown` rather than assuming success.
-        onPhase?.(durableLaunchPhase(convId) ?? "running");
+        const finalPhase = durableLaunchPhase(convId) ?? "running";
+        onPhase?.(finalPhase);
+        if (finalPhase === "failed" || finalPhase === "unknown") {
+          reportLaunchFailure(finalPhase, setLaunchError);
+          return false;
+        }
         // F4: only take the selection if the user didn't navigate to another
         // conversation while this launch was preparing.
         if (useAgentTaskStore.getState().selectedConversationId === null) {
