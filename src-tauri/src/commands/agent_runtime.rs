@@ -242,6 +242,22 @@ pub async fn get_conversation_runtime(
     .await
 }
 
+/// Read a freshly prepared run's summary so a start can return the durable
+/// identity/phase to the launcher (F4 authoritative launch). Inert unless the
+/// journal is enabled, so the disabled path returns `None`.
+pub async fn runtime_run_summary(
+    run_id: &str,
+) -> Result<Option<RuntimeRunSummary>, String> {
+    if !journal::is_enabled() {
+        return Ok(None);
+    }
+    let run_id = run_id.to_string();
+    on_blocking(move || {
+        journal::with_journal(|connection| journal::get_run(connection, &run_id).map(Some))
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn resume_runtime_run(
     state: State<'_, Arc<ApiAgentState>>,

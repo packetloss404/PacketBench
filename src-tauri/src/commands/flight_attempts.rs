@@ -1024,7 +1024,7 @@ pub async fn launch_flight_async(
         )
         .await
         {
-            Ok(()) => {
+            Ok(_runtime_summary) => {
                 let _ =
                     update_attempt_status(&flight_id, &attempt_id, AttemptStatus::Running, None)
                         .await;

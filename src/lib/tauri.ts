@@ -3999,7 +3999,7 @@ export async function startApiAgentSession(
    * catalog. Consumed only by the journal-gated R6 context guard; the backend
    * falls back to its own capability table when omitted. */
   contextWindowTokens?: number,
-): Promise<void> {
+): Promise<RuntimeRunSummary | null> {
   return invoke("start_api_agent_session", {
     sessionId,
     provider,

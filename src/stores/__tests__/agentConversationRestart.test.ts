@@ -118,6 +118,31 @@ describe("API conversation restart recovery", () => {
     ]);
   });
 
+  it("stamps the durable runtime projection when the backend returns a run summary (F4)", async () => {
+    const { useAgentTaskStore } = await loadStore();
+    startMock.mockResolvedValueOnce({
+      version: 1,
+      runtimeRunId: "run-1",
+      conversationId: "conversation",
+      operationId: "op-1",
+      epoch: 0,
+      state: "prepared",
+      resumeMode: "none",
+      latestDurableSeq: 0,
+    });
+    const id = await useAgentTaskStore.getState().createApiConversation(launch);
+    const conversation = useAgentTaskStore
+      .getState()
+      .conversations.find((c) => c.id === id);
+    expect(conversation?.runtime).toEqual({
+      runtimeRunId: "run-1",
+      operationId: "op-1",
+      epoch: 0,
+      state: "prepared",
+      resumeMode: "none",
+    });
+  });
+
   it("restores the initial prompt when shutdown precedes the first response, without restarting work", async () => {
     const first = await loadStore();
     const provider = deferred();

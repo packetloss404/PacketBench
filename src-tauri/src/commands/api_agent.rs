@@ -57,6 +57,7 @@ async fn prepare_turn_run(state: &ApiAgentState, session_id: &str) -> Result<(),
     Ok(())
 }
 use crate::core::agent_runtime::{RunRequest, RuntimeFlags, RuntimeRunBinding, RuntimeSession};
+use crate::core::runtime_types::RuntimeRunSummary;
 use crate::core::execution::{ExecutionTarget, SshConfig};
 use crate::core::llm_provider::{get_provider, IN_PROCESS_PROVIDERS};
 use crate::core::llm_system_prompt::build_system_prompt;
@@ -1334,7 +1335,7 @@ pub async fn start_api_agent_session(
     budget_scope_key: Option<String>,
     budget_limit_usd: Option<f64>,
     context_window_tokens: Option<u64>,
-) -> Result<(), String> {
+) -> Result<Option<RuntimeRunSummary>, String> {
     let id = session_id.clone();
     let result = start_api_agent_session_inner(
         app_handle,
@@ -1396,7 +1397,7 @@ async fn start_api_agent_session_inner(
     budget_scope_key: Option<String>,
     budget_limit_usd: Option<f64>,
     context_window_tokens: Option<u64>,
-) -> Result<(), String> {
+) -> Result<Option<RuntimeRunSummary>, String> {
     // R4b pre-dispatch image guard for the sidecar transport. Placed before any
     // side-effecting admission/counter work so a refusal changes nothing. The
     // in-process runner guards its own path; only the sidecar branch returns
@@ -1590,7 +1591,8 @@ async fn start_api_agent_session_inner(
             None,
         )
         .await;
-        return Ok(());
+        // The sidecar owns its own runtime; no in-process run summary to return.
+        return Ok(None);
     }
 
     // Fail loudly, and early, on a provider id nothing here can route.
@@ -1726,6 +1728,13 @@ async fn start_api_agent_session_inner(
     // Claim the session before mutating its config/history. A duplicate start
     // cannot overwrite a live turn and inherit the old task's eventual cleanup.
     let (turn_id, cancel_rx) = tokio::select! { biased; _ = admission.cancel.cancelled() => return Err("Session startup was stopped.".into()), result = state.begin_turn(&session_id) => result? };
+    // F4 authoritative launch: surface the durable run identity so the launcher
+    // can report the backend phase and cancel/inspect against it. `None` when
+    // the journal is disabled (the default) or the session is unbound.
+    let runtime_summary = match &runtime_binding {
+        Some(binding) => super::agent_runtime::runtime_run_summary(&binding.run_id).await?,
+        None => None,
+    };
     if let Some(binding) = runtime_binding {
         state.bind_runtime_run(&session_id, binding).await;
     }
@@ -1827,7 +1836,7 @@ async fn start_api_agent_session_inner(
         state_clone.finish_turn(&session_id_clone, turn_id).await;
     });
 
-    Ok(())
+    Ok(runtime_summary)
 }
 
 /// Send a follow-up message to an active API agent session.

@@ -19,6 +19,7 @@ import {
   type ImageAttachment,
   type ResumeMessage,
 } from "@/lib/tauri";
+import type { RuntimeRunSummary } from "@/generated/tauri-schema";
 import { isWorktreeDirty } from "@/lib/worktreeLifecycle";
 import { conversationWorktree } from "@/lib/conversationWorktreeDisclosure";
 import { buildResumeSshConfig, type ResumeSshConfig } from "@/lib/resumeSshConfig";
@@ -981,7 +982,10 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
         ),
       }));
 
-      // Start the API agent session unless the caller already did so.
+      // Start the API agent session unless the caller already did so. Capture
+      // the durable run identity the backend returns so the conversation can
+      // carry an authoritative runtime projection (F4).
+      const runtimeHolder: { summary: RuntimeRunSummary | null } = { summary: null };
       if (skipBackendStart) {
         await ensureApiAgentListeners(id);
       } else {
@@ -1033,11 +1037,32 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
                 // for an unknown id whose true window is smaller. The guard only
                 // runs when the runtime journal is enabled; otherwise inert.
                 getModelContextWindow(model),
-              ),
+              ).then((summary) => {
+                runtimeHolder.summary = summary;
+              }),
             );
           },
           { budgetChecked: true, newSession: true },
         );
+      }
+      if (runtimeHolder.summary) {
+        const summary = runtimeHolder.summary;
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === id
+              ? {
+                  ...c,
+                  runtime: {
+                    runtimeRunId: summary.runtimeRunId,
+                    operationId: summary.operationId,
+                    epoch: summary.epoch,
+                    state: summary.state,
+                    resumeMode: summary.resumeMode,
+                  },
+                }
+              : c,
+          ),
+        }));
       }
     } catch (e) {
       // `startApiAgentSession` rejected before any `api-agent:*` event could
@@ -2044,6 +2069,7 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
     if (updated) scheduleSave(updated);
 
     let dispatched = false;
+    const runtimeHolder: { summary: RuntimeRunSummary | null } = { summary: null };
     try {
       dispatched = await runBudgetedApiTurn(
         conv,
@@ -2121,11 +2147,32 @@ export const useAgentTaskStore = create<AgentTaskStore>((set, get) => ({
               // for an unknown id whose true window is smaller. The guard only
               // runs when the runtime journal is enabled; otherwise inert.
               getModelContextWindow(model),
-            ),
+            ).then((summary) => {
+              runtimeHolder.summary = summary;
+            }),
           );
         },
         { newSession: true },
       );
+      if (runtimeHolder.summary) {
+        const summary = runtimeHolder.summary;
+        set((s) => ({
+          conversations: s.conversations.map((c) =>
+            c.id === conversationId
+              ? {
+                  ...c,
+                  runtime: {
+                    runtimeRunId: summary.runtimeRunId,
+                    operationId: summary.operationId,
+                    epoch: summary.epoch,
+                    state: summary.state,
+                    resumeMode: summary.resumeMode,
+                  },
+                }
+              : c,
+          ),
+        }));
+      }
     } catch (e) {
       console.warn("resumeApiConversation failed:", e);
       // Clear the streaming placeholder we appended above — no `api-agent:*`

@@ -255,4 +255,15 @@ export interface AgentConversation {
      * that PR reports merged. Undefined until a PR is published. */
     prNumber?: number;
   };
+  /** R1/R3 projection of the conversation's durable runtime run, populated at
+   * start from `start_api_agent_session`'s returned summary. Absent when the
+   * runtime journal is disabled (the default) or the session is sidecar-owned.
+   * Read-only UI projection; the backend journal is authoritative. */
+  runtime?: {
+    runtimeRunId: string;
+    operationId: string;
+    epoch: number;
+    state: string;
+    resumeMode: string;
+  };
 }
