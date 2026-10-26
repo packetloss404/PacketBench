@@ -157,8 +157,48 @@ describe("launchConversation — worktree stamping", () => {
     );
 
     expect(phases[0]).toBe("preparing");
-    expect(phases).toContain("starting");
+    // No durable projection (journal disabled default): the turn is dispatched,
+    // so the final phase is `running` — `starting` is no longer fabricated.
     expect(phases[phases.length - 1]).toBe("running");
+  });
+
+  it("reports 'unknown' instead of running when the durable run needs reconciliation (F4)", async () => {
+    const phases: string[] = [];
+    startApiAgentSessionMock.mockResolvedValue({
+      version: 1,
+      runtimeRunId: "run-1",
+      conversationId: "conversation",
+      operationId: "op-1",
+      epoch: 0,
+      state: "needs_reconciliation",
+      resumeMode: "none",
+      latestDurableSeq: 0,
+    });
+
+    const { launchConversation } = await import("@/lib/launchConversation");
+    await launchConversation(baseParams({ onPhase: (phase) => phases.push(phase) }));
+
+    expect(phases).toContain("unknown");
+    expect(phases[phases.length - 1]).toBe("unknown");
+  });
+
+  it("reports 'starting' when the durable run is only prepared (F4)", async () => {
+    const phases: string[] = [];
+    startApiAgentSessionMock.mockResolvedValue({
+      version: 1,
+      runtimeRunId: "run-1",
+      conversationId: "conversation",
+      operationId: "op-1",
+      epoch: 0,
+      state: "prepared",
+      resumeMode: "none",
+      latestDurableSeq: 0,
+    });
+
+    const { launchConversation } = await import("@/lib/launchConversation");
+    await launchConversation(baseParams({ onPhase: (phase) => phases.push(phase) }));
+
+    expect(phases[phases.length - 1]).toBe("starting");
   });
 
   it("falls back to HEAD as baseBranch when the current branch can't be read", async () => {

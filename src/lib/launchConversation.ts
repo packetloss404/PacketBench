@@ -63,9 +63,15 @@ export interface LaunchConversationParams {
   onPhase?: (phase: LaunchPhase) => void;
 }
 
-/** Coarse, honest launch progress. `running` fires once the conversation is
- * materialized and its backend turn dispatched. */
-export type LaunchPhase = "preparing" | "starting" | "running" | "failed";
+/** Coarse, honest launch progress. `running` is reported only when the backend
+ * run is durably running; `unknown` is reported when the durable run state is
+ * `needs_reconciliation` (a crash left the start outcome ambiguous). */
+export type LaunchPhase =
+  | "preparing"
+  | "starting"
+  | "running"
+  | "failed"
+  | "unknown";
 
 /**
  * F1/F4: `createApiConversation` persists the conversation record even when the
@@ -80,6 +86,34 @@ function backendStartFailed(conversationId: string): boolean {
     .getState()
     .conversations.find((c) => c.id === conversationId);
   return !conversation || conversation.status === "failed";
+}
+
+/**
+ * F4: derive the launch phase from the conversation's durable runtime
+ * projection instead of assuming Running merely because the start promise
+ * resolved. `prepared` (prepared but not yet marked running) reports `starting`;
+ * `needs_reconciliation` reports `unknown` so an ambiguous outcome is never
+ * laundered into success. Returns `null` when no durable projection exists
+ * (journal disabled / sidecar), leaving the caller's prior phase.
+ */
+function durableLaunchPhase(conversationId: string): LaunchPhase | null {
+  const conversation = useAgentTaskStore
+    .getState()
+    .conversations.find((c) => c.id === conversationId);
+  switch (conversation?.runtime?.state) {
+    case "prepared":
+      return "starting";
+    case "running":
+    case "completed":
+      return "running";
+    case "needs_reconciliation":
+      return "unknown";
+    case "failed":
+    case "cancelled":
+      return "failed";
+    default:
+      return null;
+  }
 }
 
 /**
@@ -236,7 +270,9 @@ export function launchConversation({
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
-        onPhase?.("running");
+        // F4: report Running only when the durable run says so; an ambiguous
+        // outcome reports `unknown` rather than assuming success.
+        onPhase?.(durableLaunchPhase(convId) ?? "running");
         // F4: only take the selection if the user didn't navigate to another
         // conversation while this launch was preparing.
         if (useAgentTaskStore.getState().selectedConversationId === null) {
@@ -334,11 +370,12 @@ export function launchConversation({
           return false;
         }
         useProjectHistoryStore.getState().recordOpen(selectedRepo);
-        onPhase?.("starting");
         onCreated?.(convId);
         // P3-S4: materialize the draft's pane now that the conversation exists.
         onLaunched?.(convId);
-        onPhase?.("running");
+        // F4: report Starting/Running from the durable run state; an ambiguous
+        // outcome reports `unknown` rather than assuming success.
+        onPhase?.(durableLaunchPhase(convId) ?? "running");
         // F4: only take the selection if the user didn't navigate to another
         // conversation while this launch was preparing.
         if (useAgentTaskStore.getState().selectedConversationId === null) {
