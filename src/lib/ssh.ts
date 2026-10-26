@@ -1,4 +1,4 @@
-import { WORKSPACE_CLI_REGISTRY } from "./workspaceCliRegistry";
+import { WORKSPACE_CLI_REGISTRY } from "./workspaceCliRegistry.ts";
 import type { ServerConfig } from "@/types/server";
 
 /** Shell-escape a string for safe embedding in a remote command. */

@@ -1,4 +1,4 @@
-import registry from "./workspace-cli-registry.json";
+import registry from "./workspace-cli-registry.json" with { type: "json" };
 import type { WorkspaceAgentSlot } from "@/types/workspace";
 import type { CliBrandColor } from "./cli-catalog";
 
