@@ -7,8 +7,8 @@ are verified artifacts; they have not been installed or launched here.
 
 ## Source identity and flags
 
-- Commit (frozen source): `d3cf74243c9a98cf984daa3e88d438b07431cd36` (on `main`).
-- Source fingerprint: `d2d232ee24b02c705c09c0aabf52b07c0ede4eb68234317ea436aa1c062e8466` (dirty false).
+- Commit (frozen source): `df23f09d7eedf0bb6bb6b961a9c5e53015bf6c36` (on `main`).
+- Source fingerprint: `112b8bb935559f8aab9785786eb967b13fb5efd195418a43cc4dc550c9823838` (dirty false).
 - Runtime journal flag: `PACKETBENCH_RUNTIME_JOURNAL` **default OFF**. The
   restart-policy identity, typed-restart seeding, crash tests and durable launch
   identity only activate when this is set; the disabled path is byte-identical
@@ -19,17 +19,17 @@ are verified artifacts; they have not been installed or launched here.
 
 | Format | Path | SHA-256 |
 | --- | --- | --- |
-| NSIS | `test-results/acceptance/windows/2026-10-26T03-23-36-548Z/PacketBench_0.14.9_x64-setup.exe` | `9f89764a5c28247b84da6301eb54f2c674fb79ff56f83e36f3ced6dcf64996f4` |
-| MSI | `test-results/acceptance/windows/2026-10-26T03-23-36-548Z/PacketBench_0.14.9_x64_en-US.msi` | `d5ab769a4bb52b3b892700b9882749a3387b7a4320418a1af5ba2657ac9c71c1` |
+| NSIS | `test-results/acceptance/windows/2026-10-26T03-56-08-577Z/PacketBench_0.14.9_x64-setup.exe` | `88c535c03e7cb745a5516a0870a4d88e1e8287488702c2d75ed7ea2967c18ca5` |
+| MSI | `test-results/acceptance/windows/2026-10-26T03-56-08-577Z/PacketBench_0.14.9_x64_en-US.msi` | `f6e3585230a48643b10c09105cf602f46435aace128d2b7d4dcd229c55473719` |
 
-Verification receipt: `test-results/acceptance/payloads-76b01226abcb4f1a9431c312b606d2d9/report.json`.
+Verification receipt: `test-results/acceptance/payloads-f59b6184217d4ba2b0f7ea853de0fd43/report.json`.
 Both formats: **8,683 exact payload hashes**, bundled Node `v24.15.0`,
 protocol-v12 with two exact echo turns. The payload verifier does not install,
 start PacketBench, run MSI install actions, or touch the user profile.
 
 ## Gate results (frozen source)
 
-`pnpm gates:full` passed **all 12 gates** at `d3cf7424`: `format:check`,
+`pnpm gates:full` passed **all 12 gates** at `df23f09d`: `format:check`,
 `lint:src`, `typecheck`, `test` (full Vitest), `build`, `remoteagents:check`,
 `e2e`, `sidecar:check`, `rust:check`, `rust:test` (1325 Rust lib tests),
 `runtime:eval`, `check:tauri-schema`.
@@ -186,7 +186,7 @@ implementation that remains.
   image pin/unpin (`00eda634`) — full gates green at the final commit.
 - **Source blockers remaining:** the five items above are open source work, not
   external prerequisites.
-- **Package verified:** installers built from `d3cf7424` (dirty false),
+- **Package verified:** installers built from `df23f09d` (dirty false),
   hash-verified + payload-verified; **not installed**.
 - **GUI acceptance:** **pending** — hand off to a desktop-control session using
   the journeys and checklists above. Remote Agents remains fail-closed until the
