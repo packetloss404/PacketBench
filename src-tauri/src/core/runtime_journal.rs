@@ -893,6 +893,42 @@ pub fn latest_run_for_conversation(
     }
 }
 
+/// The typed provider history to seed a restarted session with (R1/R3 restart
+/// recovery).
+///
+/// A genuine restart leaves no live session, so the conversation's next start
+/// would otherwise reconstruct its history from the frontend's text transcript,
+/// which cannot carry `tool_use`/`tool_result` structure. When the run was
+/// explicitly resumed (epoch > 0) and its latest checkpoint is replayable with
+/// no unresolved effect, that checkpoint is the authoritative typed history.
+/// Returns `None` for a never-resumed run (epoch 0), a run with no checkpoint, a
+/// pending effect (never replayed blindly) or a non-replayable history — the
+/// caller then keeps the text (semantic) reconstruction.
+pub fn typed_resume_history_for_conversation(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Option<Vec<crate::core::llm_types::ChatMessage>>, String> {
+    let Some(run) = latest_run_for_conversation(connection, conversation_id)? else {
+        return Ok(None);
+    };
+    if run.epoch <= 0 {
+        return Ok(None);
+    }
+    let Some(checkpoint) =
+        crate::core::runtime_checkpoint::load_latest_checkpoint(connection, &run.runtime_run_id)
+            .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    if !checkpoint.pending_effect_ids.is_empty() {
+        return Ok(None);
+    }
+    if crate::core::runtime_checkpoint::validate_replayable(&checkpoint.messages).is_err() {
+        return Ok(None);
+    }
+    Ok(Some(checkpoint.messages))
+}
+
 /// The operation id a run belongs to. The cancel command uses it to cancel the
 /// matching launch operation so the operation phase and run state agree.
 pub fn run_operation_id(connection: &Connection, run_id: &str) -> Result<String, String> {
@@ -2251,5 +2287,47 @@ mod tests {
         let inspection =
             inspect_resume_with_compatibility(&connection, &prepared.run_id, Some(&live)).unwrap();
         assert_eq!(inspection.permitted_modes, vec!["semantic"]);
+    }
+
+    #[test]
+    fn typed_resume_history_is_seeded_only_after_an_explicit_resume() {
+        use crate::core::llm_types::ChatRole;
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        write_checkpoint(&connection, &prepared.run_id, 0, "anthropic:claude", vec![], 1);
+
+        // Never resumed (epoch 0): the text (semantic) path stays.
+        assert!(typed_resume_history_for_conversation(&connection, "conv-1")
+            .unwrap()
+            .is_none());
+
+        // An explicit resume advances the epoch, so the typed checkpoint seeds.
+        resume_run(&connection, &prepared.run_id, 0, "semantic", None).unwrap();
+        let history = typed_resume_history_for_conversation(&connection, "conv-1")
+            .unwrap()
+            .expect("typed history after an explicit resume");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, ChatRole::User);
+    }
+
+    #[test]
+    fn typed_resume_history_is_withheld_while_an_effect_is_pending() {
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        write_checkpoint(
+            &connection,
+            &prepared.run_id,
+            0,
+            "anthropic:claude",
+            vec!["t1".to_string()],
+            1,
+        );
+        resume_run(&connection, &prepared.run_id, 0, "semantic", None).unwrap();
+        assert!(
+            typed_resume_history_for_conversation(&connection, "conv-1")
+                .unwrap()
+                .is_none(),
+            "an unresolved effect is never replayed into a restarted session"
+        );
     }
 }

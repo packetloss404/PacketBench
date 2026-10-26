@@ -411,6 +411,24 @@ pub async fn prepare_session_run(
     }))
 }
 
+/// The typed provider history to seed a restarted session with (R1/R3 restart
+/// recovery), or `None` to keep the caller on the text (semantic) path. Inert
+/// unless the journal is enabled, so the disabled path is unchanged.
+pub async fn typed_resume_history_for_conversation(
+    conversation_id: &str,
+) -> Result<Option<Vec<ChatMessage>>, String> {
+    if !journal::is_enabled() {
+        return Ok(None);
+    }
+    let conversation_id = conversation_id.to_string();
+    on_blocking(move || {
+        journal::with_journal(|connection| {
+            journal::typed_resume_history_for_conversation(connection, &conversation_id)
+        })
+    })
+    .await
+}
+
 /// Transition a session's journalled run to a terminal state (`completed` |
 /// `cancelled` | `failed`) when its turn ends. No-op unless the journal is
 /// enabled and the session is bound to a prepared run; a stale-epoch or

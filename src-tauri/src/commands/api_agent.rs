@@ -1645,7 +1645,24 @@ async fn start_api_agent_session_inner(
         None => PermissionMode::default(),
     };
 
-    let messages = build_start_history(resume_messages, &initial_message);
+    // R1/R3 restart recovery: when the conversation's durable run was explicitly
+    // resumed, the run's typed checkpoint is the authoritative provider history
+    // (the frontend's text transcript cannot carry tool_use/tool_result
+    // structure). Seed it plus this new user turn; otherwise keep the existing
+    // text reconstruction. `None` — including the journal-disabled default —
+    // leaves the path unchanged.
+    let messages = match super::agent_runtime::typed_resume_history_for_conversation(&session_id)
+        .await
+    {
+        Ok(Some(mut history)) => {
+            history.push(ChatMessage {
+                role: ChatRole::User,
+                content: MessageContent::text(&initial_message),
+            });
+            history
+        }
+        _ => build_start_history(resume_messages, &initial_message),
+    };
     let custom_agent_project = match &execution {
         ExecutionTarget::Local { project_path } => project_path.as_str(),
         ExecutionTarget::Ssh { .. } => "",
