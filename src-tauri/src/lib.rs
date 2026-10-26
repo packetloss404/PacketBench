@@ -636,6 +636,8 @@ pub fn run() {
             commands::draft_assets::stage_agent_draft_asset,
             commands::draft_assets::read_agent_draft_asset,
             commands::draft_assets::release_agent_draft_asset,
+            commands::draft_assets::pin_agent_draft_asset,
+            commands::draft_assets::unpin_agent_draft_asset,
             commands::draft_assets::gc_agent_draft_assets,
             // Slash commands (user-defined)
             commands::slash_commands::list_slash_commands,

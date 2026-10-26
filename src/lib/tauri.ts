@@ -4154,6 +4154,17 @@ export async function releaseAgentDraftAsset(attachmentId: string): Promise<void
   return invoke("release_agent_draft_asset", { attachmentId });
 }
 
+/** F2B: acquire durable retention for a staged image before it is referenced by
+ * a submission/checkpoint or dispatched. Fails when the bytes are missing. */
+export async function pinAgentDraftAsset(attachmentId: string): Promise<void> {
+  return invoke("pin_agent_draft_asset", { attachmentId });
+}
+
+/** F2B: release durable retention once the owning lifecycle permits. */
+export async function unpinAgentDraftAsset(attachmentId: string): Promise<void> {
+  return invoke("unpin_agent_draft_asset", { attachmentId });
+}
+
 export async function gcAgentDraftAssets(keep: string[]): Promise<number> {
   return invoke<number>("gc_agent_draft_assets", { keep });
 }

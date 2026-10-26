@@ -90,6 +90,14 @@ fn meta_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.meta.json"))
 }
 
+/// A durable retention marker. A pinned asset is owned by a submission/message/
+/// checkpoint and must survive GC across restart; GC skips it regardless of the
+/// caller's in-memory `keep` set. The marker is a separate file so a pin can be
+/// acquired before dispatch and released only when the owning lifecycle permits.
+fn pin_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.pinned"))
+}
+
 fn bin_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.bin"))
 }
@@ -184,6 +192,27 @@ fn release_in(dir: &Path, attachment_id: &str) -> Result<(), String> {
     validate_attachment_id(attachment_id)?;
     let _ = fs::remove_file(bin_path(dir, attachment_id));
     let _ = fs::remove_file(meta_path(dir, attachment_id));
+    let _ = fs::remove_file(pin_path(dir, attachment_id));
+    Ok(())
+}
+
+/// Acquire durable retention for a staged attachment before it is referenced by
+/// a submission/checkpoint or dispatched. Fails (rather than silently pinning
+/// nothing) when the bytes are missing, so a missing image cannot be accepted
+/// as a durable reference.
+fn pin_in(dir: &Path, attachment_id: &str) -> Result<(), String> {
+    validate_attachment_id(attachment_id)?;
+    if !bin_path(dir, attachment_id).exists() {
+        return Err("Cannot pin a missing attachment".to_string());
+    }
+    fs::write(pin_path(dir, attachment_id), b"pinned")
+        .map_err(|e| format!("Failed to pin attachment: {e}"))?;
+    Ok(())
+}
+
+fn unpin_in(dir: &Path, attachment_id: &str) -> Result<(), String> {
+    validate_attachment_id(attachment_id)?;
+    let _ = fs::remove_file(pin_path(dir, attachment_id));
     Ok(())
 }
 
@@ -227,7 +256,10 @@ fn gc_in(
         let id = file_name.trim_end_matches(".bin").to_string();
         let bytes = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
         total_bytes = total_bytes.saturating_add(bytes);
-        if validate_attachment_id(&id).is_err() || keep.contains(&id) {
+        if validate_attachment_id(&id).is_err()
+            || keep.contains(&id)
+            || pin_path(dir, &id).exists()
+        {
             continue;
         }
         // An unreadable metadata file means the age is unknown: keep it
@@ -288,6 +320,26 @@ pub async fn release_agent_draft_asset(attachment_id: String) -> Result<(), Stri
     })
     .await
     .map_err(|e| format!("Draft asset release task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn pin_agent_draft_asset(attachment_id: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let dir = assets_dir()?;
+        pin_in(&dir, &attachment_id)
+    })
+    .await
+    .map_err(|e| format!("Draft asset pin task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn unpin_agent_draft_asset(attachment_id: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let dir = assets_dir()?;
+        unpin_in(&dir, &attachment_id)
+    })
+    .await
+    .map_err(|e| format!("Draft asset unpin task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -532,6 +584,60 @@ mod tests {
             read_in(&dir, &b.attachment_id).is_ok(),
             "a referenced asset is never reclaimed"
         );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_pinned_asset_survives_gc_even_without_a_keep_entry() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let a = stage_in(
+            &dir,
+            &StageDraftAssetInput {
+                name: "a.png".into(),
+                mime_type: "image/png".into(),
+                data_base64: png_base64(10),
+            },
+        )
+        .unwrap();
+        pin_in(&dir, &a.attachment_id).unwrap();
+
+        // No keep list and far-future now: the pin alone keeps the bytes.
+        assert_eq!(gc_in(&dir, &HashSet::new(), u128::MAX, MAX_TOTAL_BYTES).unwrap(), 0);
+        assert!(read_in(&dir, &a.attachment_id).is_ok());
+
+        // Releasing the pin lets GC reclaim it.
+        unpin_in(&dir, &a.attachment_id).unwrap();
+        assert_eq!(gc_in(&dir, &HashSet::new(), u128::MAX, MAX_TOTAL_BYTES).unwrap(), 1);
+        assert!(read_in(&dir, &a.attachment_id).is_err());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pinning_a_missing_asset_fails_closed() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let err = pin_in(&dir, "missing-id").unwrap_err();
+        assert!(err.contains("missing"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn release_removes_the_pin_marker_too() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let a = stage_in(
+            &dir,
+            &StageDraftAssetInput {
+                name: "a.png".into(),
+                mime_type: "image/png".into(),
+                data_base64: png_base64(11),
+            },
+        )
+        .unwrap();
+        pin_in(&dir, &a.attachment_id).unwrap();
+        release_in(&dir, &a.attachment_id).unwrap();
+        assert!(!pin_path(&dir, &a.attachment_id).exists());
         fs::remove_dir_all(&dir).ok();
     }
 
