@@ -7,11 +7,8 @@ are verified artifacts; they have not been installed or launched here.
 
 ## Source identity and flags
 
-- Commit (frozen source): `00eda634…` (on `main`, see `git rev-parse HEAD`).
-- Installers were last built from `a349ae99` (sourceSha256
-  `eb6399ebfd6b13fe7b4ccf0f15f0ffcf5e6a3219d633ad889490387ed1b6bfc6`); rebuild at
-  the final commit before handing off (the slice below only added
-  backend/generated surface, so the archived artifacts remain source-bound).
+- Commit (frozen source): `d3cf74243c9a98cf984daa3e88d438b07431cd36` (on `main`).
+- Source fingerprint: `d2d232ee24b02c705c09c0aabf52b07c0ede4eb68234317ea436aa1c062e8466` (dirty false).
 - Runtime journal flag: `PACKETBENCH_RUNTIME_JOURNAL` **default OFF**. The
   restart-policy identity, typed-restart seeding, crash tests and durable launch
   identity only activate when this is set; the disabled path is byte-identical
@@ -22,17 +19,17 @@ are verified artifacts; they have not been installed or launched here.
 
 | Format | Path | SHA-256 |
 | --- | --- | --- |
-| NSIS | `test-results/acceptance/windows/2026-10-26T02-08-13-691Z/PacketBench_0.14.9_x64-setup.exe` | `01b2bcafc7198b1e11c9193f6014a1b457605c252ac5cc498695578a41228322` |
-| MSI | `test-results/acceptance/windows/2026-10-26T02-08-13-691Z/PacketBench_0.14.9_x64_en-US.msi` | `837f27fe18a163483e47020dd2be7c722f0091cbd1fffad402fbbbf143751194` |
+| NSIS | `test-results/acceptance/windows/2026-10-26T03-23-36-548Z/PacketBench_0.14.9_x64-setup.exe` | `9f89764a5c28247b84da6301eb54f2c674fb79ff56f83e36f3ced6dcf64996f4` |
+| MSI | `test-results/acceptance/windows/2026-10-26T03-23-36-548Z/PacketBench_0.14.9_x64_en-US.msi` | `d5ab769a4bb52b3b892700b9882749a3387b7a4320418a1af5ba2657ac9c71c1` |
 
-Verification receipt: `test-results/acceptance/payloads-e09b2ac3634c46989304c393d5d02a0b/report.json`.
+Verification receipt: `test-results/acceptance/payloads-76b01226abcb4f1a9431c312b606d2d9/report.json`.
 Both formats: **8,683 exact payload hashes**, bundled Node `v24.15.0`,
 protocol-v12 with two exact echo turns. The payload verifier does not install,
 start PacketBench, run MSI install actions, or touch the user profile.
 
 ## Gate results (frozen source)
 
-`pnpm gates:full` passed **all 12 gates** at `a349ae99`: `format:check`,
+`pnpm gates:full` passed **all 12 gates** at `d3cf7424`: `format:check`,
 `lint:src`, `typecheck`, `test` (full Vitest), `build`, `remoteagents:check`,
 `e2e`, `sidecar:check`, `rust:check`, `rust:test` (1325 Rust lib tests),
 `runtime:eval`, `check:tauri-schema`.
@@ -189,9 +186,8 @@ implementation that remains.
   image pin/unpin (`00eda634`) — full gates green at the final commit.
 - **Source blockers remaining:** the five items above are open source work, not
   external prerequisites.
-- **Package verified:** installers built from `a349ae99`, hash-verified +
-  payload-verified; **not installed**. Rebuild at the final commit before the
-  desktop agent installs.
+- **Package verified:** installers built from `d3cf7424` (dirty false),
+  hash-verified + payload-verified; **not installed**.
 - **GUI acceptance:** **pending** — hand off to a desktop-control session using
   the journeys and checklists above. Remote Agents remains fail-closed until the
   desktop gate is earned.
