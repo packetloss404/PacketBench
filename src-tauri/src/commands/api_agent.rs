@@ -1661,7 +1661,17 @@ async fn start_api_agent_session_inner(
             });
             history
         }
-        _ => build_start_history(resume_messages, &initial_message),
+        Ok(None) => build_start_history(resume_messages, &initial_message),
+        Err(error) => {
+            // A corrupt/unreadable checkpoint must not lose the conversation; fall
+            // back to the text transcript, but never silently.
+            warn!(
+                session_id = %session_id,
+                error = %error,
+                "Could not read the durable typed resume history; continuing from the text transcript"
+            );
+            build_start_history(resume_messages, &initial_message)
+        }
     };
     let custom_agent_project = match &execution {
         ExecutionTarget::Local { project_path } => project_path.as_str(),
@@ -1691,20 +1701,25 @@ async fn start_api_agent_session_inner(
     // and the path below is byte-identical to today.
     // Freeze the run's policy identity from the same inputs the checkpoints are
     // written with, so a typed resume can be verified after a genuine restart
-    // even though no live session remains registered.
-    let policy_identity = super::agent_runtime::policy_identity_from_parts(
-        &provider,
-        &model,
-        &execution.label(),
-        allowed_tools.as_deref(),
-        mcp_trust_snapshot.as_deref(),
-    );
+    // even though no live session remains registered. Only computed when the
+    // journal is enabled, so the disabled path does no extra work.
+    let policy_identity = if crate::core::runtime_journal::is_enabled() {
+        Some(super::agent_runtime::policy_identity_from_parts(
+            &provider,
+            &model,
+            &execution.label(),
+            allowed_tools.as_deref(),
+            mcp_trust_snapshot.as_deref(),
+        ))
+    } else {
+        None
+    };
     let runtime_binding = super::agent_runtime::prepare_session_run(
         &session_id,
         &provider,
         &model,
         &execution,
-        Some(policy_identity),
+        policy_identity,
     )
     .await?;
 

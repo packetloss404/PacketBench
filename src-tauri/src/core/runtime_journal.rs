@@ -893,17 +893,35 @@ pub fn latest_run_for_conversation(
     }
 }
 
+/// The mode recorded by the run's most recent `resumed` event, or `None` when it
+/// was never resumed. Used to gate the typed history seed on what the user
+/// actually did.
+fn latest_resume_mode(connection: &Connection, run_id: &str) -> Result<Option<String>, String> {
+    let payload: Option<String> = connection
+        .query_row(
+            "SELECT payload FROM run_events WHERE run_id = ?1 AND kind = 'resumed' \
+             ORDER BY seq DESC LIMIT 1",
+            params![run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read resume events: {e}"))?;
+    Ok(payload
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value.get("mode").and_then(|mode| mode.as_str()).map(String::from)))
+}
+
 /// The typed provider history to seed a restarted session with (R1/R3 restart
 /// recovery).
 ///
 /// A genuine restart leaves no live session, so the conversation's next start
 /// would otherwise reconstruct its history from the frontend's text transcript,
-/// which cannot carry `tool_use`/`tool_result` structure. When the run was
-/// explicitly resumed (epoch > 0) and its latest checkpoint is replayable with
-/// no unresolved effect, that checkpoint is the authoritative typed history.
-/// Returns `None` for a never-resumed run (epoch 0), a run with no checkpoint, a
-/// pending effect (never replayed blindly) or a non-replayable history — the
-/// caller then keeps the text (semantic) reconstruction.
+/// which cannot carry `tool_use`/`tool_result` structure. Only an **explicit
+/// typed resume** seeds the typed checkpoint: a semantic resume (or a legacy run
+/// whose policy could not be verified) must keep the text path rather than being
+/// silently upgraded to typed. The checkpoint must also exist, carry no pending
+/// effect (never replayed blindly) and be replayable. Any other case returns
+/// `None`, leaving the caller on the text (semantic) reconstruction.
 pub fn typed_resume_history_for_conversation(
     connection: &Connection,
     conversation_id: &str,
@@ -912,6 +930,9 @@ pub fn typed_resume_history_for_conversation(
         return Ok(None);
     };
     if run.epoch <= 0 {
+        return Ok(None);
+    }
+    if latest_resume_mode(connection, &run.runtime_run_id)?.as_deref() != Some("typed") {
         return Ok(None);
     }
     let Some(checkpoint) =
@@ -2290,22 +2311,33 @@ mod tests {
     }
 
     #[test]
-    fn typed_resume_history_is_seeded_only_after_an_explicit_resume() {
+    fn typed_resume_history_is_seeded_only_after_an_explicit_typed_resume() {
         use crate::core::llm_types::ChatRole;
         let connection = open_at(&temp_db()).unwrap();
-        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
-        write_checkpoint(&connection, &prepared.run_id, 0, "anthropic:claude", vec![], 1);
+        let prepared =
+            prepare_operation(&connection, &input_with_policy("op-1", &digest(1))).unwrap();
+        let id = write_checkpoint(&connection, &prepared.run_id, 0, "anthropic:claude", vec![], 1);
 
         // Never resumed (epoch 0): the text (semantic) path stays.
         assert!(typed_resume_history_for_conversation(&connection, "conv-1")
             .unwrap()
             .is_none());
 
-        // An explicit resume advances the epoch, so the typed checkpoint seeds.
+        // A SEMANTIC resume must not silently upgrade the seed to typed.
         resume_run(&connection, &prepared.run_id, 0, "semantic", None).unwrap();
+        assert!(
+            typed_resume_history_for_conversation(&connection, "conv-1")
+                .unwrap()
+                .is_none(),
+            "a semantic resume keeps the text path"
+        );
+
+        // An explicit TYPED resume at the next epoch seeds the typed checkpoint.
+        let epoch = get_run(&connection, &prepared.run_id).unwrap().epoch;
+        resume_run(&connection, &prepared.run_id, epoch, "typed", Some(&id)).unwrap();
         let history = typed_resume_history_for_conversation(&connection, "conv-1")
             .unwrap()
-            .expect("typed history after an explicit resume");
+            .expect("typed history after an explicit typed resume");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].role, ChatRole::User);
     }
@@ -2313,8 +2345,11 @@ mod tests {
     #[test]
     fn typed_resume_history_is_withheld_while_an_effect_is_pending() {
         let connection = open_at(&temp_db()).unwrap();
-        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
-        write_checkpoint(
+        let prepared =
+            prepare_operation(&connection, &input_with_policy("op-1", &digest(1))).unwrap();
+        // A pending effect still permits a typed resume, but its history must not
+        // be replayed into a restarted session.
+        let id = write_checkpoint(
             &connection,
             &prepared.run_id,
             0,
@@ -2322,7 +2357,7 @@ mod tests {
             vec!["t1".to_string()],
             1,
         );
-        resume_run(&connection, &prepared.run_id, 0, "semantic", None).unwrap();
+        resume_run(&connection, &prepared.run_id, 0, "typed", Some(&id)).unwrap();
         assert!(
             typed_resume_history_for_conversation(&connection, "conv-1")
                 .unwrap()

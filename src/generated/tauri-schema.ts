@@ -62,8 +62,10 @@ mcpHash: string,
  */
 manifestHash: string,
 /**
- * Non-secret account label the run was prepared under (e.g. `anthropic`),
- * so a resume cannot silently substitute another account.
+ * Non-secret account label the run was prepared under (e.g. `anthropic`).
+ * Recorded for readout/audit; the account identity that actually gates a
+ * resume is the provider carried in the manifest/model route, so this field
+ * adds no enforcement of its own.
  */
 account: string, };
 

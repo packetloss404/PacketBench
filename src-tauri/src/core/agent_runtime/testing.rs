@@ -1215,7 +1215,9 @@ async fn a_failed_pre_request_boundary_fails_closed_before_provider_dispatch() {
         0,
         "no provider dispatch without a durable intent"
     );
-    // Only the user-turn boundary is durable; the dispatch intent never was.
+    // The store records only SUCCESSFUL writes, so this proves no pre-request
+    // boundary ever committed (the zero stream calls above are what prove the
+    // request never went out).
     assert_eq!(store.boundaries(), vec![CheckpointBoundary::UserTurnAccepted]);
 }
 
