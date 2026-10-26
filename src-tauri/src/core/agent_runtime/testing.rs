@@ -1216,6 +1216,7 @@ async fn crashed_intent_reconciles_and_resumes_without_replaying() {
                 project_key: "local:.".into(),
                 base_path: ".".into(),
                 execution: None,
+                policy: None,
             },
         },
     )

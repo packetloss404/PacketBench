@@ -30,13 +30,42 @@ requestedIsolation: string, draftId: string, draftRevision: string, projectKey: 
  * written before this field existed; an existing turn is only refused when
  * both sides carry a binding that differs.
  */
-execution?: FrozenExecutionBinding, };
+execution?: FrozenExecutionBinding,
+/**
+ * The frozen policy identity of the run (R1/R3 restart recovery). Recorded
+ * at prepare time from the same inputs the checkpoints are written with, so
+ * a typed resume can still be verified after the app and backend session
+ * have genuinely restarted, when no live session remains registered to
+ * supply a live policy context. Absent on rows written before this field
+ * existed; when absent, a resume without a live session refuses typed
+ * fail-closed (the prior behaviour).
+ */
+policy?: FrozenPolicyIdentity, };
 
 export type FrozenExecutionBinding = {
 /**
  * "local" | "ssh"
  */
 kind: string, serverId?: string, host?: string, hostFingerprint?: string, };
+
+export type FrozenPolicyIdentity = { schemaVersion: bigint, transportVersion: bigint,
+/**
+ * `sha256:` of the effective tool allowlist (`*` when unrestricted).
+ */
+toolPolicyHash: string,
+/**
+ * `sha256:` of the frozen MCP trust snapshot (empty when none).
+ */
+mcpHash: string,
+/**
+ * `sha256:` of `provider:model:execution-label`.
+ */
+manifestHash: string,
+/**
+ * Non-secret account label the run was prepared under (e.g. `anthropic`),
+ * so a resume cannot silently substitute another account.
+ */
+account: string, };
 
 export type PrepareRuntimeRunInput = { operationId: string, conversationId: string,
 /**

@@ -875,6 +875,7 @@ mod tests {
                 project_key: "local:D:/proj".to_string(),
                 base_path: "D:/proj".to_string(),
                 execution: None,
+                policy: None,
             },
         };
         crate::core::runtime_journal::prepare_operation(connection, &input)

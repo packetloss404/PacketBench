@@ -923,13 +923,31 @@ pub fn run_conversation_id(connection: &Connection, run_id: &str) -> Result<Stri
         .ok_or_else(|| format!("Unknown run: {run_id}"))
 }
 
+/// Reconstruct the checkpoint compatibility identity from a run's durable frozen
+/// policy identity (R1/R3 restart recovery). This is the durable stand-in for
+/// the live policy context after a genuine restart has left no live session. It
+/// verifies the checkpoint against the authority the run was *prepared* with,
+/// which is exactly the authority a continuation inherits; when a live session
+/// is registered its (stricter, current) context is preferred by the caller.
+fn durable_compatibility(frozen: &FrozenRuntimeLaunch) -> Option<CompatibilityContext> {
+    let policy = frozen.policy.as_ref()?;
+    Some(CompatibilityContext {
+        schema_version: policy.schema_version,
+        transport_version: policy.transport_version,
+        model_route: format!("{}:{}", frozen.route, frozen.model),
+        manifest_hash: policy.manifest_hash.clone(),
+        tool_policy_hash: policy.tool_policy_hash.clone(),
+        mcp_hash: policy.mcp_hash.clone(),
+    })
+}
+
 /// Inspect a run for resume with no live policy context. Never dispatches.
 ///
-/// Because the durable run binding does not record the tool-policy/MCP
-/// authority, the policy hashes cannot be verified here, so typed replay is
-/// refused fail-closed: only `semantic` is offered for a run that has a
-/// checkpoint. Callers that *can* reconstruct the live policy should use
-/// [`inspect_resume_with_compatibility`].
+/// A run prepared with a durable policy identity can still be validated here
+/// (typed resume after a genuine restart); a run prepared before that field
+/// existed, or one whose policy identity is absent, refuses typed fail-closed
+/// and offers only `semantic`. Callers that *can* reconstruct the live policy
+/// should use [`inspect_resume_with_compatibility`].
 pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeInspection, String> {
     inspect_resume_with_compatibility(connection, run_id, None)
 }
@@ -939,10 +957,13 @@ pub fn inspect_resume(connection: &Connection, run_id: &str) -> Result<ResumeIns
 /// * No checkpoint at all -> `legacy_semantic`: only `semantic` is permitted.
 /// * Corrupt/newer checkpoint -> preserved, refused; no typed resume.
 /// * Incompatible schema/transport/model -> explicit `semantic` fallback.
-/// * `current` is `None` (policy hashes unverifiable) -> typed refused,
-///   `semantic` only.
-/// * `current` is `Some` -> [`validate_compatibility`] is run; a mismatch
-///   (manifest/tool-policy/MCP) refuses typed, `semantic` only.
+/// * `current` is `None` and the run carries a durable policy identity -> the
+///   durable identity is validated (typed resume after a genuine restart).
+/// * `current` is `None` and there is no durable policy identity -> typed
+///   refused, `semantic` only.
+/// * `current` is `Some` -> [`validate_compatibility`] is run against the live
+///   policy; a mismatch (manifest/tool-policy/MCP) refuses typed, `semantic`
+///   only. The live context is preferred over the durable one.
 /// * Fully compatible checkpoint -> `typed` + `semantic`; pending effects still
 ///   allow a typed resume but keep the effect unresolved.
 pub fn inspect_resume_with_compatibility(
@@ -972,6 +993,11 @@ pub fn inspect_resume_with_compatibility(
 
     let frozen = frozen_launch_for(connection, &operation_id)?;
     let expected_model_route = format!("{}:{}", frozen.route, frozen.model);
+    // Prefer the live (current) policy context; fall back to the durable frozen
+    // identity so a typed resume is still possible after a genuine restart has
+    // left no live session. When neither exists, typed stays refused.
+    let durable = durable_compatibility(&frozen);
+    let current = current.or(durable.as_ref());
 
     let latest_id: Option<String> = connection
         .query_row(
@@ -1203,6 +1229,7 @@ mod tests {
                 project_key: "local:D:/proj".to_string(),
                 base_path: "D:/proj".to_string(),
                 execution: None,
+                policy: None,
             },
         }
     }
@@ -2154,5 +2181,75 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// Prepare an `initial` run carrying a durable policy identity whose hashes
+    /// match `write_checkpoint`'s (digest(2)/digest(3)/digest(4)), so a typed
+    /// resume can be validated with no live session.
+    fn input_with_policy(operation_id: &str, digest_value: &str) -> PrepareRuntimeRunInput {
+        use crate::core::runtime_types::FrozenPolicyIdentity;
+        let mut request = input(operation_id, digest_value);
+        request.launch.policy = Some(FrozenPolicyIdentity {
+            schema_version: crate::core::runtime_checkpoint::CHECKPOINT_SCHEMA_VERSION,
+            transport_version: crate::core::runtime_checkpoint::CHECKPOINT_TRANSPORT_VERSION,
+            tool_policy_hash: digest(3),
+            mcp_hash: digest(4),
+            manifest_hash: digest(2),
+            account: "anthropic".to_string(),
+        });
+        request
+    }
+
+    #[test]
+    fn durable_policy_identity_permits_typed_resume_without_a_live_session() {
+        // The genuine-restart case: the app and backend session are gone, so no
+        // live policy context exists. The run's frozen policy identity must still
+        // verify the checkpoint and permit a typed resume.
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared =
+            prepare_operation(&connection, &input_with_policy("op-1", &digest(1))).unwrap();
+        let id = write_checkpoint(&connection, &prepared.run_id, 0, "anthropic:claude", vec![], 1);
+
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert!(inspection.permitted_modes.iter().any(|m| m == "typed"));
+        let resumed =
+            resume_run(&connection, &prepared.run_id, 0, "typed", Some(&id)).unwrap();
+        assert_eq!(resumed.resume_mode, "typed");
+        assert_eq!(resumed.epoch, 1);
+    }
+
+    #[test]
+    fn absent_durable_policy_identity_refuses_typed_without_a_live_session() {
+        // A run prepared before the field existed (policy: None) must keep the
+        // prior fail-closed behaviour: semantic only, never an unverified typed
+        // replay.
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared = prepare_operation(&connection, &input("op-1", &digest(1))).unwrap();
+        let id = write_checkpoint(&connection, &prepared.run_id, 0, "anthropic:claude", vec![], 1);
+        let inspection = inspect_resume(&connection, &prepared.run_id).unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["semantic"]);
+        assert!(resume_run(&connection, &prepared.run_id, 0, "typed", Some(&id)).is_err());
+    }
+
+    #[test]
+    fn a_live_policy_context_is_preferred_over_the_durable_identity() {
+        // A live session whose current policy differs from the frozen identity is
+        // the stricter check: it must refuse typed even though the durable
+        // identity would have matched.
+        let connection = open_at(&temp_db()).unwrap();
+        let prepared =
+            prepare_operation(&connection, &input_with_policy("op-1", &digest(1))).unwrap();
+        write_checkpoint(&connection, &prepared.run_id, 0, "anthropic:claude", vec![], 1);
+        let live = CompatibilityContext {
+            schema_version: crate::core::runtime_checkpoint::CHECKPOINT_SCHEMA_VERSION,
+            transport_version: crate::core::runtime_checkpoint::CHECKPOINT_TRANSPORT_VERSION,
+            model_route: "anthropic:claude".to_string(),
+            manifest_hash: digest(2),
+            tool_policy_hash: digest(9), // changed since prepare
+            mcp_hash: digest(4),
+        };
+        let inspection =
+            inspect_resume_with_compatibility(&connection, &prepared.run_id, Some(&live)).unwrap();
+        assert_eq!(inspection.permitted_modes, vec!["semantic"]);
     }
 }

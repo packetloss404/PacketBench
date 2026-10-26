@@ -6,9 +6,9 @@ use crate::core::runtime_capabilities::{self, RuntimeCapabilityView};
 use crate::core::runtime_context::ContextSnapshot;
 use crate::core::runtime_journal as journal;
 use crate::core::runtime_types::{
-    FrozenExecutionBinding, FrozenRuntimeLaunch, PrepareRuntimeRunInput, PrepareRuntimeRunResult,
-    RuntimeContextProjection, RuntimeContextSummary, RuntimeEventView, RuntimeLaunchView,
-    RuntimeRunSummary,
+    FrozenExecutionBinding, FrozenPolicyIdentity, FrozenRuntimeLaunch, PrepareRuntimeRunInput,
+    PrepareRuntimeRunResult, RuntimeContextProjection, RuntimeContextSummary, RuntimeEventView,
+    RuntimeLaunchView, RuntimeRunSummary,
 };
 
 async fn on_blocking<T: Send + 'static>(
@@ -331,6 +331,7 @@ pub async fn prepare_session_run(
     provider: &str,
     model: &str,
     execution: &ExecutionTarget,
+    policy: Option<FrozenPolicyIdentity>,
 ) -> Result<Option<RuntimeRunBinding>, String> {
     if !journal::is_enabled() {
         return Ok(None);
@@ -397,6 +398,7 @@ pub async fn prepare_session_run(
                     project_key,
                     base_path,
                     execution: Some(execution_binding),
+                    policy,
                 },
             };
             journal::prepare_operation(connection, &input)
@@ -468,33 +470,63 @@ pub async fn cancel_session_run(state: &ApiAgentState, session_id: &str) {
 /// typed replay fail-closed rather than claiming an unverified policy match
 /// (see `runtime_checkpoint::check_resumable_typed`). Only when a full
 /// [`CompatibilityContext`] can be supplied is `validate_compatibility` run.
-fn checkpoint_compatibility(session: &RuntimeSession) -> CompatibilityContext {
-    let model_route = format!("{}:{}", session.provider, session.model);
-    let manifest_hash = runtime_checkpoint::hash_payload(&format!(
-        "{}:{}:{}",
-        session.provider,
-        session.model,
-        session.execution.label()
-    ));
-    let tool_policy = match &session.allowed_tools {
+/// Build the frozen policy identity from the same inputs the checkpoint
+/// compatibility context uses, so a prepare-time identity can never diverge from
+/// the checkpoint hashes the run later writes. This is the durable stand-in for
+/// the live policy after a genuine restart (R1/R3 restart recovery).
+pub(crate) fn policy_identity_from_parts<T: serde::Serialize + ?Sized>(
+    provider: &str,
+    model: &str,
+    execution_label: &str,
+    allowed_tools: Option<&[String]>,
+    mcp_trust_snapshot: Option<&T>,
+) -> FrozenPolicyIdentity {
+    let tool_policy = match allowed_tools {
         Some(list) => {
-            let mut sorted = list.clone();
+            let mut sorted = list.to_vec();
             sorted.sort();
             sorted.join(",")
         }
         None => "*".to_string(),
     };
-    let mcp = match &session.mcp_trust_snapshot {
+    let mcp = match mcp_trust_snapshot {
         Some(snapshot) => serde_json::to_string(snapshot).unwrap_or_default(),
         None => String::new(),
     };
-    CompatibilityContext {
+    FrozenPolicyIdentity {
         schema_version: CHECKPOINT_SCHEMA_VERSION,
         transport_version: CHECKPOINT_TRANSPORT_VERSION,
-        model_route,
-        manifest_hash,
         tool_policy_hash: runtime_checkpoint::hash_payload(&tool_policy),
         mcp_hash: runtime_checkpoint::hash_payload(&mcp),
+        manifest_hash: runtime_checkpoint::hash_payload(&format!(
+            "{}:{}:{}",
+            provider, model, execution_label
+        )),
+        account: provider.to_string(),
+    }
+}
+
+/// The frozen policy identity for a live session. Reuses the shared parts
+/// builder so the durable identity matches [`checkpoint_compatibility`] exactly.
+pub(crate) fn policy_identity_from_session(session: &RuntimeSession) -> FrozenPolicyIdentity {
+    policy_identity_from_parts(
+        &session.provider,
+        &session.model,
+        &session.execution.label(),
+        session.allowed_tools.as_deref(),
+        session.mcp_trust_snapshot.as_ref(),
+    )
+}
+
+fn checkpoint_compatibility(session: &RuntimeSession) -> CompatibilityContext {
+    let policy = policy_identity_from_session(session);
+    CompatibilityContext {
+        schema_version: policy.schema_version,
+        transport_version: policy.transport_version,
+        model_route: format!("{}:{}", session.provider, session.model),
+        manifest_hash: policy.manifest_hash,
+        tool_policy_hash: policy.tool_policy_hash,
+        mcp_hash: policy.mcp_hash,
     }
 }
 
@@ -1511,6 +1543,7 @@ mod tests {
                 project_key: "local:/p".to_string(),
                 base_path: "/p".to_string(),
                 execution: None,
+                policy: None,
             },
         };
         let run = prepare_operation(&connection, &input).unwrap();

@@ -94,6 +94,36 @@ pub struct FrozenRuntimeLaunch {
     #[serde(default)]
     #[ts(optional)]
     pub execution: Option<FrozenExecutionBinding>,
+    /// The frozen policy identity of the run (R1/R3 restart recovery). Recorded
+    /// at prepare time from the same inputs the checkpoints are written with, so
+    /// a typed resume can still be verified after the app and backend session
+    /// have genuinely restarted, when no live session remains registered to
+    /// supply a live policy context. Absent on rows written before this field
+    /// existed; when absent, a resume without a live session refuses typed
+    /// fail-closed (the prior behaviour).
+    #[serde(default)]
+    #[ts(optional)]
+    pub policy: Option<FrozenPolicyIdentity>,
+}
+
+/// The frozen policy identity of a run. Records only hashes and a non-secret
+/// account label — never a secret, raw tool list or MCP configuration. It is the
+/// durable stand-in for the live [`crate::core::runtime_checkpoint::CompatibilityContext`]
+/// when a genuine restart has left no live session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FrozenPolicyIdentity {
+    pub schema_version: i64,
+    pub transport_version: i64,
+    /// `sha256:` of the effective tool allowlist (`*` when unrestricted).
+    pub tool_policy_hash: String,
+    /// `sha256:` of the frozen MCP trust snapshot (empty when none).
+    pub mcp_hash: String,
+    /// `sha256:` of `provider:model:execution-label`.
+    pub manifest_hash: String,
+    /// Non-secret account label the run was prepared under (e.g. `anthropic`),
+    /// so a resume cannot silently substitute another account.
+    pub account: String,
 }
 
 /// The immutable execution authority of a run. Local carries no host identity;

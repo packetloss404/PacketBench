@@ -47,6 +47,7 @@ async fn prepare_turn_run(state: &ApiAgentState, session_id: &str) -> Result<(),
         &session.provider,
         &session.model,
         &session.execution,
+        Some(super::agent_runtime::policy_identity_from_session(&session)),
     )
     .await?
     else {
@@ -1671,9 +1672,24 @@ async fn start_api_agent_session_inner(
     // R3b: when the runtime journal is enabled, prepare a durable run so the
     // runner can persist checkpoints. Disabled (the default), this is a no-op
     // and the path below is byte-identical to today.
-    let runtime_binding =
-        super::agent_runtime::prepare_session_run(&session_id, &provider, &model, &execution)
-            .await?;
+    // Freeze the run's policy identity from the same inputs the checkpoints are
+    // written with, so a typed resume can be verified after a genuine restart
+    // even though no live session remains registered.
+    let policy_identity = super::agent_runtime::policy_identity_from_parts(
+        &provider,
+        &model,
+        &execution.label(),
+        allowed_tools.as_deref(),
+        mcp_trust_snapshot.as_deref(),
+    );
+    let runtime_binding = super::agent_runtime::prepare_session_run(
+        &session_id,
+        &provider,
+        &model,
+        &execution,
+        Some(policy_identity),
+    )
+    .await?;
 
     // Claim the session before mutating its config/history. A duplicate start
     // cannot overwrite a live turn and inherit the old task's eventual cleanup.
