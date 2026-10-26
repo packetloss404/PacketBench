@@ -1,14 +1,17 @@
-# Native GUI acceptance handoff — 2026-10-26
+# Native GUI acceptance handoff — 2026-10-26 (rev 2)
 
-Source-completion is done through the authoritative-launch identity slice. This
-document hands the remaining native GUI acceptance to a desktop-control session.
-It is **not** evidence that the installed application was driven; the installers
-below are verified artifacts that have not been installed or launched here.
+This document hands native GUI acceptance to a desktop-control session and,
+**in "Remaining source work", records the source blockers that are still open —
+they are not complete and are not external prerequisites.** The installers below
+are verified artifacts; they have not been installed or launched here.
 
 ## Source identity and flags
 
-- Commit (frozen source): `a349ae994bced26133cb192dc79079568044e1ab` (on `main`).
-- Source fingerprint: `eb6399ebfd6b13fe7b4ccf0f15f0ffcf5e6a3219d633ad889490387ed1b6bfc6` (dirty false, 1498 source files).
+- Commit (frozen source): `00eda634…` (on `main`, see `git rev-parse HEAD`).
+- Installers were last built from `a349ae99` (sourceSha256
+  `eb6399ebfd6b13fe7b4ccf0f15f0ffcf5e6a3219d633ad889490387ed1b6bfc6`); rebuild at
+  the final commit before handing off (the slice below only added
+  backend/generated surface, so the archived artifacts remain source-bound).
 - Runtime journal flag: `PACKETBENCH_RUNTIME_JOURNAL` **default OFF**. The
   restart-policy identity, typed-restart seeding, crash tests and durable launch
   identity only activate when this is set; the disabled path is byte-identical
@@ -68,6 +71,14 @@ same commit.
   it as a read-only `conversation.runtime` projection. This is the launcher's
   missing operation/run identity for authoritative phase reporting and
   cancel/inspect. Sidecar + disabled starts return null.
+- `0a6a0787` — the launch phase now derives from the durable run state
+  (`prepared`→starting, `running`→running, `needs_reconciliation`→unknown,
+  `failed`/`cancelled`→failed) instead of fabricating `starting`/`running`
+  locally; a promise resolution no longer announces Running.
+- `00eda634` — durable image `pin`/`unpin` commands; GC skips pinned assets
+  regardless of the caller's in-memory keep set; pinning a missing asset fails
+  closed. This is the retention foundation — the send-path staged-ID migration
+  and typed checkpoint image replay remain open (see "Remaining source work").
 - Earlier (still unverified in the GUI): `3106f396` durable policy identity for
   typed restart; `a80af42a` typed-restart seeding; `cb9b18ff` preparation/dispatch
   crash tests; `de0a9e32` review fixes; `2dded7c7` SSH-runner module fix.
@@ -141,9 +152,46 @@ reconciliation → approval → repair → fresh review → delivery → archive
 | Windows IME / display-scale | Interactive Windows session | Actual composition + measured dimensions |
 | Microphone/headset | Hardware | Dictation capture + device recovery |
 
+## Remaining source work (open — not complete, not external)
+
+These are source blockers this task did **not** close. Each names the exact
+implementation that remains.
+
+1. **Image ownership is only half-done (F2B).** `pin_agent_draft_asset` /
+   `unpin_agent_draft_asset` + GC respect for pins landed (`00eda634`), so a
+   submission/checkpoint can hold durable retention across restart. NOT done:
+   (a) the send/start path still ships inline base64 `ImageAttachment`s — it
+   must migrate to stage → pin → reference the `attachment_id` so dispatch
+   "acquires retention before accepting a durable reference"; (b) typed recovery
+   does not resolve image bytes from the checkpoint — a missing/corrupt image
+   must block typed replay, not silently drop evidence. Tests for ownership
+   transfer, duplicate refs, GC races, failed writes, crash boundaries and
+   restart recovery remain to be written.
+2. **`closed_unknown` budget reconciliation.** `release`/`reconcile_reserved`
+   retain dispatched-but-unrecorded spend as `uncertain` (never zero), but there
+   is no command/UI to close an `uncertain` reservation as `closed_unknown` with
+   an explicit resolution reason — a completed-but-usage-less request can block
+   its scope forever. Needs a `reconcile_runtime_reservation` command + UI.
+3. **Approval/reader exact-routing residuals (F6).** Exact approval reveal above
+   review and reader-return are implemented for the primary entry point; the
+   audit's "every entry point" routing (Flight follow-up, Monitor-driven sends,
+   handoffs) is not exhaustively verified.
+4. **Appearance/accessibility residuals (V3–V8).** Legacy raw `text-[Npx]`
+   consumers, narrow header/drawer/action-lane reflow and actual composited
+   contrast checks are incomplete; 320/480/680px + enlarged-text matrix needs
+   native evidence.
+5. **N1 responsiveness.** No causal fix is claimed; the measurement procedure is
+   below, awaiting native evidence.
+
 ## Status summary
 
-- **Source verified:** `a349ae99` — full gates green, independent review applied.
-- **Package verified:** both installers hash-verified + payload-verified; **not installed**.
+- **Source verified (this slice):** durable launch phase wiring (`0a6a0787`) and
+  image pin/unpin (`00eda634`) — full gates green at the final commit.
+- **Source blockers remaining:** the five items above are open source work, not
+  external prerequisites.
+- **Package verified:** installers built from `a349ae99`, hash-verified +
+  payload-verified; **not installed**. Rebuild at the final commit before the
+  desktop agent installs.
 - **GUI acceptance:** **pending** — hand off to a desktop-control session using
-  the journeys and checklists above. Remote Agents remains fail-closed.
+  the journeys and checklists above. Remote Agents remains fail-closed until the
+  desktop gate is earned.

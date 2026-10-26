@@ -414,6 +414,19 @@ resolve; fixed in `2dded7c7`. `pnpm gates:full` passed all 12 gates on
 real/paid provider calls, macOS, Windows IME/display-scale and
 microphone/headset evidence — see the acceptance item above.
 
+**Durable launch phase + image pins (F4/F2B), commits `0a6a0787`, `00eda634`.**
+The launch phase now derives from the durable run state — `prepared`→starting,
+`running`→running, `needs_reconciliation`→unknown, `failed`/`cancelled`→failed —
+so a promise resolution no longer announces Running and an ambiguous outcome is
+never laundered into success (`0a6a0787`). Durable image `pin`/`unpin` commands
+land and GC skips pinned assets regardless of the caller's in-memory keep set,
+so a submission/checkpoint holds retention across restart and pinning a missing
+asset fails closed (`00eda634`). OPEN (source, not external): the send path still
+ships inline base64 and must migrate to stage→pin→reference `attachment_id`;
+typed checkpoint image replay; `closed_unknown` budget reconciliation; F6
+approval/reader routing from every entry point; V3–V8 legacy scaling/contrast
+residuals. See `dev/agent-experience/acceptance-handoff-2026-10-26.md`.
+
 **Authoritative launch identity (F4), commit `a349ae99`.** `start_api_agent_session`
 now returns the prepared runtime run summary (operation/run id, epoch, phase)
 when the journal is enabled, and the store stores it as a read-only
